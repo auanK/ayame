@@ -1,0 +1,16 @@
+{
+  "name": "nia",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["frontend", "backend"],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace frontend --",
+    "start:backend": "npm run start --workspace backend",
+    "build": "npm run build --workspace frontend",
+    "test": "npm run test --workspace backend"
+  }
+}
