@@ -3,6 +3,8 @@ import test from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import crypto from 'node:crypto'
+import Database from 'better-sqlite3'
 import { createApp } from './app.js'
 import { openDatabase, getSession } from './database.js'
 import { hashToken } from './auth/authentication.js'
@@ -27,9 +29,39 @@ test('createApp throws TypeError when database is missing or undefined', () => {
   )
 })
 
+test('createApp throws TypeError when vaultsRoot is missing or undefined', () => {
+  const db = openDatabase(':memory:')
+  try {
+    assert.throws(
+      () => createApp({ db }),
+      (err) => {
+        assert.ok(err instanceof TypeError)
+        assert.equal(err.message, 'vaultsRoot is required')
+        return true
+      }
+    )
+
+    assert.throws(
+      () => createApp({ db, vaultsRoot: undefined }),
+      (err) => {
+        assert.ok(err instanceof TypeError)
+        assert.equal(err.message, 'vaultsRoot is required')
+        return true
+      }
+    )
+  } finally {
+    db.close()
+  }
+})
+
+const defaultTestVaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-app-test-vaults-'))
+const createTestApp = ({ db, vaultsRoot = defaultTestVaultsRoot, secure } = {}) => {
+  return createApp({ db, vaultsRoot, secure })
+}
+
 test('serves Nia only for GET /', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
   assert.equal(app.server.listening, false)
   const response = await app.inject({ method: 'GET', url: '/' })
@@ -49,7 +81,7 @@ test('serves Nia only for GET /', async (t) => {
 
 test('explicitly public routes remain accessible without session cookie', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   const rootRes = await app.inject({ method: 'GET', url: '/' })
@@ -75,7 +107,7 @@ test('explicitly public routes remain accessible without session cookie', async 
 
 test('GET /auth/status returns initial, unauthenticated, and authenticated states', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   // Fresh installation
@@ -118,7 +150,7 @@ test('GET /auth/status returns initial, unauthenticated, and authenticated state
 
 test('POST /auth/owner validates username and password and enforces singleton', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   // Invalid username
@@ -163,7 +195,7 @@ test('POST /auth/owner validates username and password and enforces singleton', 
 
 test('concurrent owner creation via HTTP allows only one winner', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   const [res1, res2] = await Promise.all([
@@ -185,7 +217,7 @@ test('concurrent owner creation via HTTP allows only one winner', async (t) => {
 
 test('POST /auth/login fails generically for all invalid attempts', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   // Login before owner exists
@@ -238,7 +270,7 @@ test('POST /auth/login fails generically for all invalid attempts', async (t) =>
 
 test('POST /auth/login sets cookie with required flags and Secure when configured', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db, secure: true })
+  const app = createTestApp({ db, secure: true })
   t.after(() => app.close())
 
   await app.inject({
@@ -272,7 +304,7 @@ test('POST /auth/login sets cookie with required flags and Secure when configure
 
 test('private-by-default route behavior and fail-closed checks', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   // Register a private route
@@ -326,7 +358,7 @@ test('private-by-default route behavior and fail-closed checks', async (t) => {
 
 test('private access does not refresh expiry', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   app.get('/private-data', async () => ({ ok: true }))
@@ -359,7 +391,7 @@ test('private access does not refresh expiry', async (t) => {
 
 test('malformed unauthenticated private request fails as unauthorized before application handling', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   // POST /auth/logout is private by default
@@ -376,7 +408,7 @@ test('malformed unauthenticated private request fails as unauthorized before app
 
 test('POST /auth/logout clears cookie and revokes only current session', async (t) => {
   const db = openDatabase(':memory:')
-  const app = createApp({ db })
+  const app = createTestApp({ db })
   t.after(() => app.close())
 
   await app.inject({
@@ -434,7 +466,7 @@ test('restart preserves owner and session', async (t) => {
   try {
     // Phase 1: create owner and login
     const db1 = openDatabase(dbPath)
-    const app1 = createApp({ db: db1 })
+    const app1 = createTestApp({ db: db1 })
     await app1.inject({
       method: 'POST',
       url: '/auth/owner',
@@ -450,7 +482,7 @@ test('restart preserves owner and session', async (t) => {
 
     // Phase 2: restart app with same database file
     const db2 = openDatabase(dbPath)
-    const app2 = createApp({ db: db2 })
+    const app2 = createTestApp({ db: db2 })
     try {
       const statusRes = await app2.inject({
         method: 'GET',
@@ -461,6 +493,82 @@ test('restart preserves owner and session', async (t) => {
       assert.deepEqual(statusRes.json(), { initialized: true, authenticated: true })
     } finally {
       await app2.close()
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('upgrade from legacy auth-only DB preserves active login cookie and initializes empty vault registry', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-upgrade-'))
+  const dbPath = path.join(tempDir, 'legacy-upgrade.sqlite')
+  const vaultDir = path.join(tempDir, 'my-vault')
+  fs.mkdirSync(vaultDir)
+
+  try {
+    const rawToken = crypto.randomBytes(32).toString('hex')
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
+    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000
+
+    const rawDb = new Database(dbPath)
+    rawDb.exec(`
+      CREATE TABLE owner (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      CREATE TABLE session (
+        token_hash TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      );
+      INSERT INTO owner (id, username, password_hash) VALUES (1, 'auank', 'legacy-hash');
+      INSERT INTO session (token_hash, expires_at) VALUES ('${tokenHash}', ${expiresAt});
+    `)
+    rawDb.pragma('user_version = 0')
+    rawDb.close()
+
+    const vaultsRoot = path.join(tempDir, 'vaults')
+    fs.mkdirSync(vaultsRoot)
+
+    const db = openDatabase(dbPath)
+    const app = createApp({ db, vaultsRoot })
+    const cookie = `nia_session=${rawToken}`
+
+    try {
+      // User remains authenticated with active cookie
+      const statusRes = await app.inject({
+        method: 'GET',
+        url: '/auth/status',
+        headers: { cookie },
+      })
+      assert.equal(statusRes.statusCode, 200)
+      assert.deepEqual(statusRes.json(), { initialized: true, authenticated: true })
+
+      // Vault registry initially empty
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/vaults',
+        headers: { cookie },
+      })
+      assert.equal(listRes.statusCode, 200)
+      assert.deepEqual(listRes.json(), { vaults: [] })
+
+      // Create physical directory under vaultsRoot
+      fs.mkdirSync(path.join(vaultsRoot, 'my-vault'))
+
+      // Can register vault
+      const regRes = await app.inject({
+        method: 'POST',
+        url: '/vaults',
+        headers: { cookie },
+        payload: { name: 'Migrated Vault', directory: 'my-vault' },
+      })
+      assert.equal(regRes.statusCode, 201)
+      assert.equal(regRes.json().vault.name, 'Migrated Vault')
+      assert.equal(regRes.json().vault.directory, 'my-vault')
+      assert.equal(regRes.json().vault.registered, true)
+    } finally {
+      await app.close()
     }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true })

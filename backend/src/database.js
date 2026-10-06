@@ -18,34 +18,32 @@ export const openDatabase = (dbPath = 'data/nia.sqlite') => {
 
   const db = new Database(dbPath)
 
+  const userVersion = db.pragma('user_version', { simple: true })
+
   const userTables = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
     .all()
     .map((r) => r.name)
     .sort()
 
-  const isFresh = userTables.length === 0
-  const isValidNiaSchema =
-    userTables.length === 2 && userTables[0] === 'owner' && userTables[1] === 'session'
+  const isFresh = userTables.length === 0 && userVersion === 0
+  const isLegacyAuth =
+    userVersion === 0 &&
+    userTables.length === 2 &&
+    userTables[0] === 'owner' &&
+    userTables[1] === 'session'
+  const isCurrentSchema =
+    userVersion === 1 &&
+    userTables.length === 3 &&
+    userTables[0] === 'owner' &&
+    userTables[1] === 'session' &&
+    userTables[2] === 'vault'
 
-  if (!isFresh && !isValidNiaSchema) {
+  if (!isFresh && !isLegacyAuth && !isCurrentSchema) {
     failCorruption(db, 'Database corrupted: unexpected schema')
   }
 
-  if (isFresh) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS owner (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        username TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS session (
-        token_hash TEXT PRIMARY KEY,
-        expires_at INTEGER NOT NULL
-      );
-    `)
-  } else {
+  const validateOwnerSessionInvariants = () => {
     const ownerCount = db.prepare('SELECT COUNT(*) AS count FROM owner').get().count
     const sessionCount = db.prepare('SELECT COUNT(*) AS count FROM session').get().count
 
@@ -62,6 +60,65 @@ export const openDatabase = (dbPath = 'data/nia.sqlite') => {
       if (owner.id !== 1) {
         failCorruption(db, 'Database corrupted: owner id must be 1')
       }
+    }
+  }
+
+  if (isFresh) {
+    const initialize = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE owner (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL
+        );
+
+        CREATE TABLE session (
+          token_hash TEXT PRIMARY KEY,
+          expires_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE vault (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          directory TEXT NOT NULL UNIQUE
+        );
+      `)
+      db.pragma('user_version = 1')
+    })
+    try {
+      initialize()
+    } catch (err) {
+      db.close()
+      throw err
+    }
+  } else if (isLegacyAuth) {
+    validateOwnerSessionInvariants()
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE vault (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          directory TEXT NOT NULL UNIQUE
+        );
+      `)
+      db.pragma('user_version = 1')
+    })
+    try {
+      migrate()
+    } catch (err) {
+      db.close()
+      throw err
+    }
+  } else if (isCurrentSchema) {
+    validateOwnerSessionInvariants()
+    const cols = db.prepare('PRAGMA table_info(vault)').all().map((c) => c.name)
+    const hasExpectedColumns =
+      cols.length === 3 &&
+      cols.includes('id') &&
+      cols.includes('name') &&
+      cols.includes('directory')
+    if (!hasExpectedColumns) {
+      failCorruption(db, 'Database corrupted: unexpected vault schema')
     }
   }
 

@@ -10,10 +10,18 @@ import {
   validateSession,
   destroySession,
 } from './auth/authentication.js'
+import { registerVaultRoutes } from './vaults/routes.js'
 
-export const createApp = ({ db, secure = process.env.NODE_ENV === 'production' } = {}) => {
+export const createApp = ({
+  db,
+  vaultsRoot,
+  secure = process.env.NODE_ENV === 'production',
+} = {}) => {
   if (!db) {
     throw new TypeError('Database is required')
+  }
+  if (!vaultsRoot) {
+    throw new TypeError('vaultsRoot is required')
   }
 
   const app = Fastify({ exposeHeadRoutes: false })
@@ -103,6 +111,8 @@ export const createApp = ({ db, secure = process.env.NODE_ENV === 'production' }
     reply.clearCookie('nia_session', { path: '/' })
     return reply.code(204).send()
   })
+
+  registerVaultRoutes(app, db, vaultsRoot)
 
   return app
 }
