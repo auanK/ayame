@@ -64,8 +64,7 @@
       data-testid="authenticated-shell"
       class="workspace"
     >
-      <h2>Workspace</h2>
-      <p class="status-message">Your workspace is ready.</p>
+      <VaultsPanel @unauthorized="handleVaultUnauthorized" />
       <p
         v-if="errorMessage"
         class="error-message"
@@ -82,6 +81,7 @@
 import { ref, onMounted } from 'vue'
 import SetupForm from './auth/SetupForm.vue'
 import LoginForm from './auth/LoginForm.vue'
+import VaultsPanel from './vaults/VaultsPanel.vue'
 import { getAuthStatus, createOwner, login, logout } from './auth/api.js'
 
 const view = ref('loading')
@@ -178,6 +178,11 @@ const handleLogout = async () => {
   } finally {
     pending.value = false
   }
+}
+
+const handleVaultUnauthorized = () => {
+  view.value = 'login'
+  errorMessage.value = ''
 }
 
 onMounted(() => {

@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import App from './App.vue'
 import * as api from './auth/api.js'
+import * as vaultApi from './vaults/api.js'
 
 vi.mock('./auth/api.js', () => ({
   getAuthStatus: vi.fn(),
@@ -11,11 +12,18 @@ vi.mock('./auth/api.js', () => ({
   logout: vi.fn(),
 }))
 
+vi.mock('./vaults/api.js', () => ({
+  getVaults: vi.fn(),
+  registerVault: vi.fn(),
+  unregisterVault: vi.fn(),
+}))
+
 describe('App authentication flow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
     sessionStorage.clear()
+    vaultApi.getVaults.mockResolvedValue({ vaults: [] })
   })
 
   describe('Bootstrap & status resolution', () => {
@@ -67,11 +75,65 @@ describe('App authentication flow', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Your workspace is ready')
+      expect(wrapper.text()).toContain('Vaults')
+      expect(wrapper.text()).toContain('No vaults found.')
       expect(wrapper.find('button[data-testid="logout-button"]').exists()).toBe(true)
       expect(wrapper.find('h1').text()).toBe('ayame')
       expect(wrapper.text()).toContain('A place to think.')
       expect(wrapper.text()).not.toContain('Nia')
+      expect(vaultApi.getVaults).toHaveBeenCalledTimes(1)
+    })
+
+    it('returns to login when the vault API reports an expired session without rechecking auth status', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockRejectedValueOnce(Object.assign(new Error('UNAUTHORIZED'), { code: 'UNAUTHORIZED' }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(false)
+      expect(api.getAuthStatus).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps Logout available during vault loading and ignores its late result after logout', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockResolvedValue({ ok: true })
+      let resolveVaults
+      vaultApi.getVaults.mockReturnValue(new Promise((resolve) => { resolveVaults = resolve }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+      const logoutButton = wrapper.find('button[data-testid="logout-button"]')
+      expect(logoutButton.attributes('disabled')).toBeUndefined()
+
+      await logoutButton.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+
+      resolveVaults({ vaults: [{ id: null, name: 'personal', directory: 'personal', registered: false }] })
+      await flushPromises()
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(false)
+    })
+
+    it('clears workspace errors when a later vault request reports an expired session', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockRejectedValue(new Error('temporary network issue'))
+      vaultApi.getVaults.mockResolvedValueOnce({ vaults: [] })
+        .mockRejectedValueOnce(Object.assign(new Error('UNAUTHORIZED'), { code: 'UNAUTHORIZED' }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+      await wrapper.find('[data-testid="logout-button"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[role="alert"]').text()).toContain('Ayame could not reach the server.')
+
+      await wrapper.find('[data-testid="refresh-vaults-button"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+      expect(api.getAuthStatus).toHaveBeenCalledTimes(1)
     })
 
     it('renders retryable error when status request fails and retries on action', async () => {
