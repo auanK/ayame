@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
 import App from './App.vue'
 import * as api from './auth/api.js'
 
@@ -23,7 +24,10 @@ describe('App authentication flow', () => {
 
       const wrapper = mount(App)
 
-      expect(wrapper.text()).toContain('Loading')
+      expect(wrapper.find('h1').text()).toBe('ayame')
+      expect(wrapper.text()).toContain('A place to think.')
+      expect(wrapper.text()).toContain('Loading Ayame...')
+      expect(wrapper.text()).not.toContain('Nia')
       expect(wrapper.find('form').exists()).toBe(false)
     })
 
@@ -34,7 +38,11 @@ describe('App authentication flow', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-testid="setup-form"]').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Create the owner account')
+      expect(wrapper.text()).toContain('Create your Ayame space')
+      expect(wrapper.text()).toContain('Create the owner account for this Ayame installation.')
+      expect(wrapper.text()).not.toContain('Nia')
+      expect(wrapper.find('label[for="setup-username"]').text()).toBe('Username')
+      expect(wrapper.find('label[for="setup-password"]').text()).toBe('Password')
     })
 
     it('renders login screen when initialized but unauthenticated', async () => {
@@ -45,6 +53,11 @@ describe('App authentication flow', () => {
 
       expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
       expect(wrapper.text()).toContain('Sign in')
+      expect(wrapper.find('h1').text()).toBe('ayame')
+      expect(wrapper.text()).not.toContain('Nia')
+      expect(wrapper.find('label[for="login-username"]').text()).toBe('Username')
+      expect(wrapper.find('label[for="login-password"]').text()).toBe('Password')
+      expect(wrapper.find('button[type="submit"]').text()).toBe('Sign In')
     })
 
     it('renders authenticated shell when initialized and authenticated', async () => {
@@ -56,6 +69,9 @@ describe('App authentication flow', () => {
       expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(true)
       expect(wrapper.text()).toContain('Your workspace is ready')
       expect(wrapper.find('button[data-testid="logout-button"]').exists()).toBe(true)
+      expect(wrapper.find('h1').text()).toBe('ayame')
+      expect(wrapper.text()).toContain('A place to think.')
+      expect(wrapper.text()).not.toContain('Nia')
     })
 
     it('renders retryable error when status request fails and retries on action', async () => {
@@ -65,7 +81,8 @@ describe('App authentication flow', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-testid="error-state"]').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Nia could not reach the server')
+      expect(wrapper.text()).toContain('Ayame could not reach the server.')
+      expect(wrapper.text()).not.toContain('Nia')
 
       api.getAuthStatus.mockResolvedValueOnce({ initialized: true, authenticated: false })
       await wrapper.find('button[data-testid="retry-button"]').trigger('click')
@@ -73,6 +90,11 @@ describe('App authentication flow', () => {
 
       expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
     })
+  })
+
+  it('sets the HTML document title to Ayame', () => {
+    const html = readFileSync('index.html', 'utf8')
+    expect(html).toMatch(/<title>Ayame<\/title>/)
   })
 
   describe('Setup flow', () => {
@@ -274,7 +296,7 @@ describe('App authentication flow', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(true)
-      expect(wrapper.find('[role="alert"]').text()).toContain('Nia could not reach the server')
+      expect(wrapper.find('[role="alert"]').text()).toContain('Ayame could not reach the server.')
     })
 
     it('transitions to login screen when logout returns 401 unauthorized (session already ended)', async () => {

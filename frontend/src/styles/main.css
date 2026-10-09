@@ -1,28 +1,26 @@
 :root {
-  --nia-background: #ded5c6;
-  --nia-surface: #fbf8f3;
-  --nia-surface-soft: #f4e3eb;
-  --nia-surface-strong: #d48fa9;
+  color-scheme: dark;
 
-  --nia-border: #cfc3b3;
+  --ayame-background: #111218;
+  --ayame-surface: #1b1c25;
+  --ayame-hover: #242530;
 
-  --nia-text: #3c2f35;
-  --nia-text-muted: #73646b;
+  --ayame-primary: #a99aca;
+  --ayame-lavender: #d4cbe4;
 
-  --nia-primary: #c9638f;
-  --nia-primary-hover: #b9527e;
+  --ayame-text: #eeeaf3;
+  --ayame-text-muted: #aaa6b8;
+  --ayame-border: #34323f;
+  --ayame-error: #d8a6b0;
+  --ayame-error-border: #684651;
 
-  --nia-secondary: #5888c8;
-  --nia-secondary-hover: #4674b2;
-
-  --nia-gold: #c29438;
-  --nia-accent: #c29438;
-
-  --nia-danger: #a83d52;
-  --nia-emphasis: #a83d52;
-  --nia-success: #287258;
-
-  --nia-font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--ayame-text);
+  background: var(--ayame-background);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 *,
@@ -32,68 +30,80 @@
 }
 
 body {
-  margin: 0;
+  min-width: 320px;
   min-height: 100vh;
-  background-color: var(--nia-background);
-  color: var(--nia-text);
-  font-family: var(--nia-font-family);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 1.5rem;
+  margin: 0;
+  background: var(--ayame-background);
+  color: var(--ayame-text);
+  line-height: 1.55;
 }
 
 #app {
-  width: 100%;
-  max-width: 420px;
+  min-height: 100vh;
 }
 
-.nia-app {
-  background-color: var(--nia-surface);
-  border: 1px solid var(--nia-border);
-  border-radius: 10px;
-  padding: 2.25rem 2rem 2rem;
-  box-shadow:
-    4px 4px 0px var(--nia-surface-soft),
-    0 14px 32px rgba(60, 48, 40, 0.08);
-  position: relative;
-  overflow: hidden;
+.ayame-app {
+  width: min(100%, 420px);
+  min-height: 100vh;
+  margin-inline: auto;
+  padding: clamp(2.25rem, 9vh, 5rem) 1.5rem 3rem;
 }
 
-.nia-app::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(
-    90deg,
-    var(--nia-primary) 0%,
-    var(--nia-primary) 68%,
-    var(--nia-gold) 68%,
-    var(--nia-gold) 100%
-  );
+.ayame-app--workspace {
+  width: min(100%, 800px);
+  padding-top: 2.75rem;
 }
 
-.nia-title {
-  margin: 0 0 1.5rem;
-  font-size: 1.75rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--nia-text);
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--nia-surface-strong);
+.ayame-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.ayame-app:not(.ayame-app--workspace) .ayame-header {
+  justify-content: center;
+}
+
+.ayame-wordmark {
+  margin: 0;
+  color: var(--ayame-text);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 2rem;
+  font-weight: 400;
+  letter-spacing: 0.055em;
+  line-height: 1.2;
+}
+
+.ayame-tagline {
+  margin: 0.45rem 0 1.5rem;
+  color: var(--ayame-text-muted);
+  font-size: 0.9375rem;
+  text-align: center;
+}
+
+.ayame-app--workspace .ayame-tagline {
+  text-align: left;
+}
+
+.ayame-divider {
+  height: 1px;
+  margin-bottom: 2.25rem;
+  background: var(--ayame-border);
 }
 
 h2 {
-  margin: 0 0 1.25rem;
-  font-size: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--nia-text);
-  padding-left: 0.625rem;
-  border-left: 3px solid var(--nia-secondary);
+  margin: 0 0 0.5rem;
+  color: var(--ayame-text);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+.status-message {
+  margin: 0 0 1.5rem;
+  color: var(--ayame-text-muted);
 }
 
 .form-group {
@@ -102,119 +112,123 @@ h2 {
 
 .form-label {
   display: block;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.45rem;
+  color: var(--ayame-text-muted);
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--nia-text-muted);
 }
 
 .form-input {
+  display: block;
   width: 100%;
-  padding: 0.625rem 0.75rem;
-  background-color: #f7f3ed;
-  border: 1px solid var(--nia-border);
-  border-radius: 6px;
-  color: var(--nia-text);
-  font-size: 0.9375rem;
+  min-height: 2.875rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: 4px;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  background: var(--ayame-surface);
+  color: var(--ayame-text);
+  font: inherit;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.form-input:focus {
-  border-color: var(--nia-secondary);
-  box-shadow: 0 0 0 3px rgba(88, 136, 200, 0.28);
-  background-color: #ffffff;
+.form-input:focus-visible {
+  border-color: var(--ayame-primary);
+  outline: 2px solid rgb(169 154 202 / 28%);
+  outline-offset: 1px;
 }
 
 .form-input:disabled {
-  opacity: 0.65;
+  opacity: 0.62;
   cursor: not-allowed;
-  background-color: var(--nia-surface-soft);
 }
 
 .btn {
   display: inline-flex;
-  justify-content: center;
+  min-height: 2.875rem;
   align-items: center;
-  width: 100%;
-  padding: 0.625rem 1rem;
-  border-radius: 6px;
+  justify-content: center;
+  padding: 0.65rem 1rem;
   border: 1px solid transparent;
+  border-radius: 4px;
+  font: inherit;
   font-size: 0.9375rem;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(88, 136, 200, 0.35);
+  outline: 2px solid var(--ayame-lavender);
+  outline-offset: 3px;
 }
 
 .btn-primary {
-  background-color: var(--nia-primary);
-  color: #fffafc;
-  border-color: var(--nia-primary-hover);
-  box-shadow: 0 2px 4px rgba(60, 48, 40, 0.12);
-  font-weight: 600;
+  width: 100%;
+  background: var(--ayame-primary);
+  color: var(--ayame-background);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background-color: var(--nia-primary-hover);
-  border-color: #a74670;
-  box-shadow: 0 3px 6px rgba(60, 48, 40, 0.18);
-}
-
-.btn-primary:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: 0 1px 2px rgba(60, 48, 40, 0.12);
+  background: var(--ayame-lavender);
 }
 
 .btn-secondary {
-  background-color: #f5f8fd;
-  color: #3b669f;
-  border: 1px solid var(--nia-secondary);
-  font-weight: 500;
-}
-
-.btn-secondary:hover:not(:disabled) {
-  color: #ffffff;
-  background-color: var(--nia-secondary);
-  border-color: var(--nia-secondary-hover);
-  box-shadow: 0 2px 6px rgba(88, 136, 200, 0.25);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.error-message {
-  margin: 0.75rem 0;
-  padding: 0.625rem 0.875rem;
-  background-color: rgba(168, 61, 82, 0.08);
-  border: 1px solid var(--nia-danger);
-  border-left: 3px solid var(--nia-danger);
-  border-radius: 6px;
-  color: var(--nia-danger);
+  min-height: 2.5rem;
+  padding-inline: 0.875rem;
+  border-color: var(--ayame-border);
+  background: transparent;
+  color: var(--ayame-text-muted);
   font-size: 0.875rem;
   font-weight: 500;
 }
 
-.status-message {
-  color: var(--nia-text-muted);
-  margin-bottom: 1.25rem;
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--ayame-primary);
+  background: var(--ayame-hover);
+  color: var(--ayame-text);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.error-message {
+  margin: 0.75rem 0 1.25rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--ayame-error-border);
+  border-left: 2px solid var(--ayame-error);
+  border-radius: 3px;
+  background: rgb(104 70 81 / 14%);
+  color: var(--ayame-error);
+  font-size: 0.9rem;
+}
+
+.workspace {
+  padding-top: 0.25rem;
+}
+
+.workspace .status-message {
+  margin-bottom: 0;
 }
 
 @media (max-width: 480px) {
-  body {
-    padding: 1rem;
+  .ayame-app,
+  .ayame-app--workspace {
+    padding: 2rem 1.25rem 2.5rem;
   }
 
-  .nia-app {
-    padding: 1.75rem 1.25rem 1.5rem;
-    box-shadow:
-      3px 3px 0px var(--nia-surface-soft),
-      0 8px 24px rgba(60, 48, 40, 0.08);
+  .ayame-wordmark {
+    font-size: 1.875rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

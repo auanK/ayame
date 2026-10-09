@@ -1,5 +1,5 @@
 <template>
-  <section data-testid="login-form">
+  <section class="auth-section" data-testid="login-form">
     <h2>Login</h2>
     <p class="status-message">Sign in to continue.</p>
 

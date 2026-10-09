@@ -1,7 +1,7 @@
 <template>
-  <section data-testid="setup-form">
-    <h2>Create your Nia space</h2>
-    <p class="status-message">Create the owner account for this Nia installation.</p>
+  <section class="auth-section" data-testid="setup-form">
+    <h2>Create your Ayame space</h2>
+    <p class="status-message">Create the owner account for this Ayame installation.</p>
 
     <div v-if="errorMessage" class="error-message" role="alert" aria-live="polite">
       {{ errorMessage }}

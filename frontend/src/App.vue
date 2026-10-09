@@ -1,13 +1,28 @@
 <template>
-  <main class="nia-app">
-    <h1 class="nia-title">Nia</h1>
+  <main class="ayame-app" :class="{ 'ayame-app--workspace': view === 'authenticated' }">
+    <header class="ayame-header">
+      <h1 class="ayame-wordmark">ayame</h1>
+      <button
+        v-if="view === 'authenticated'"
+        type="button"
+        class="btn btn-secondary"
+        data-testid="logout-button"
+        :disabled="pending"
+        @click="handleLogout"
+      >
+        {{ pending ? 'Signing out...' : 'Logout' }}
+      </button>
+    </header>
+
+    <p class="ayame-tagline">A place to think.</p>
+    <div class="ayame-divider" aria-hidden="true"></div>
 
     <div
       v-if="view === 'loading'"
       data-testid="loading-state"
       class="status-message"
     >
-      Loading Nia...
+      Loading Ayame...
     </div>
 
     <div
@@ -16,7 +31,7 @@
     >
       <h2>Unable to connect</h2>
       <p class="error-message" role="alert" aria-live="polite">
-        {{ errorMessage || 'Nia could not reach the server.' }}
+        {{ errorMessage || 'Ayame could not reach the server.' }}
       </p>
       <button
         type="button"
@@ -47,6 +62,7 @@
     <section
       v-else-if="view === 'authenticated'"
       data-testid="authenticated-shell"
+      class="workspace"
     >
       <h2>Workspace</h2>
       <p class="status-message">Your workspace is ready.</p>
@@ -58,15 +74,6 @@
       >
         {{ errorMessage }}
       </p>
-      <button
-        type="button"
-        class="btn btn-secondary"
-        data-testid="logout-button"
-        :disabled="pending"
-        @click="handleLogout"
-      >
-        {{ pending ? 'Signing out...' : 'Logout' }}
-      </button>
     </section>
   </main>
 </template>
@@ -96,7 +103,7 @@ const fetchStatus = async () => {
     }
   } catch {
     view.value = 'error'
-    errorMessage.value = 'Nia could not reach the server.'
+    errorMessage.value = 'Ayame could not reach the server.'
   }
 }
 
@@ -121,7 +128,7 @@ const handleSetupSubmit = async ({ username, password }) => {
       errorMessage.value = ''
       await fetchStatus()
     } else {
-      errorMessage.value = 'Nia could not reach the server.'
+      errorMessage.value = 'Ayame could not reach the server.'
     }
   } finally {
     pending.value = false
@@ -143,7 +150,7 @@ const handleLoginSubmit = async ({ username, password }) => {
     if (err.code === 'UNAUTHORIZED') {
       errorMessage.value = 'Invalid username or password.'
     } else {
-      errorMessage.value = 'Nia could not reach the server.'
+      errorMessage.value = 'Ayame could not reach the server.'
     }
   } finally {
     pending.value = false
@@ -166,7 +173,7 @@ const handleLogout = async () => {
       view.value = 'login'
       errorMessage.value = ''
     } else {
-      errorMessage.value = 'Nia could not reach the server.'
+      errorMessage.value = 'Ayame could not reach the server.'
     }
   } finally {
     pending.value = false
