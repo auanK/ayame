@@ -12,7 +12,7 @@ const setupAuthApp = async (vaultsRoot) => {
   await createOwner(db, { username: 'auank', password: 'password123' })
   const session = createSession(db)
   const app = createApp({ db, vaultsRoot })
-  const cookie = `nia_session=${session.rawToken}`
+  const cookie = `ayame_session=${session.rawToken}`
   return { db, app, cookie }
 }
 

@@ -1,6 +1,6 @@
-# Nia
+# Ayame
 
-Nia is a private, self-hosted personal knowledge hub for organizing notes, Markdown vaults,
+Ayame is a private, self-hosted personal knowledge hub for organizing notes, Markdown vaults,
 and other personal information in one central place.
 
 It is designed to act as a second brain while keeping the user's knowledge under their own control.
@@ -11,6 +11,9 @@ backend/  → Node.js + Fastify + JavaScript
 ```
 
 Requirements: Node.js 22.12 or newer and npm.
+
+`AYAME_DATABASE_PATH` and `AYAME_VAULTS_PATH` configure storage locations. Existing installations can
+continue using `NIA_DATABASE_PATH` and `NIA_VAULTS_PATH`.
 
 Install dependencies:
 

@@ -10,7 +10,7 @@ import {
   findExactDirectoryEntry,
 } from './filesystem.js'
 
-test('prepareVaultsRoot: 1. missing default/Nia-owned root can be created when createIfMissing = true', () => {
+test('prepareVaultsRoot: 1. missing default root can be created when createIfMissing = true', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-1-'))
   const missingRoot = path.join(tempDir, 'data', 'vaults')
 

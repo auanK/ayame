@@ -7,7 +7,7 @@ const failCorruption = (db, message = 'Database corrupted') => {
   throw new Error(message)
 }
 
-export const openDatabase = (dbPath = 'data/nia.sqlite') => {
+export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
   const isMemory = dbPath === ':memory:'
   if (!isMemory) {
     const dir = path.dirname(path.resolve(dbPath))
@@ -157,4 +157,3 @@ export const closeDatabase = (database) => {
   } catch {}
   database.close()
 }
-

@@ -2,15 +2,23 @@ import path from 'node:path'
 import { openDatabase } from './database.js'
 import { createApp } from './app.js'
 import { prepareVaultsRoot } from './vaults/filesystem.js'
+import { resolveDatabasePath, resolveVaultsRootConfig } from './runtime-config.js'
 
-const defaultDbPath = path.resolve(import.meta.dirname, '../../data/nia.sqlite')
-const dbPath = process.env.NIA_DATABASE_PATH || defaultDbPath
+const dataDirectory = path.resolve(import.meta.dirname, '../../data')
+const dbPath = resolveDatabasePath({
+  dataDirectory,
+  configuredPath: process.env.AYAME_DATABASE_PATH,
+  legacyConfiguredPath: process.env.NIA_DATABASE_PATH,
+})
 
-const defaultVaultsRoot = path.resolve(import.meta.dirname, '../../data/vaults')
-const isExplicitRoot = Boolean(process.env.NIA_VAULTS_PATH)
-const rawVaultsRoot = process.env.NIA_VAULTS_PATH || defaultVaultsRoot
-
-const vaultsRoot = prepareVaultsRoot(rawVaultsRoot, { createIfMissing: !isExplicitRoot })
+const vaultsRootConfig = resolveVaultsRootConfig({
+  defaultPath: path.join(dataDirectory, 'vaults'),
+  configuredPath: process.env.AYAME_VAULTS_PATH,
+  legacyConfiguredPath: process.env.NIA_VAULTS_PATH,
+})
+const vaultsRoot = prepareVaultsRoot(vaultsRootConfig.path, {
+  createIfMissing: vaultsRootConfig.createIfMissing,
+})
 const db = openDatabase(dbPath)
 const app = createApp({ db, vaultsRoot })
 

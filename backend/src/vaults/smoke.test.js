@@ -37,7 +37,7 @@ test('backend manual smoke sequence (sections 22, 26, 53 & 54)', async (t) => {
   await createOwner(db, { username: 'auank', password: 'password123' })
   const session = createSession(db)
   const app = createApp({ db, vaultsRoot: canonicalRoot })
-  const cookie = `nia_session=${session.rawToken}`
+  const cookie = `ayame_session=${session.rawToken}`
 
   try {
     // 5. Initial GET /vaults returns empty list

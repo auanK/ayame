@@ -7,7 +7,7 @@ import crypto from 'node:crypto'
 import Database from 'better-sqlite3'
 import { createApp } from './app.js'
 import { openDatabase, getSession } from './database.js'
-import { hashToken } from './auth/authentication.js'
+import { createSession, destroySession, hashToken } from './auth/authentication.js'
 
 test('createApp throws TypeError when database is missing or undefined', () => {
   assert.throws(
@@ -59,7 +59,7 @@ const createTestApp = ({ db, vaultsRoot = defaultTestVaultsRoot, secure } = {}) 
   return createApp({ db, vaultsRoot, secure })
 }
 
-test('serves Nia only for GET /', async (t) => {
+test('serves Ayame only for GET /', async (t) => {
   const db = openDatabase(':memory:')
   const app = createTestApp({ db })
   t.after(() => app.close())
@@ -67,7 +67,7 @@ test('serves Nia only for GET /', async (t) => {
   const response = await app.inject({ method: 'GET', url: '/' })
   assert.equal(response.statusCode, 200)
   assert.equal(response.headers['content-type'], 'text/plain; charset=utf-8')
-  assert.equal(response.body, 'Nia')
+  assert.equal(response.body, 'Ayame')
 
   for (const [method, url] of [
     ['GET', '/missing'],
@@ -287,19 +287,38 @@ test('POST /auth/login sets cookie with required flags and Secure when configure
   assert.equal(res.statusCode, 204)
   const cookie = res.headers['set-cookie']
   assert.ok(cookie)
-  assert.match(cookie, /^nia_session=[0-9a-f]{64};/)
+  assert.match(cookie, /^ayame_session=[0-9a-f]{64};/)
+  assert.doesNotMatch(cookie, /nia_session=/)
   assert.match(cookie, /HttpOnly/i)
   assert.match(cookie, /SameSite=Strict/i)
   assert.match(cookie, /Path=\//)
   assert.match(cookie, /Secure/i)
   assert.match(cookie, /Expires=/i)
 
-  const token = cookie.match(/^nia_session=([0-9a-f]{64});/)[1]
+  const token = cookie.match(/^ayame_session=([0-9a-f]{64});/)[1]
   const sessionRow = getSession(db, hashToken(token))
   assert.ok(sessionRow)
   const expiresHeader = cookie.match(/Expires=([^;]+)/i)[1]
   const cookieExpiresTime = new Date(expiresHeader).getTime()
   assert.ok(Math.abs(cookieExpiresTime - sessionRow.expires_at) < 1000)
+})
+
+test('POST /auth/login omits Secure when configured for a non-secure deployment', async (t) => {
+  const db = openDatabase(':memory:')
+  const app = createTestApp({ db, secure: false })
+  t.after(() => app.close())
+  await app.inject({
+    method: 'POST',
+    url: '/auth/owner',
+    payload: { username: 'auank', password: 'password123' },
+  })
+  const login = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'password123' },
+  })
+  assert.equal(login.statusCode, 204)
+  assert.doesNotMatch(login.headers['set-cookie'], /; Secure(?:;|$)/i)
 })
 
 test('private-by-default route behavior and fail-closed checks', async (t) => {
@@ -356,6 +375,74 @@ test('private-by-default route behavior and fail-closed checks', async (t) => {
   assert.deepEqual(resValid.json(), { secret: 'data' })
 })
 
+test('accepts valid legacy cookies and rejects expired, revoked, and malformed ones', async (t) => {
+  const db = openDatabase(':memory:')
+  const app = createTestApp({ db })
+  t.after(() => app.close())
+  app.get('/private-test', async () => ({ secret: true }))
+
+  const validLegacy = createSession(db)
+  const expiredLegacy = createSession(db, { now: Date.now() - 8 * 24 * 60 * 60 * 1000 })
+  const revokedLegacy = createSession(db)
+  destroySession(db, revokedLegacy.rawToken)
+
+  const validRes = await app.inject({
+    method: 'GET',
+    url: '/private-test',
+    headers: { cookie: `nia_session=${validLegacy.rawToken}` },
+  })
+  assert.equal(validRes.statusCode, 200)
+
+  for (const token of [expiredLegacy.rawToken, revokedLegacy.rawToken, 'malformed']) {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/private-test',
+      headers: { cookie: `nia_session=${token}` },
+    })
+    assert.equal(response.statusCode, 401)
+  }
+})
+
+test('new cookie takes precedence and invalid new cookie never falls back to a valid legacy cookie', async (t) => {
+  const db = openDatabase(':memory:')
+  const app = createTestApp({ db })
+  t.after(() => app.close())
+  app.get('/private-test', async () => ({ secret: true }))
+
+  const ayameSession = createSession(db)
+  const niaSession = createSession(db)
+  const bothCookies = `ayame_session=${ayameSession.rawToken}; nia_session=${niaSession.rawToken}`
+  const bothValid = await app.inject({
+    method: 'GET',
+    url: '/private-test',
+    headers: { cookie: bothCookies },
+  })
+  assert.equal(bothValid.statusCode, 200)
+
+  const invalidNewCookie = await app.inject({
+    method: 'GET',
+    url: '/private-test',
+    headers: { cookie: `ayame_session=invalid; nia_session=${niaSession.rawToken}` },
+  })
+  assert.equal(invalidNewCookie.statusCode, 401)
+
+  const logout = await app.inject({ method: 'POST', url: '/auth/logout', headers: { cookie: bothCookies } })
+  assert.equal(logout.statusCode, 204)
+
+  const ayameAfterLogout = await app.inject({
+    method: 'GET',
+    url: '/private-test',
+    headers: { cookie: `ayame_session=${ayameSession.rawToken}` },
+  })
+  assert.equal(ayameAfterLogout.statusCode, 401)
+  const niaAfterLogout = await app.inject({
+    method: 'GET',
+    url: '/private-test',
+    headers: { cookie: `nia_session=${niaSession.rawToken}` },
+  })
+  assert.equal(niaAfterLogout.statusCode, 200)
+})
+
 test('private access does not refresh expiry', async (t) => {
   const db = openDatabase(':memory:')
   const app = createTestApp({ db })
@@ -375,7 +462,7 @@ test('private access does not refresh expiry', async (t) => {
     payload: { username: 'auank', password: 'password123' },
   })
   const cookie = loginRes.headers['set-cookie']
-  const token = cookie.match(/nia_session=([0-9a-f]{64})/)[1]
+  const token = cookie.match(/ayame_session=([0-9a-f]{64})/)[1]
   const initialRow = getSession(db, hashToken(token))
 
   const res = await app.inject({
@@ -448,7 +535,9 @@ test('POST /auth/logout clears cookie and revokes only current session', async (
   assert.equal(logoutRes.statusCode, 204)
   const clearedCookie = logoutRes.headers['set-cookie']
   assert.ok(clearedCookie)
-  assert.match(clearedCookie, /nia_session=;/)
+  const clearedCookies = Array.isArray(clearedCookie) ? clearedCookie : [clearedCookie]
+  assert.ok(clearedCookies.some((value) => /ayame_session=;/i.test(value)))
+  assert.ok(clearedCookies.some((value) => /nia_session=;/i.test(value)))
 
   // Session 1 is now revoked
   const afterLogout1 = await app.inject({ method: 'GET', url: '/auth/status', headers: { cookie: cookie1 } })
