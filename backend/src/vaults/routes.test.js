@@ -73,6 +73,24 @@ test('vault routes fail with 401 UNAUTHORIZED without valid session', async () =
     assert.equal(resPutInvalidSession.statusCode, 401)
     assert.equal(resPutInvalidSession.headers['cache-control'], 'no-store')
     assert.deepEqual(resPutInvalidSession.json(), { error: 'UNAUTHORIZED' })
+
+    const resPostFolder = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/folders',
+      payload: { parentPath: '', name: 'Projects' },
+    })
+    assert.equal(resPostFolder.statusCode, 401)
+    assert.equal(resPostFolder.headers['cache-control'], 'no-store')
+    assert.deepEqual(resPostFolder.json(), { error: 'UNAUTHORIZED' })
+
+    const resPostNote = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      payload: { parentPath: '', name: 'Roadmap.md' },
+    })
+    assert.equal(resPostNote.statusCode, 401)
+    assert.equal(resPostNote.headers['cache-control'], 'no-store')
+    assert.deepEqual(resPostNote.json(), { error: 'UNAUTHORIZED' })
   } finally {
     await app.close()
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
@@ -848,4 +866,159 @@ test('GET /vaults/:directory/content keeps no-store after an unexpected filesyst
   })
   assert.equal(res.statusCode, 500)
   assert.equal(res.headers['cache-control'], 'no-store')
+})
+
+test('POST /vaults/:directory/folders and POST /vaults/:directory/notes create entries, preserve across restarts, and do not mutate SQLite', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-create-routes-'))
+  const dbPath = path.join(vaultsRoot, 'test-ayame.sqlite')
+  fs.mkdirSync(path.join(vaultsRoot, 'personal'))
+
+  const db1 = openDatabase(dbPath)
+  await createOwner(db1, { username: 'auank', password: 'password123' })
+  const session = createSession(db1)
+  const app1 = createApp({ db: db1, vaultsRoot })
+  const cookie = `ayame_session=${session.rawToken}`
+
+  let app1Closed = false
+  try {
+    const folderRoot = await app1.inject({
+      method: 'POST',
+      url: '/vaults/personal/folders',
+      headers: { cookie },
+      payload: { parentPath: '', name: 'Projects' },
+    })
+    assert.equal(folderRoot.statusCode, 201)
+    assert.equal(folderRoot.headers['cache-control'], 'no-store')
+    assert.deepEqual(folderRoot.json(), {
+      directory: 'personal',
+      path: 'Projects',
+      name: 'Projects',
+    })
+
+    const folderSub = await app1.inject({
+      method: 'POST',
+      url: '/vaults/personal/folders',
+      headers: { cookie },
+      payload: { parentPath: 'Projects', name: 'Architecture' },
+    })
+    assert.equal(folderSub.statusCode, 201)
+    assert.equal(folderSub.headers['cache-control'], 'no-store')
+    assert.deepEqual(folderSub.json(), {
+      directory: 'personal',
+      path: 'Projects/Architecture',
+      name: 'Architecture',
+    })
+
+    const noteSub = await app1.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      headers: { cookie },
+      payload: { parentPath: 'Projects/Architecture', name: 'Decision' },
+    })
+    assert.equal(noteSub.statusCode, 201)
+    assert.equal(noteSub.headers['cache-control'], 'no-store')
+    assert.deepEqual(noteSub.json(), {
+      directory: 'personal',
+      path: 'Projects/Architecture/Decision.md',
+      revision: revisionOf(''),
+    })
+
+    const vaultRows = db1.prepare('SELECT COUNT(*) AS count FROM vault').get().count
+    assert.equal(vaultRows, 0)
+
+    // Restart backend and verify physical entries and immediate editability
+    await app1.close()
+    app1Closed = true
+    const db2 = openDatabase(dbPath)
+    const app2 = createApp({ db: db2, vaultsRoot })
+    try {
+      const entriesRes = await app2.inject({
+        method: 'GET',
+        url: '/vaults/personal/entries?path=Projects%2FArchitecture',
+        headers: { cookie },
+      })
+      assert.equal(entriesRes.statusCode, 200)
+      assert.deepEqual(entriesRes.json(), {
+        directory: 'personal',
+        path: 'Projects/Architecture',
+        entries: [{ name: 'Decision.md', path: 'Projects/Architecture/Decision.md', type: 'file' }],
+      })
+
+      const saveRes = await app2.inject({
+        method: 'PUT',
+        url: '/vaults/personal/content?path=Projects%2FArchitecture%2FDecision.md',
+        headers: { cookie },
+        payload: { content: '# ADR 1\n', expectedRevision: revisionOf('') },
+      })
+      assert.equal(saveRes.statusCode, 200)
+      assert.equal(saveRes.json().revision, revisionOf('# ADR 1\n'))
+    } finally {
+      await app2.close()
+    }
+  } finally {
+    if (!app1Closed) await app1.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('POST /vaults/:directory/folders and /notes map validation, conflict, and type errors with Cache-Control: no-store', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-create-errors-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'personal', 'Projects'), { recursive: true })
+  fs.writeFileSync(path.join(vaultsRoot, 'personal', 'Projects', 'Existing.md'), 'keep')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const folderConflict = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/folders',
+      headers: { cookie },
+      payload: { parentPath: '', name: 'Projects' },
+    })
+    assert.equal(folderConflict.statusCode, 409)
+    assert.equal(folderConflict.headers['cache-control'], 'no-store')
+    assert.deepEqual(folderConflict.json(), { error: 'VAULT_ENTRY_EXISTS' })
+
+    const folderInvalidName = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/folders',
+      headers: { cookie },
+      payload: { parentPath: '', name: '../escape' },
+    })
+    assert.equal(folderInvalidName.statusCode, 400)
+    assert.equal(folderInvalidName.headers['cache-control'], 'no-store')
+    assert.deepEqual(folderInvalidName.json(), { error: 'INVALID_ENTRY_NAME' })
+
+    const folderMissingParent = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/folders',
+      headers: { cookie },
+      payload: { parentPath: 'Missing', name: 'Sub' },
+    })
+    assert.equal(folderMissingParent.statusCode, 404)
+    assert.equal(folderMissingParent.headers['cache-control'], 'no-store')
+    assert.deepEqual(folderMissingParent.json(), { error: 'VAULT_PATH_NOT_FOUND' })
+
+    const noteConflict = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      headers: { cookie },
+      payload: { parentPath: 'Projects', name: 'Existing' },
+    })
+    assert.equal(noteConflict.statusCode, 409)
+    assert.equal(noteConflict.headers['cache-control'], 'no-store')
+    assert.deepEqual(noteConflict.json(), { error: 'VAULT_ENTRY_EXISTS' })
+
+    const noteUnsupported = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      headers: { cookie },
+      payload: { parentPath: 'Projects', name: 'script.js' },
+    })
+    assert.equal(noteUnsupported.statusCode, 415)
+    assert.equal(noteUnsupported.headers['cache-control'], 'no-store')
+    assert.deepEqual(noteUnsupported.json(), { error: 'UNSUPPORTED_FILE_TYPE' })
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
 })

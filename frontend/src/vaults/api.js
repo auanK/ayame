@@ -293,3 +293,102 @@ export const saveVaultMarkdown = async (directory, path, { content, expectedRevi
 
   return { directory: data.directory, path: data.path, revision: data.revision }
 }
+
+const CREATE_ERROR_CODES = [
+  'INVALID_VAULT_DIRECTORY',
+  'INVALID_VAULT_PATH',
+  'INVALID_CREATE_PAYLOAD',
+  'INVALID_ENTRY_NAME',
+  'VAULT_PATH_NOT_FOUND',
+  'VAULT_PATH_NOT_DIRECTORY',
+  'VAULT_ENTRY_EXISTS',
+  'UNSUPPORTED_FILE_TYPE',
+  'VAULT_CREATE_FAILED',
+  'VAULT_CREATE_RESULT_UNKNOWN',
+]
+
+export const createVaultFolder = async (directory, { parentPath = '', name }) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/folders`
+  const response = await request(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentPath, name }),
+  }, 'FAILED_TO_CREATE_FOLDER')
+
+  if (response.status === 401) throw apiError('UNAUTHORIZED')
+  if (response.status !== 201) {
+    let errorCode
+    try {
+      errorCode = (await response.json())?.error
+    } catch {}
+    if (CREATE_ERROR_CODES.includes(errorCode)) {
+      throw apiError(errorCode)
+    }
+    throw apiError('FAILED_TO_CREATE_FOLDER')
+  }
+
+  const data = await readJson(response)
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    Array.isArray(data) ||
+    typeof data.directory !== 'string' ||
+    data.directory !== directory ||
+    typeof data.path !== 'string' ||
+    data.path.length === 0 ||
+    typeof data.name !== 'string' ||
+    data.name.length === 0
+  ) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+
+  return {
+    directory: data.directory,
+    path: data.path,
+    name: data.name,
+  }
+}
+
+export const createVaultNote = async (directory, { parentPath = '', name }) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/notes`
+  const response = await request(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentPath, name }),
+  }, 'FAILED_TO_CREATE_NOTE')
+
+  if (response.status === 401) throw apiError('UNAUTHORIZED')
+  if (response.status !== 201) {
+    let errorCode
+    try {
+      errorCode = (await response.json())?.error
+    } catch {}
+    if (CREATE_ERROR_CODES.includes(errorCode)) {
+      throw apiError(errorCode)
+    }
+    throw apiError('FAILED_TO_CREATE_NOTE')
+  }
+
+  const data = await readJson(response)
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    Array.isArray(data) ||
+    typeof data.directory !== 'string' ||
+    data.directory !== directory ||
+    typeof data.path !== 'string' ||
+    data.path.length === 0 ||
+    typeof data.revision !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(data.revision)
+  ) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+
+  return {
+    directory: data.directory,
+    path: data.path,
+    revision: data.revision,
+  }
+}

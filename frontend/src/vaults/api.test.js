@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getVaults, registerVault, unregisterVault, getVaultEntries, getVaultMarkdown, saveVaultMarkdown } from './api.js'
+import { getVaults, registerVault, unregisterVault, getVaultEntries, getVaultMarkdown, saveVaultMarkdown, createVaultFolder, createVaultNote } from './api.js'
 
 const originalFetch = globalThis.fetch
 const detected = { id: null, name: 'personal', directory: 'Personal Dir', registered: false }
@@ -392,6 +392,78 @@ describe('vault API', () => {
       globalThis.fetch = vi.fn().mockResolvedValue(response(502, { error: 'BAD_GATEWAY' }))
       await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
       expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('createVaultFolder & createVaultNote', () => {
+    it('creates a folder via POST /vaults/:directory/folders with same-origin credentials and validates response', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(201, {
+        directory: 'personal',
+        path: 'Projects/Architecture',
+        name: 'Architecture',
+      }))
+
+      const res = await createVaultFolder('personal', { parentPath: 'Projects', name: 'Architecture' })
+      expect(res).toEqual({
+        directory: 'personal',
+        path: 'Projects/Architecture',
+        name: 'Architecture',
+      })
+      expect(globalThis.fetch).toHaveBeenCalledWith('/vaults/personal/folders', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentPath: 'Projects', name: 'Architecture' }),
+      })
+    })
+
+    it('maps folder creation errors and rejects malformed 201 responses', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(401, { error: 'UNAUTHORIZED' }))
+      await expectCode(createVaultFolder('personal', { parentPath: '', name: 'A' }), 'UNAUTHORIZED')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(409, { error: 'VAULT_ENTRY_EXISTS' }))
+      await expectCode(createVaultFolder('personal', { parentPath: '', name: 'A' }), 'VAULT_ENTRY_EXISTS')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(400, { error: 'INVALID_ENTRY_NAME' }))
+      await expectCode(createVaultFolder('personal', { parentPath: '', name: 'A' }), 'INVALID_ENTRY_NAME')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(201, { directory: 'other', path: 'A', name: 'A' }))
+      await expectCode(createVaultFolder('personal', { parentPath: '', name: 'A' }), 'INVALID_VAULT_RESPONSE')
+    })
+
+    it('creates a note via POST /vaults/:directory/notes and validates revision', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(201, {
+        directory: 'personal',
+        path: 'Projects/Architecture.md',
+        revision,
+      }))
+
+      const res = await createVaultNote('personal', { parentPath: 'Projects', name: 'Architecture' })
+      expect(res).toEqual({
+        directory: 'personal',
+        path: 'Projects/Architecture.md',
+        revision,
+      })
+      expect(globalThis.fetch).toHaveBeenCalledWith('/vaults/personal/notes', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentPath: 'Projects', name: 'Architecture' }),
+      })
+    })
+
+    it('maps note creation errors including 415 UNSUPPORTED_FILE_TYPE and 409 VAULT_ENTRY_EXISTS', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(401, { error: 'UNAUTHORIZED' }))
+      await expectCode(createVaultNote('personal', { parentPath: '', name: 'A.md' }), 'UNAUTHORIZED')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(409, { error: 'VAULT_ENTRY_EXISTS' }))
+      await expectCode(createVaultNote('personal', { parentPath: '', name: 'A.md' }), 'VAULT_ENTRY_EXISTS')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(415, { error: 'UNSUPPORTED_FILE_TYPE' }))
+      await expectCode(createVaultNote('personal', { parentPath: '', name: 'A.txt' }), 'UNSUPPORTED_FILE_TYPE')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(201, { directory: 'personal', path: 'A.md', revision: 'bad' }))
+      await expectCode(createVaultNote('personal', { parentPath: '', name: 'A.md' }), 'INVALID_VAULT_RESPONSE')
     })
   })
 })

@@ -2,6 +2,20 @@ import { listVaults, registerVault, unregisterVault } from './registry.js'
 import { listVaultEntries } from './browser.js'
 import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
 import { saveVaultMarkdown } from './writer.js'
+import { createVaultFolder, createVaultNote } from './creator.js'
+
+const CREATE_ERROR_STATUS = {
+  INVALID_VAULT_DIRECTORY: 400,
+  INVALID_VAULT_PATH: 400,
+  INVALID_CREATE_PAYLOAD: 400,
+  INVALID_ENTRY_NAME: 400,
+  VAULT_PATH_NOT_DIRECTORY: 400,
+  VAULT_PATH_NOT_FOUND: 404,
+  VAULT_ENTRY_EXISTS: 409,
+  UNSUPPORTED_FILE_TYPE: 415,
+  VAULT_CREATE_FAILED: 500,
+  VAULT_CREATE_RESULT_UNKNOWN: 500,
+}
 
 export const registerVaultRoutes = (app, db, vaultsRoot) => {
   app.get('/vaults', async (req, reply) => {
@@ -98,7 +112,29 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
     }
   })
 
-  app.post('/vaults', async (req, reply) => {
+  app.post('/vaults/:directory/folders', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = createVaultFolder(vaultsRoot, req.params.directory, req.body)
+      return reply.code(201).send(result)
+    } catch (err) {
+      const status = CREATE_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.post('/vaults/:directory/notes', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = createVaultNote(vaultsRoot, req.params.directory, req.body)
+      return reply.code(201).send(result)
+    } catch (err) {
+      const status = CREATE_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.post('/vaults', { config: { noStore: true } }, async (req, reply) => {
     const { name, directory } = req.body || {}
     try {
       const vault = registerVault(db, vaultsRoot, { name, directory })
@@ -124,7 +160,7 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
     }
   })
 
-  app.delete('/vaults/:id', async (req, reply) => {
+  app.delete('/vaults/:id', { config: { noStore: true } }, async (req, reply) => {
     const { id } = req.params
     unregisterVault(db, id)
     return reply.code(204).send()

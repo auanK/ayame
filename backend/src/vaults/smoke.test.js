@@ -654,3 +654,142 @@ test('conflict-aware Markdown save smoke flow preserves files, reports uncertain
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('Obsidian-style Markdown workspace smoke flow (section 10)', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-smoke-workspace-'))
+  const vaultsRoot = path.join(tempDir, 'vaults')
+  const personalDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(personalDir, { recursive: true })
+
+  const canonicalRoot = prepareVaultsRoot(vaultsRoot, { createIfMissing: false })
+  const dbPath = path.join(tempDir, 'ayame.sqlite')
+  const db = openDatabase(dbPath)
+  const app = createApp({ db, vaultsRoot: canonicalRoot })
+
+  try {
+    // 1. Create owner via HTTP
+    const setupRes = await app.inject({
+      method: 'POST',
+      url: '/auth/owner',
+      payload: { username: 'auank', password: 'password123' },
+    })
+    assert.equal(setupRes.statusCode, 201)
+
+    // 2. Login via HTTP
+    const loginRes = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { username: 'auank', password: 'password123' },
+    })
+    assert.equal(loginRes.statusCode, 204)
+    const setCookieHeader = loginRes.headers['set-cookie']
+    const cookie = Array.isArray(setCookieHeader) ? setCookieHeader[0].split(';')[0] : setCookieHeader.split(';')[0]
+
+    const baselineDatabase = databaseSnapshot(db)
+
+    // 3. List vaults
+    const vaultsRes = await app.inject({
+      method: 'GET',
+      url: '/vaults',
+      headers: { cookie },
+    })
+    assert.equal(vaultsRes.statusCode, 200)
+    assert.equal(vaultsRes.json().vaults.length, 1)
+    assert.equal(vaultsRes.json().vaults[0].directory, 'personal')
+
+    // 4. Create folder 'Projects'
+    const folderRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/folders',
+      headers: { cookie },
+      payload: { parentPath: '', name: 'Projects' },
+    })
+    assert.equal(folderRes.statusCode, 201)
+    assert.equal(folderRes.headers['cache-control'], 'no-store')
+    assert.deepEqual(folderRes.json(), {
+      directory: 'personal',
+      path: 'Projects',
+      name: 'Projects',
+    })
+
+    // 5. Create note 'Projects/Roadmap.md'
+    const roadmapCreateRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      headers: { cookie },
+      payload: { parentPath: 'Projects', name: 'Roadmap' },
+    })
+    assert.equal(roadmapCreateRes.statusCode, 201)
+    assert.equal(roadmapCreateRes.headers['cache-control'], 'no-store')
+    const emptyRevision = revisionOf('')
+    assert.deepEqual(roadmapCreateRes.json(), {
+      directory: 'personal',
+      path: 'Projects/Roadmap.md',
+      revision: emptyRevision,
+    })
+
+    // 6. Save content with [[Architecture]] link and Markdown formatting
+    const roadmapContent = '# Roadmap\n\nSee [[Architecture]] for **core** system design.\n'
+    const saveRes = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=Projects%2FRoadmap.md',
+      headers: { cookie },
+      payload: {
+        content: roadmapContent,
+        expectedRevision: emptyRevision,
+      },
+    })
+    assert.equal(saveRes.statusCode, 200)
+    assert.equal(saveRes.json().revision, revisionOf(roadmapContent))
+
+    // 7. Create note 'Projects/Architecture.md'
+    const archCreateRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      headers: { cookie },
+      payload: { parentPath: 'Projects', name: 'Architecture.md' },
+    })
+    assert.equal(archCreateRes.statusCode, 201)
+    assert.deepEqual(archCreateRes.json(), {
+      directory: 'personal',
+      path: 'Projects/Architecture.md',
+      revision: emptyRevision,
+    })
+
+    // 8. Read both notes
+    const readRoadmap = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=Projects%2FRoadmap.md',
+      headers: { cookie },
+    })
+    assert.equal(readRoadmap.statusCode, 200)
+    assert.equal(readRoadmap.json().content, roadmapContent)
+
+    const readArch = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=Projects%2FArchitecture.md',
+      headers: { cookie },
+    })
+    assert.equal(readArch.statusCode, 200)
+    assert.equal(readArch.json().content, '')
+
+    // 9. Verify real disk persistence and absence of temporary files
+    const projectsDiskPath = path.join(personalDir, 'Projects')
+    assert.equal(fs.readFileSync(path.join(projectsDiskPath, 'Roadmap.md'), 'utf8'), roadmapContent)
+    assert.equal(fs.readFileSync(path.join(projectsDiskPath, 'Architecture.md'), 'utf8'), '')
+    assert.deepEqual(
+      fs.readdirSync(projectsDiskPath).sort(),
+      ['Architecture.md', 'Roadmap.md']
+    )
+    assert.equal(
+      fs.readdirSync(projectsDiskPath).some((entry) => entry.endsWith('.tmp')),
+      false
+    )
+
+    // 10. Verify SQLite tables/counts are completely unchanged by folder & file operations
+    assert.deepEqual(databaseSnapshot(db), baselineDatabase)
+  } finally {
+    await app.close()
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+})
