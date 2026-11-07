@@ -42,62 +42,121 @@ const validateMarkdownRelativePath = (relativePath) => {
   return relativePath
 }
 
+const fileIdentity = (stat) => {
+  if (stat.dev === 0n || stat.ino === 0n) {
+    failVault('INVALID_VAULT_PATH', 'Cannot verify file identity on this filesystem')
+  }
+  return `${stat.dev}:${stat.ino}`
+}
+
+const isWithin = (root, target) => {
+  const relative = path.relative(root, target)
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+}
+
+const snapshotVaultPath = (vaultRoot, relativePath) => {
+  const paths = [vaultRoot]
+  for (const segment of relativePath.split('/')) {
+    paths.push(path.join(paths[paths.length - 1], segment))
+  }
+
+  const stats = paths.map((target, index) => {
+    let stat
+    try {
+      stat = fs.lstatSync(target, { bigint: true })
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+        failVault('VAULT_PATH_NOT_FOUND', 'Vault path not found')
+      }
+      throw err
+    }
+
+    if (stat.isSymbolicLink()) {
+      failVault('INVALID_VAULT_PATH', 'Symbolic links are not permitted in Markdown paths')
+    }
+    if (index < paths.length - 1 && !stat.isDirectory()) {
+      failVault('VAULT_PATH_NOT_FOUND', 'Vault path not found')
+    }
+    if (index === paths.length - 1 && !stat.isFile()) {
+      failVault('VAULT_PATH_NOT_FILE', 'Vault path is not a regular file')
+    }
+
+    fileIdentity(stat)
+    return stat
+  })
+
+  return stats
+}
+
+const sameSnapshot = (expected, actual) =>
+  expected.length === actual.length &&
+  expected.every((stat, index) => fileIdentity(stat) === fileIdentity(actual[index]))
+
 /**
  * Reads a Markdown file from a vault in read-only mode with strict boundary,
  * size, and encoding checks.
  *
- * TOCTOU Note:
- * Path containment is validated via resolveExistingVaultPath and checked against
- * symlink escapes. While using read-only descriptors (fs.openSync with 'r') and
- * verifying the resulting descriptor via fs.fstatSync ensures the opened entity
- * is a regular file within the 2 MiB limit, user-space path resolution followed by
- * open is not an atomic kernel operation on general-purpose filesystems without
- * flags like openat2(RESOLVE_BENEATH).
+ * Node does not expose openat/openat2 or Windows handle-relative opens. The
+ * reader therefore checks every path component before and after opening and
+ * compares the opened handle's device/inode identity. This rejects observed
+ * substitutions, but cannot make ancestor traversal atomic against an active
+ * local process that can replace and restore directories during the checks.
  */
 export const readVaultMarkdown = (vaultsRoot, directory, rawPath) => {
   const relativePath = validateMarkdownRelativePath(rawPath)
   const vaultRoot = resolveVaultRoot(vaultsRoot, directory)
-
-  // Disallow symlink as final entry in the vault hierarchy
-  const candidatePath = path.resolve(vaultRoot, path.join(...relativePath.split('/')))
-  try {
-    const lstat = fs.lstatSync(candidatePath)
-    if (lstat.isSymbolicLink()) {
-      failVault('INVALID_VAULT_PATH', 'Direct reading of symbolic link entries is prohibited')
-    }
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      failVault('VAULT_PATH_NOT_FOUND', 'Vault path not found')
-    }
-    throw err
-  }
-
+  const initialSnapshot = snapshotVaultPath(vaultRoot, relativePath)
   const resolved = resolveExistingVaultPath(vaultRoot, relativePath)
   if (resolved.type !== 'file') {
     failVault('VAULT_PATH_NOT_FILE', 'Vault path is not a file')
   }
 
+  const beforeOpenSnapshot = snapshotVaultPath(vaultRoot, relativePath)
+  if (!sameSnapshot(initialSnapshot, beforeOpenSnapshot)) {
+    failVault('INVALID_VAULT_PATH', 'Vault path changed while it was being validated')
+  }
+
+  // Windows lacks O_NOFOLLOW; component snapshots and opened-handle identity checks still apply.
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
   let fd
   try {
-    fd = fs.openSync(resolved.absolutePath, 'r')
+    fd = fs.openSync(resolved.absolutePath, flags)
   } catch (err) {
     if (err.code === 'ENOENT') {
       failVault('VAULT_PATH_NOT_FOUND', 'Vault path not found')
+    }
+    if (err.code === 'ELOOP') {
+      failVault('INVALID_VAULT_PATH', 'Symbolic links are not permitted in Markdown paths')
     }
     throw err
   }
 
   try {
-    const stat = fs.fstatSync(fd)
+    const stat = fs.fstatSync(fd, { bigint: true })
     if (!stat.isFile()) {
       failVault('VAULT_PATH_NOT_FILE', 'Vault path is not a regular file')
     }
 
-    if (stat.size > MAX_MARKDOWN_BYTES) {
+    const openedIdentity = fileIdentity(stat)
+    if (openedIdentity !== fileIdentity(initialSnapshot.at(-1))) {
+      failVault('INVALID_VAULT_PATH', 'Opened file does not match the validated vault entry')
+    }
+
+    const afterOpenSnapshot = snapshotVaultPath(vaultRoot, relativePath)
+    if (!sameSnapshot(initialSnapshot, afterOpenSnapshot)) {
+      failVault('INVALID_VAULT_PATH', 'Vault path changed while it was being opened')
+    }
+
+    const canonicalAfterOpen = fs.realpathSync.native(resolved.absolutePath)
+    if (!isWithin(vaultRoot, canonicalAfterOpen)) {
+      failVault('INVALID_VAULT_PATH', 'Opened file is outside the vault')
+    }
+
+    if (stat.size > BigInt(MAX_MARKDOWN_BYTES)) {
       failVault('VAULT_FILE_TOO_LARGE', `File size (${stat.size} bytes) exceeds maximum limit of ${MAX_MARKDOWN_BYTES} bytes`)
     }
 
-    // Read up to MAX_MARKDOWN_BYTES + 1 to detect file growth beyond limit during read
+    // Read up to MAX_MARKDOWN_BYTES + 1 to detect file growth beyond the limit during read.
     const buffer = Buffer.alloc(MAX_MARKDOWN_BYTES + 1)
     let totalBytesRead = 0
     let chunk = 0

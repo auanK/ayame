@@ -37,6 +37,10 @@ export const createApp = ({
       return
     }
 
+    if (req.routeOptions.config?.noStore === true) {
+      reply.header('cache-control', 'no-store')
+    }
+
     const token = req.cookies?.ayame_session
     if (token) {
       const session = validateSession(db, token)

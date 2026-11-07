@@ -351,3 +351,115 @@ test('23. reader operates completely detached from SQLite with zero database wri
   const result = readVaultMarkdown(vaultsRoot, directory, 'spec.md')
   assert.equal(result.content, '# No DB')
 })
+
+test('rejects a final symlink substituted after validation without returning outside content', (t) => {
+  const { vaultsRoot, directory, vaultDir } = makeTempVault(t)
+  const notePath = path.join(vaultDir, 'note.md')
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-reader-outside-'))
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }))
+  const outsidePath = path.join(outsideDir, 'note.md')
+  fs.writeFileSync(notePath, 'authorized content')
+  fs.writeFileSync(outsidePath, 'outside sentinel')
+
+  const probe = path.join(vaultDir, 'symlink-probe.md')
+  try {
+    fs.symlinkSync(outsidePath, probe, 'file')
+    fs.unlinkSync(probe)
+  } catch {
+    t.skip('File symlink creation is not permitted in this environment')
+    return
+  }
+
+  const opened = []
+  const originalOpen = fs.openSync
+  t.mock.method(fs, 'openSync', (target, ...args) => {
+    if (path.resolve(String(target)) === notePath) {
+      fs.unlinkSync(notePath)
+      fs.symlinkSync(outsidePath, notePath, 'file')
+    }
+    const fd = originalOpen(target, ...args)
+    opened.push(fd)
+    return fd
+  })
+
+  assert.throws(
+    () => readVaultMarkdown(vaultsRoot, directory, 'note.md'),
+    (err) => err.code === 'INVALID_VAULT_PATH'
+  )
+  assert.equal(fs.readFileSync(outsidePath, 'utf8'), 'outside sentinel')
+  for (const fd of opened) {
+    assert.throws(() => fs.fstatSync(fd), (err) => err.code === 'EBADF')
+  }
+})
+
+test('rejects an ancestor junction substituted after validation without returning outside content', (t) => {
+  const { vaultsRoot, directory, vaultDir } = makeTempVault(t)
+  const projectsDir = path.join(vaultDir, 'projects')
+  const notePath = path.join(projectsDir, 'note.md')
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-reader-outside-'))
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }))
+  const outsidePath = path.join(outsideDir, 'note.md')
+  fs.mkdirSync(projectsDir)
+  fs.writeFileSync(notePath, 'authorized content')
+  fs.writeFileSync(outsidePath, 'outside sentinel')
+
+  const probe = path.join(vaultDir, 'junction-probe')
+  try {
+    fs.symlinkSync(outsideDir, probe, 'junction')
+    fs.rmdirSync(probe)
+  } catch {
+    t.skip('Directory junction creation is not supported in this environment')
+    return
+  }
+
+  const opened = []
+  const originalOpen = fs.openSync
+  t.mock.method(fs, 'openSync', (target, ...args) => {
+    if (path.resolve(String(target)) === notePath) {
+      fs.renameSync(projectsDir, path.join(vaultDir, 'projects-original'))
+      fs.symlinkSync(outsideDir, projectsDir, 'junction')
+    }
+    const fd = originalOpen(target, ...args)
+    opened.push(fd)
+    return fd
+  })
+
+  assert.throws(
+    () => readVaultMarkdown(vaultsRoot, directory, 'projects/note.md'),
+    (err) => err.code === 'INVALID_VAULT_PATH'
+  )
+  assert.equal(fs.readFileSync(outsidePath, 'utf8'), 'outside sentinel')
+  for (const fd of opened) {
+    assert.throws(() => fs.fstatSync(fd), (err) => err.code === 'EBADF')
+  }
+})
+
+test('rejects a different regular file substituted after validation', (t) => {
+  const { vaultsRoot, directory, vaultDir } = makeTempVault(t)
+  const notePath = path.join(vaultDir, 'note.md')
+  const originalPath = path.join(vaultDir, 'original.md')
+  fs.writeFileSync(notePath, 'authorized content')
+  fs.writeFileSync(originalPath, 'outside sentinel')
+
+  const opened = []
+  const originalOpen = fs.openSync
+  t.mock.method(fs, 'openSync', (target, ...args) => {
+    if (path.resolve(String(target)) === notePath) {
+      fs.renameSync(notePath, path.join(vaultDir, 'authorized.md'))
+      fs.copyFileSync(originalPath, notePath)
+    }
+    const fd = originalOpen(target, ...args)
+    opened.push(fd)
+    return fd
+  })
+
+  assert.throws(
+    () => readVaultMarkdown(vaultsRoot, directory, 'note.md'),
+    (err) => err.code === 'INVALID_VAULT_PATH'
+  )
+  assert.equal(fs.readFileSync(originalPath, 'utf8'), 'outside sentinel')
+  assert.equal(fs.readFileSync(path.join(vaultDir, 'authorized.md'), 'utf8'), 'authorized content')
+  for (const fd of opened) {
+    assert.throws(() => fs.fstatSync(fd), (err) => err.code === 'EBADF')
+  }
+})

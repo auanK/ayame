@@ -15,7 +15,7 @@ const apiError = (code) => {
 
 describe('MarkdownViewer.vue', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
   })
 
   it('1. shows loading indicator while content is being fetched', async () => {
@@ -335,5 +335,76 @@ describe('MarkdownViewer.vue', () => {
     expect(wrapper.find('button[data-testid*="save"]').exists()).toBe(false)
     expect(wrapper.find('button[data-testid*="edit"]').exists()).toBe(false)
     expect(wrapper.find('button[data-testid*="delete"]').exists()).toBe(false)
+  })
+
+  it('18. preserves a confirmed empty note after failed refresh and clears Outdated after retry', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'empty.md', content: '' })
+      .mockRejectedValueOnce(apiError('FAILED_TO_FETCH_MARKDOWN'))
+      .mockResolvedValueOnce({ directory: 'personal', path: 'empty.md', content: '' })
+
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'empty.md' },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-empty"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="markdown-refresh-button"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="markdown-error"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="markdown-stale-indicator"]').text()).toBe('Outdated')
+
+    await wrapper.find('[data-testid="markdown-refresh-button"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="markdown-stale-indicator"]').exists()).toBe(false)
+  })
+
+  it('19. refresh can replace non-empty content with an empty note', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: 'Original' })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: '' })
+
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'note.md' },
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="markdown-refresh-button"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-empty"]').exists()).toBe(true)
+  })
+
+  it('20. refresh can add content to a confirmed empty note', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: '' })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: 'Filled' })
+
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'note.md' },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-empty"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="markdown-refresh-button"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-content"]').text()).toContain('Filled')
+  })
+
+  it('21. clears confirmed content after unauthorized refresh', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: 'Protected note' })
+      .mockRejectedValueOnce(apiError('UNAUTHORIZED'))
+
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'note.md' },
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="markdown-refresh-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('unauthorized')?.length).toBe(1)
+    expect(wrapper.find('[data-testid="markdown-content"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="markdown-empty"]').exists()).toBe(false)
   })
 })

@@ -315,7 +315,7 @@ test('read-only vault browser smoke flow (section 8)', async () => {
   }
 })
 
-test('read-only markdown viewer smoke sequence (section 25)', async () => {
+test('read-only markdown viewer smoke sequence (section 25)', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-smoke-markdown-'))
   const vaultsRoot = path.join(tempDir, 'vaults')
 
@@ -330,7 +330,9 @@ test('read-only markdown viewer smoke sequence (section 25)', async () => {
   //   large.md
   const personalDir = path.join(vaultsRoot, 'personal')
   const projectsDir = path.join(personalDir, 'projects')
+  const outsideDir = path.join(tempDir, 'outside')
   fs.mkdirSync(projectsDir, { recursive: true })
+  fs.mkdirSync(outsideDir)
 
   const readmeContent = '# Personal Knowledge Hub\n\nWelcome to Ayame.\n'
   const roadmapContent = '## Q1 Roadmap\n- [ ] Viewer\n- [ ] Search\n'
@@ -344,6 +346,8 @@ test('read-only markdown viewer smoke sequence (section 25)', async () => {
   fs.writeFileSync(path.join(personalDir, 'empty.md'), '', 'utf8')
   fs.writeFileSync(path.join(personalDir, 'image.png'), imageBytes)
   fs.writeFileSync(path.join(personalDir, 'large.md'), largeBytes)
+  fs.writeFileSync(path.join(personalDir, 'race.md'), 'authorized race note')
+  fs.writeFileSync(path.join(outsideDir, 'private.md'), 'private sentinel')
 
   // 1. Initialise backend
   const canonicalRoot = prepareVaultsRoot(vaultsRoot, { createIfMissing: false })
@@ -462,6 +466,31 @@ test('read-only markdown viewer smoke sequence (section 25)', async () => {
     })
     assert.equal(resUpdatedRoadmap.statusCode, 200)
     assert.equal(resUpdatedRoadmap.json().content, updatedRoadmapContent)
+
+    // Deterministically replace a validated entry immediately before open.
+    const racePath = path.join(personalDir, 'race.md')
+    const authorizedRacePath = path.join(personalDir, 'race-authorized.md')
+    const privatePath = path.join(outsideDir, 'private.md')
+    const originalOpen = fs.openSync
+    t.mock.method(fs, 'openSync', (target, ...args) => {
+      if (path.resolve(String(target)) === racePath) {
+        fs.renameSync(racePath, authorizedRacePath)
+        fs.copyFileSync(privatePath, racePath)
+      }
+      return originalOpen(target, ...args)
+    })
+
+    const resRaced = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=race.md',
+      headers: { cookie },
+    })
+    assert.equal(resRaced.statusCode, 400)
+    assert.deepEqual(resRaced.json(), { error: 'INVALID_VAULT_PATH' })
+    assert.equal(resRaced.body.includes('private sentinel'), false)
+    assert.equal(fs.readFileSync(privatePath, 'utf8'), 'private sentinel')
+    fs.unlinkSync(racePath)
+    fs.renameSync(authorizedRacePath, racePath)
 
     // 13. External removal of empty.md
     fs.unlinkSync(path.join(personalDir, 'empty.md'))

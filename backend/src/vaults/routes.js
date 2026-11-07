@@ -31,8 +31,7 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
     }
   })
 
-  app.get('/vaults/:directory/content', async (req, reply) => {
-    reply.header('cache-control', 'no-store')
+  app.get('/vaults/:directory/content', { config: { noStore: true } }, async (req, reply) => {
     const { directory } = req.params
     const relativePath = req.query?.path ?? ''
     try {

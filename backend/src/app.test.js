@@ -386,6 +386,39 @@ test('private-by-default route behavior and fail-closed checks', async (t) => {
   assert.deepEqual(resValid.json(), { secret: 'data' })
 })
 
+test('Markdown content cache policy covers invalid and expired sessions rejected by authentication', async (t) => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-content-auth-'))
+  const db = openDatabase(':memory:')
+  const app = createApp({ db, vaultsRoot })
+  t.after(async () => {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  })
+
+  const invalid = await app.inject({
+    method: 'GET',
+    url: '/vaults/personal/content?path=note.md',
+    headers: { cookie: `ayame_session=${'a'.repeat(64)}` },
+  })
+  assert.equal(invalid.statusCode, 401)
+  assert.equal(invalid.headers['cache-control'], 'no-store')
+  assert.deepEqual(invalid.json(), { error: 'UNAUTHORIZED' })
+
+  const expired = createSession(db, { now: 1000 })
+  db.prepare('UPDATE session SET expires_at = ? WHERE token_hash = ?').run(
+    Date.now() - 1000,
+    hashToken(expired.rawToken)
+  )
+  const expiredResponse = await app.inject({
+    method: 'GET',
+    url: '/vaults/personal/content?path=note.md',
+    headers: { cookie: `ayame_session=${expired.rawToken}` },
+  })
+  assert.equal(expiredResponse.statusCode, 401)
+  assert.equal(expiredResponse.headers['cache-control'], 'no-store')
+  assert.deepEqual(expiredResponse.json(), { error: 'UNAUTHORIZED' })
+})
+
 test('unrelated cookies are ignored and never authenticate even when holding a valid session token', async (t) => {
   const db = openDatabase(':memory:')
   const app = createTestApp({ db })

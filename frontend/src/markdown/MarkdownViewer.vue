@@ -21,6 +21,7 @@ const refreshing = ref(false)
 const error = ref(null)
 const errorCode = ref(null)
 const content = ref('')
+const hasConfirmedContent = ref(false)
 const stale = ref(false)
 
 let activeRequestId = 0
@@ -42,6 +43,7 @@ const load = async (isRefresh = false) => {
     error.value = null
     errorCode.value = null
     content.value = ''
+    hasConfirmedContent.value = false
     stale.value = false
   } else {
     refreshing.value = true
@@ -52,6 +54,7 @@ const load = async (isRefresh = false) => {
     if (!isMounted || reqId !== activeRequestId) return
 
     content.value = result.content
+    hasConfirmedContent.value = true
     error.value = null
     errorCode.value = null
     stale.value = false
@@ -59,13 +62,18 @@ const load = async (isRefresh = false) => {
     if (!isMounted || reqId !== activeRequestId) return
 
     if (err.code === 'UNAUTHORIZED') {
+      content.value = ''
+      hasConfirmedContent.value = false
+      stale.value = false
+      error.value = null
+      errorCode.value = null
       emit('unauthorized')
       return
     }
 
     errorCode.value = err.code || 'FAILED_TO_FETCH_MARKDOWN'
 
-    if (isRefresh && content.value !== '') {
+    if (isRefresh && hasConfirmedContent.value) {
       stale.value = true
     } else {
       if (err.code === 'VAULT_FILE_TOO_LARGE') {
@@ -151,7 +159,7 @@ onUnmounted(() => {
 
       <!-- Not Found State -->
       <div
-        v-else-if="errorCode === 'VAULT_PATH_NOT_FOUND' && content === ''"
+        v-else-if="errorCode === 'VAULT_PATH_NOT_FOUND' && !hasConfirmedContent"
         class="state-container error-state"
         data-testid="markdown-not-found"
       >
@@ -169,7 +177,7 @@ onUnmounted(() => {
 
       <!-- Generic Error State -->
       <div
-        v-else-if="error && content === ''"
+        v-else-if="error && !hasConfirmedContent"
         class="state-container error-state"
         data-testid="markdown-error"
       >
@@ -185,7 +193,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Content State -->
-      <div v-else class="content-container">
+      <div v-else-if="hasConfirmedContent" class="content-container">
         <div v-if="content === ''" class="empty-state" data-testid="markdown-empty">
           <p>This note is empty.</p>
         </div>

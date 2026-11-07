@@ -49,6 +49,7 @@ test('vault routes fail with 401 UNAUTHORIZED without valid session', async () =
       url: '/vaults/personal/content?path=README.md',
     })
     assert.equal(resContent.statusCode, 401)
+    assert.equal(resContent.headers['cache-control'], 'no-store')
     assert.deepEqual(resContent.json(), { error: 'UNAUTHORIZED' })
   } finally {
     await app.close()
@@ -643,4 +644,30 @@ test('GET /vaults/:directory/content maps error conditions to expected HTTP stat
     await app.close()
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
   }
+})
+
+test('GET /vaults/:directory/content keeps no-store after an unexpected filesystem read failure', async (t) => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-content-io-error-'))
+  const vaultDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(vaultDir)
+  fs.writeFileSync(path.join(vaultDir, 'note.md'), 'note content')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+  t.after(async () => {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  })
+
+  t.mock.method(fs, 'readSync', () => {
+    const err = new Error('injected filesystem read failure')
+    err.code = 'EIO'
+    throw err
+  })
+
+  const res = await app.inject({
+    method: 'GET',
+    url: '/vaults/personal/content?path=note.md',
+    headers: { cookie },
+  })
+  assert.equal(res.statusCode, 500)
+  assert.equal(res.headers['cache-control'], 'no-store')
 })
