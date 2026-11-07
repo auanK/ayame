@@ -261,14 +261,14 @@ export const saveVaultMarkdown = async (directory, path, { content, expectedRevi
     if (response.status === 413 && errorCode === 'VAULT_FILE_TOO_LARGE') throw apiError(errorCode)
     if (response.status === 423 && errorCode === 'VAULT_FILE_LOCKED') throw apiError(errorCode)
     if (response.status === 415 && errorCode === 'UNSUPPORTED_FILE_TYPE') throw apiError(errorCode)
-    if (response.status === 400 && ['INVALID_VAULT_DIRECTORY', 'INVALID_VAULT_PATH', 'INVALID_MARKDOWN_PAYLOAD'].includes(errorCode)) {
+    if (response.status === 400 && ['INVALID_VAULT_DIRECTORY', 'INVALID_VAULT_PATH', 'VAULT_PATH_NOT_FILE', 'INVALID_MARKDOWN_PAYLOAD'].includes(errorCode)) {
       throw apiError(errorCode)
     }
     if (response.status === 422 && ['INVALID_FILE_ENCODING', 'INVALID_MARKDOWN_CONTENT'].includes(errorCode)) {
       throw apiError(errorCode)
     }
     if (response.status === 500 && errorCode === 'VAULT_SAVE_RESULT_UNKNOWN') throw apiError(errorCode)
-    throw apiError('FAILED_TO_SAVE_MARKDOWN')
+    throw apiError('VAULT_SAVE_RESULT_UNKNOWN')
   }
 
   let data

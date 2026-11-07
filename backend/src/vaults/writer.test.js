@@ -147,9 +147,9 @@ test('saves on different files do not share one global lock', (t) => {
 
 test('saves existing .markdown files without changing their exact line endings', (t) => {
   const { root, vault } = makeNote(t)
-  const note = path.join(vault, 'legacy.MARKDOWN')
+  const note = path.join(vault, 'uppercase.MARKDOWN')
   fs.writeFileSync(note, 'one\r\ntwo\n')
-  const result = save(root, 'one\r\nupdated\n', revisionOf('one\r\ntwo\n'), 'legacy.MARKDOWN')
+  const result = save(root, 'one\r\nupdated\n', revisionOf('one\r\ntwo\n'), 'uppercase.MARKDOWN')
   assert.equal(fs.readFileSync(note, 'utf8'), 'one\r\nupdated\n')
   assert.equal(result.revision, revisionOf('one\r\nupdated\n'))
 })

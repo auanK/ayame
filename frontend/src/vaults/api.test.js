@@ -341,17 +341,31 @@ describe('vault API', () => {
       )
     })
 
+    it('treats an HTTP 502 as an uncertain save result', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(502, { error: 'BAD_GATEWAY' }))
+      await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    })
+
     it.each([
       [401, 'UNAUTHORIZED', 'UNAUTHORIZED'],
       [404, 'VAULT_PATH_NOT_FOUND', 'VAULT_PATH_NOT_FOUND'],
+      [400, 'INVALID_VAULT_DIRECTORY', 'INVALID_VAULT_DIRECTORY'],
+      [400, 'INVALID_VAULT_PATH', 'INVALID_VAULT_PATH'],
+      [400, 'VAULT_PATH_NOT_FILE', 'VAULT_PATH_NOT_FILE'],
       [400, 'INVALID_MARKDOWN_PAYLOAD', 'INVALID_MARKDOWN_PAYLOAD'],
       [409, 'VAULT_FILE_CONFLICT', 'VAULT_FILE_CONFLICT'],
       [413, 'VAULT_FILE_TOO_LARGE', 'VAULT_FILE_TOO_LARGE'],
       [423, 'VAULT_FILE_LOCKED', 'VAULT_FILE_LOCKED'],
       [415, 'UNSUPPORTED_FILE_TYPE', 'UNSUPPORTED_FILE_TYPE'],
+      [422, 'INVALID_FILE_ENCODING', 'INVALID_FILE_ENCODING'],
       [422, 'INVALID_MARKDOWN_CONTENT', 'INVALID_MARKDOWN_CONTENT'],
       [500, 'VAULT_SAVE_RESULT_UNKNOWN', 'VAULT_SAVE_RESULT_UNKNOWN'],
-      [500, 'OTHER', 'FAILED_TO_SAVE_MARKDOWN'],
+      [500, 'OTHER', 'VAULT_SAVE_RESULT_UNKNOWN'],
+      [502, 'BAD_GATEWAY', 'VAULT_SAVE_RESULT_UNKNOWN'],
+      [503, 'SERVICE_UNAVAILABLE', 'VAULT_SAVE_RESULT_UNKNOWN'],
+      [504, 'GATEWAY_TIMEOUT', 'VAULT_SAVE_RESULT_UNKNOWN'],
+      [418, 'UNEXPECTED', 'VAULT_SAVE_RESULT_UNKNOWN'],
     ])('maps HTTP %s %s', async (status, serverCode, expected) => {
       globalThis.fetch = vi.fn().mockResolvedValue(response(status, { error: serverCode }))
       await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), expected)
@@ -366,6 +380,18 @@ describe('vault API', () => {
 
       globalThis.fetch = vi.fn().mockResolvedValue(response(200, { directory: 'other', path: 'note.md', revision }))
       await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, { directory: 'personal', path: 'other.md', revision }))
+      await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, { directory: 'personal', path: 'note.md', revision: 'invalid' }))
+      await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
+    })
+
+    it('does not retry an uncertain PUT automatically', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(502, { error: 'BAD_GATEWAY' }))
+      await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1)
     })
   })
 })

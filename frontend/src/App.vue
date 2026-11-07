@@ -7,7 +7,7 @@
         type="button"
         class="btn btn-secondary"
         data-testid="logout-button"
-        :disabled="pending || editorSaving"
+        :disabled="pending || editorSaving || editorReloading"
         @click="requestLogout"
       >
         {{ pending ? 'Signing out...' : 'Logout' }}
@@ -88,8 +88,8 @@
 
     <div v-if="logoutConfirm" class="logout-confirm" role="dialog" aria-modal="true" aria-labelledby="logout-title">
       <p id="logout-title">Discard your unsaved changes and log out?</p>
-      <button type="button" class="btn btn-secondary" data-testid="logout-keep-editing" @click="logoutConfirm = false">Keep editing</button>
-      <button type="button" class="btn btn-secondary" data-testid="logout-discard-changes" @click="confirmLogout">Discard changes and log out</button>
+      <button type="button" class="btn btn-secondary" data-testid="logout-keep-editing" :disabled="editorSaving || editorReloading" @click="logoutConfirm = false">Keep editing</button>
+      <button type="button" class="btn btn-secondary" data-testid="logout-discard-changes" :disabled="editorSaving || editorReloading" @click="confirmLogout">Discard changes and log out</button>
     </div>
   </main>
 </template>
@@ -109,6 +109,7 @@ const preservedUsername = ref('')
 const activeVault = ref(null)
 const editorDirty = ref(false)
 const editorSaving = ref(false)
+const editorReloading = ref(false)
 const logoutConfirm = ref(false)
 
 const handleOpenVault = (vault) => {
@@ -120,6 +121,7 @@ const handleCloseVault = () => {
   activeVault.value = null
   editorDirty.value = false
   editorSaving.value = false
+  editorReloading.value = false
   errorMessage.value = ''
 }
 
@@ -192,7 +194,7 @@ const handleLoginSubmit = async ({ username, password }) => {
 }
 
 const requestLogout = () => {
-  if (pending.value || editorSaving.value) return
+  if (pending.value || editorSaving.value || editorReloading.value) return
   if (editorDirty.value) {
     logoutConfirm.value = true
     return
@@ -201,6 +203,7 @@ const requestLogout = () => {
 }
 
 const confirmLogout = () => {
+  if (editorSaving.value || editorReloading.value) return
   logoutConfirm.value = false
   handleLogout()
 }
@@ -208,10 +211,11 @@ const confirmLogout = () => {
 const handleEditorState = (state) => {
   editorDirty.value = Boolean(state?.dirty)
   editorSaving.value = Boolean(state?.saving)
+  editorReloading.value = Boolean(state?.reloading)
 }
 
 const handleLogout = async () => {
-  if (pending.value) {
+  if (pending.value || editorSaving.value || editorReloading.value) {
     return
   }
   pending.value = true
@@ -222,6 +226,7 @@ const handleLogout = async () => {
     activeVault.value = null
     editorDirty.value = false
     editorSaving.value = false
+    editorReloading.value = false
     view.value = 'login'
     errorMessage.value = ''
   } catch (err) {
@@ -229,6 +234,7 @@ const handleLogout = async () => {
       activeVault.value = null
       editorDirty.value = false
       editorSaving.value = false
+      editorReloading.value = false
       view.value = 'login'
       errorMessage.value = ''
     } else {
@@ -243,6 +249,7 @@ const handleVaultUnauthorized = () => {
   activeVault.value = null
   editorDirty.value = false
   editorSaving.value = false
+  editorReloading.value = false
   logoutConfirm.value = false
   view.value = 'login'
   errorMessage.value = ''

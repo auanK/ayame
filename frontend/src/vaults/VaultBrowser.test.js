@@ -446,7 +446,7 @@ describe('VaultBrowser', () => {
       await flushPromises()
       await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
       await wrapper.find('[data-testid="markdown-editor"]').setValue('local draft')
-      expect(wrapper.emitted('state').at(-1)[0]).toEqual({ dirty: true, saving: false })
+      expect(wrapper.emitted('state').at(-1)[0]).toEqual({ dirty: true, saving: false, reloading: false })
 
       await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
       expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
@@ -456,6 +456,33 @@ describe('VaultBrowser', () => {
       await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
       await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
       expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
+    })
+
+    it('blocks browser navigation while a confirmed server reload is pending', async () => {
+      let resolveReload
+      const wrapper = await mountBrowser()
+      api.getVaultMarkdown
+        .mockResolvedValueOnce({ directory: 'personal', path: 'README.md', content: 'base', revision: 'a'.repeat(64) })
+        .mockReturnValueOnce(new Promise((resolve) => { resolveReload = resolve }))
+      api.saveVaultMarkdown.mockRejectedValueOnce(codedError('VAULT_FILE_CONFLICT'))
+
+      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+      await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
+      await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="markdown-reload-server"]').trigger('click')
+      await wrapper.find('[data-testid="markdown-confirm-reload"]').trigger('click')
+
+      expect(wrapper.find('[data-testid="back-to-vaults-button"]').attributes('disabled')).toBeDefined()
+      await wrapper.find('[data-testid="back-to-vaults-button"]').trigger('click')
+      expect(wrapper.emitted('back')).toBeUndefined()
+      expect(wrapper.find('[data-testid="navigation-discard-changes"]').exists()).toBe(false)
+
+      resolveReload({ directory: 'personal', path: 'README.md', content: 'remote', revision: 'b'.repeat(64) })
+      await flushPromises()
+      expect(wrapper.find('[data-testid="markdown-content"]').text()).toContain('remote')
     })
 
     it('guards the Vaults breadcrumb while dirty', async () => {

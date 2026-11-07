@@ -15,6 +15,7 @@ const mode = ref('view')
 const loading = ref(true)
 const refreshing = ref(false)
 const saving = ref(false)
+const reloading = ref(false)
 const error = ref(null)
 const errorCode = ref(null)
 const baseContent = ref('')
@@ -38,6 +39,7 @@ const editorText = computed(() => normalizeLineEndings(draft.value))
 
 let activeRequestId = 0
 let recoveryRequestId = 0
+let authGeneration = 0
 let isMounted = true
 let unloadHandler = null
 
@@ -85,9 +87,12 @@ function updateDraft(nextValue) {
   copyMessage.value = ''
 }
 
-const publishState = () => emit('state', { dirty: dirty.value, saving: saving.value })
+const publishState = () => emit('state', { dirty: dirty.value, saving: saving.value, reloading: reloading.value })
 
 const clearProtectedContent = () => {
+  authGeneration++
+  recoveryRequestId++
+  reloading.value = false
   mode.value = 'view'
   baseContent.value = ''
   draft.value = ''
@@ -103,6 +108,8 @@ const clearProtectedContent = () => {
 const load = async (isRefresh = false) => {
   if (isRefresh && (mode.value === 'edit' || dirty.value || saving.value)) return
   const reqId = ++activeRequestId
+  recoveryRequestId++
+  reloading.value = false
 
   if (!isRefresh) {
     loading.value = true
@@ -175,6 +182,7 @@ const cancelEdit = () => {
 
 const discardDraft = () => {
   recoveryRequestId++
+  reloading.value = false
   draft.value = baseContent.value
   mode.value = 'view'
   discardConfirm.value = false
@@ -185,7 +193,7 @@ const discardDraft = () => {
 }
 
 const save = async () => {
-  if (saving.value || !dirty.value || conflict.value || saveResultUnknown.value) return
+  if (saving.value || reloading.value || !dirty.value || conflict.value || saveResultUnknown.value) return
   if (!hasConfirmedContent.value || !revisionReady.value) {
     saveError.value = 'Reload this note to confirm its current revision before saving.'
     return
@@ -246,6 +254,7 @@ const save = async () => {
 }
 
 const verifyServer = async () => {
+  if (saving.value || reloading.value) return
   const reqId = activeRequestId
   const recoveryId = ++recoveryRequestId
   saveError.value = ''
@@ -277,11 +286,30 @@ const verifyServer = async () => {
 }
 
 const reloadServerCopy = async () => {
+  if (reloading.value || saving.value) return
   const reqId = activeRequestId
   const recoveryId = ++recoveryRequestId
+  const authId = authGeneration
+  const { directory, path } = props
+  const expectedRevision = revision.value
+  const expectedDraft = draft.value
+  reloading.value = true
+  reloadConfirm.value = false
+  saveError.value = ''
+
+  const isCurrent = () => isMounted && reqId === activeRequestId && recoveryId === recoveryRequestId &&
+    authId === authGeneration && directory === props.directory && path === props.path
   try {
-    const remote = await getVaultMarkdown(props.directory, props.path)
-    if (!isMounted || reqId !== activeRequestId || recoveryId !== recoveryRequestId) return
+    const remote = await getVaultMarkdown(directory, path)
+    if (!isCurrent()) return
+    if (remote.directory !== directory || remote.path !== path) {
+      saveError.value = 'Could not confirm the server copy. Your draft is preserved.'
+      return
+    }
+    if (revision.value !== expectedRevision || draft.value !== expectedDraft) {
+      saveError.value = 'Your draft changed while loading. The server copy was not applied.'
+      return
+    }
     baseContent.value = remote.content
     draft.value = remote.content
     revision.value = remote.revision
@@ -293,12 +321,17 @@ const reloadServerCopy = async () => {
     saveError.value = ''
     saveNotice.value = 'Loaded the current server copy.'
   } catch (err) {
-    if (!isMounted || reqId !== activeRequestId || recoveryId !== recoveryRequestId) return
+    if (!isCurrent()) return
     if (err.code === 'UNAUTHORIZED') {
       clearProtectedContent()
       emit('unauthorized')
     } else {
       saveError.value = 'Could not load the server copy. Your draft is preserved.'
+    }
+  } finally {
+    if (isCurrent()) {
+      reloading.value = false
+      publishState()
     }
   }
 }
@@ -330,6 +363,7 @@ watch(dirty, (isDirty) => {
 }, { flush: 'sync' })
 
 watch(saving, publishState, { flush: 'sync' })
+watch(reloading, publishState, { flush: 'sync' })
 watch(() => [props.directory, props.path], () => load())
 
 onMounted(() => {
@@ -343,7 +377,7 @@ onUnmounted(() => {
   activeRequestId++
   recoveryRequestId++
   if (unloadHandler) window.removeEventListener('beforeunload', unloadHandler)
-  emit('state', { dirty: false, saving: false })
+  emit('state', { dirty: false, saving: false, reloading: false })
 })
 </script>
 
@@ -355,7 +389,7 @@ onUnmounted(() => {
           type="button"
           class="back-button"
           data-testid="markdown-back-button"
-          :disabled="saving"
+          :disabled="saving || reloading"
           @click="emit('back')"
         >
           ← Back
@@ -377,7 +411,7 @@ onUnmounted(() => {
           type="button"
           class="action-button"
           data-testid="markdown-edit-button"
-          :disabled="loading || saving"
+          :disabled="loading || saving || reloading"
           @click="mode = 'edit'; saveNotice = ''; saveError = ''"
         >Edit</button>
         <button
@@ -385,7 +419,7 @@ onUnmounted(() => {
           type="button"
           class="action-button refresh-button"
           data-testid="markdown-refresh-button"
-          :disabled="loading || refreshing || saving"
+          :disabled="loading || refreshing || saving || reloading"
           @click="load(true)"
         >
           {{ refreshing ? 'Refreshing...' : 'Refresh' }}
@@ -442,25 +476,26 @@ onUnmounted(() => {
           <strong>{{ filename }}</strong>
           <span v-if="dirty" data-testid="markdown-dirty-indicator">Unsaved changes</span>
         </div>
-        <MarkdownEditor :model-value="editorText" :disabled="saving || loading" @update:model-value="updateDraft" />
+        <MarkdownEditor :model-value="editorText" :disabled="saving || reloading || loading" @update:model-value="updateDraft" />
         <p v-if="saving" class="editor-status" role="status" data-testid="markdown-saving">Saving…</p>
+        <p v-if="reloading" class="editor-status" role="status" data-testid="markdown-reloading">Loading server copy…</p>
         <p v-if="saveError" class="editor-error" role="alert" data-testid="markdown-save-error">{{ saveError }}</p>
         <p v-if="saveNotice" class="editor-status" role="status">{{ saveNotice }}</p>
         <p v-if="copyMessage" class="editor-status" role="status">{{ copyMessage }}</p>
         <div v-if="conflict" class="editor-conflict" role="alert" data-testid="markdown-conflict">
           <p>This note changed on the server. Your local draft is still here.</p>
           <button type="button" class="action-button" data-testid="markdown-copy-draft" @click="copyDraft">Copy draft</button>
-          <button type="button" class="action-button" data-testid="markdown-reload-server" @click="reloadConfirm = true">Load server copy…</button>
+          <button type="button" class="action-button" data-testid="markdown-reload-server" :disabled="reloading" @click="reloadConfirm = true">Load server copy…</button>
         </div>
         <div v-if="saveResultUnknown" class="editor-conflict" role="alert" data-testid="markdown-save-unknown">
           <p>The server may have saved this note. Verify its current contents before trying again.</p>
-          <button type="button" class="action-button" data-testid="markdown-verify-save" :disabled="saving" @click="verifyServer">Verify server copy</button>
+          <button type="button" class="action-button" data-testid="markdown-verify-save" :disabled="saving || reloading" @click="verifyServer">Verify server copy</button>
         </div>
         <div class="editor-actions">
-          <button type="button" class="action-button" data-testid="markdown-save-button" :disabled="!dirty || saving || conflict || saveResultUnknown" @click="save">
+          <button type="button" class="action-button" data-testid="markdown-save-button" :disabled="!dirty || saving || reloading || conflict || saveResultUnknown" @click="save">
             {{ saving ? 'Saving…' : 'Save' }}
           </button>
-          <button type="button" class="action-button" data-testid="markdown-cancel-button" :disabled="saving" @click="cancelEdit">Cancel</button>
+          <button type="button" class="action-button" data-testid="markdown-cancel-button" :disabled="saving || reloading" @click="cancelEdit">Cancel</button>
         </div>
         <div v-if="discardConfirm" class="editor-confirm" role="dialog" aria-modal="true" aria-labelledby="discard-title">
           <p id="discard-title">Discard your unsaved changes?</p>

@@ -679,6 +679,42 @@ describe('App authentication flow', () => {
       expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
     })
 
+    it('blocks logout while the Markdown viewer is loading the server copy', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockResolvedValue({ ok: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir', path: '',
+        entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+      })
+      let resolveReload
+      vaultApi.getVaultMarkdown
+        .mockResolvedValueOnce({ directory: 'personal-dir', path: 'README.md', content: 'base', revision: 'a'.repeat(64) })
+        .mockReturnValueOnce(new Promise((resolve) => { resolveReload = resolve }))
+      vaultApi.saveVaultMarkdown.mockRejectedValueOnce(Object.assign(new Error('conflict'), { code: 'VAULT_FILE_CONFLICT' }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+      await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
+      await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="markdown-reload-server"]').trigger('click')
+      await wrapper.find('[data-testid="markdown-confirm-reload"]').trigger('click')
+
+      expect(wrapper.find('[data-testid="logout-button"]').attributes('disabled')).toBeDefined()
+      await wrapper.find('[data-testid="logout-button"]').trigger('click')
+      expect(api.logout).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+
+      resolveReload({ directory: 'personal-dir', path: 'README.md', content: 'remote', revision: 'b'.repeat(64) })
+      await flushPromises()
+    })
+
     it('401 from viewer returns to login screen', async () => {
       api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
       vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })

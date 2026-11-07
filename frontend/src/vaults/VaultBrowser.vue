@@ -12,7 +12,7 @@
             <button
               type="button"
               class="btn-breadcrumb"
-              :disabled="editorSaving"
+              :disabled="editorSaving || editorReloading"
               @click="requestNavigation(() => emit('back'))"
             >
               Vaults
@@ -24,7 +24,7 @@
               v-if="currentPath !== '' || selectedFile !== null"
               type="button"
               class="btn-breadcrumb"
-              :disabled="loading || editorSaving"
+                :disabled="loading || editorSaving || editorReloading"
               @click="closeFileAndNavigate('')"
             >
               {{ vault.name }}
@@ -38,7 +38,7 @@
                 v-if="idx < segments.length - 1 || selectedFile !== null"
                 type="button"
                 class="btn-breadcrumb"
-                :disabled="loading || editorSaving"
+                :disabled="loading || editorSaving || editorReloading"
                 @click="closeFileAndNavigate(pathTo(idx))"
               >
                 {{ segment }}
@@ -61,7 +61,7 @@
           type="button"
           class="btn btn-secondary"
           data-testid="refresh-button"
-          :disabled="loading || editorSaving"
+          :disabled="loading || editorSaving || editorReloading"
           @click="refresh"
         >
           {{ loading ? 'Refreshing...' : 'Refresh' }}
@@ -70,6 +70,7 @@
           type="button"
           class="btn btn-secondary"
           data-testid="back-to-vaults-button"
+          :disabled="editorSaving || editorReloading"
           @click="requestNavigation(() => emit('back'))"
         >
           Back to vaults
@@ -117,7 +118,7 @@
             type="button"
             class="btn btn-secondary browser-parent-dir"
             data-testid="parent-dir-button"
-            :disabled="loading || stale || editorSaving"
+            :disabled="loading || stale || editorSaving || editorReloading"
             @click="navigateTo(parentPath)"
           >
             .. (Parent directory)
@@ -136,7 +137,7 @@
                 v-if="folder.path !== null"
                 type="button"
                 class="btn-folder"
-                :disabled="loading || stale || editorSaving"
+                :disabled="loading || stale || editorSaving || editorReloading"
                 @click="navigateTo(folder.path)"
               >
                 {{ folder.name }}/
@@ -157,7 +158,7 @@
                 type="button"
                 class="btn-file"
                 data-testid="open-file-button"
-                :disabled="loading || stale || editorSaving"
+                :disabled="loading || stale || editorSaving || editorReloading"
                 @click="openFile(file.path)"
               >
                 {{ file.name }}
@@ -177,8 +178,8 @@
 
     <div v-if="navigationConfirm" class="editor-confirm" role="dialog" aria-modal="true" aria-labelledby="navigation-title">
       <p id="navigation-title">Discard your unsaved changes?</p>
-      <button type="button" class="btn btn-secondary" data-testid="navigation-keep-editing" @click="keepEditing">Keep editing</button>
-      <button type="button" class="btn btn-secondary" data-testid="navigation-discard-changes" @click="discardAndNavigate">Discard changes</button>
+      <button type="button" class="btn btn-secondary" data-testid="navigation-keep-editing" :disabled="editorSaving || editorReloading" @click="keepEditing">Keep editing</button>
+      <button type="button" class="btn btn-secondary" data-testid="navigation-discard-changes" :disabled="editorSaving || editorReloading" @click="discardAndNavigate">Discard changes</button>
     </div>
   </section>
 </template>
@@ -206,6 +207,7 @@ const error = ref('')
 const stale = ref(false)
 const editorDirty = ref(false)
 const editorSaving = ref(false)
+const editorReloading = ref(false)
 const navigationConfirm = ref(false)
 let pendingNavigation = null
 
@@ -240,11 +242,12 @@ const closeFileAndNavigate = (targetPath) => {
 const handleEditorState = (state) => {
   editorDirty.value = Boolean(state?.dirty)
   editorSaving.value = Boolean(state?.saving)
-  emit('state', { dirty: editorDirty.value, saving: editorSaving.value })
+  editorReloading.value = Boolean(state?.reloading)
+  emit('state', { dirty: editorDirty.value, saving: editorSaving.value, reloading: editorReloading.value })
 }
 
 const requestNavigation = (action) => {
-  if (editorSaving.value) return
+  if (editorSaving.value || editorReloading.value) return
   if (editorDirty.value) {
     pendingNavigation = action
     navigationConfirm.value = true
@@ -259,6 +262,7 @@ const keepEditing = () => {
 }
 
 const discardAndNavigate = () => {
+  if (editorSaving.value || editorReloading.value) return
   const action = pendingNavigation
   navigationConfirm.value = false
   pendingNavigation = null
