@@ -4,6 +4,12 @@ import {
   parseWikilink,
   classifyLinkDestination,
   findHeadingOffset,
+  findBlockOffset,
+  extractHeadings,
+  extractBlocks,
+  extractNoteReferences,
+  resolvePendingLinkCreationTarget,
+  formatInternalLink,
 } from './links.js'
 
 const knownFiles = [
@@ -280,5 +286,199 @@ describe('Markdown & Wikilink resolution (links.js)', () => {
       from: doc.indexOf('### Introdução Geral'),
     })
     expect(findHeadingOffset(doc, 'Inexistente')).toBeNull()
+  })
+
+  it('resolves block references [[Nota#^identificador]] and locates block offsets in Markdown', () => {
+    const parsed = parseWikilink('[[Roadmap#^meta-principal|Meta Principal]]')
+    expect(parsed).toMatchObject({
+      target: 'Roadmap',
+      alias: 'Meta Principal',
+      anchor: '^meta-principal',
+      blockId: 'meta-principal',
+    })
+
+    expect(resolveLink({
+      sourcePath: 'README.md',
+      linkTarget: '[[Roadmap#^meta-principal]]',
+      knownFiles,
+    })).toEqual({
+      type: 'resolved',
+      path: 'Projects/Roadmap.md',
+      anchor: '^meta-principal',
+      blockId: 'meta-principal',
+    })
+
+    expect(resolveLink({
+      sourcePath: 'Projects/Roadmap.md',
+      linkTarget: '[[#^meta-principal]]',
+      knownFiles,
+    })).toEqual({
+      type: 'resolved',
+      path: 'Projects/Roadmap.md',
+      anchor: '^meta-principal',
+      blockId: 'meta-principal',
+    })
+
+    const doc = [
+      '# Roadmap',
+      '',
+      'Esta é a definição fundamental do universo. ^def-universo',
+      '',
+      '- Item importante ^item-1',
+    ].join('\n')
+
+    const blocks = extractBlocks(doc)
+    expect(blocks.map((b) => b.id)).toEqual(['def-universo', 'item-1'])
+
+    const hit = findBlockOffset(doc, '^def-universo')
+    expect(hit).toMatchObject({
+      id: 'def-universo',
+      line: 3,
+      from: doc.indexOf('Esta é a definição'),
+    })
+  })
+
+  it('resolves links via frontmatter aliases and distinguishes incomplete index (unverified) from missing', () => {
+    const aliasesByFile = {
+      'Projects/Roadmap.md': ['Plano Diretor', 'Cronograma 2026'],
+    }
+
+    expect(resolveLink({
+      sourcePath: 'README.md',
+      linkTarget: '[[Plano Diretor]]',
+      knownFiles,
+      aliasesByFile,
+    })).toEqual({
+      type: 'resolved',
+      path: 'Projects/Roadmap.md',
+    })
+
+    // When index is not complete yet, an unknown target is marked 'unverified', NOT 'missing'
+    expect(resolveLink({
+      sourcePath: 'README.md',
+      linkTarget: '[[AindaNaoIndexada]]',
+      knownFiles: ['README.md'],
+      indexComplete: false,
+    })).toEqual({
+      type: 'unverified',
+    })
+  })
+
+  it('calculates safe target creation path when opening a pending link', () => {
+    // Bare wikilink defaults to vault root or configured newNoteFolder
+    expect(resolvePendingLinkCreationTarget({
+      linkTarget: '[[Cosmologia]]',
+      sourcePath: 'Projects/Roadmap.md',
+    })).toEqual({
+      parentPath: '',
+      name: 'Cosmologia.md',
+      path: 'Cosmologia.md',
+      anchor: null,
+    })
+
+    // Bare wikilink with same-folder setting
+    expect(resolvePendingLinkCreationTarget({
+      linkTarget: '[[Leis Universais#Origem]]',
+      sourcePath: 'Projects/Roadmap.md',
+      newNoteLocation: 'current',
+    })).toEqual({
+      parentPath: 'Projects',
+      name: 'Leis Universais.md',
+      path: 'Projects/Leis Universais.md',
+      anchor: 'Origem',
+    })
+
+    // Explicit nested path in wikilink
+    expect(resolvePendingLinkCreationTarget({
+      linkTarget: '[[Conhecimento/Filosofia/Ontologia|Ontologia]]',
+      sourcePath: 'README.md',
+    })).toEqual({
+      parentPath: 'Conhecimento/Filosofia',
+      name: 'Ontologia.md',
+      path: 'Conhecimento/Filosofia/Ontologia.md',
+      anchor: null,
+    })
+
+    // Relative Markdown link
+    expect(resolvePendingLinkCreationTarget({
+      linkTarget: '../NovaPasta/Teoria.md',
+      sourcePath: 'Projects/Sub/Deep.md',
+      kind: 'markdown',
+    })).toEqual({
+      parentPath: 'Projects/NovaPasta',
+      name: 'Teoria.md',
+      path: 'Projects/NovaPasta/Teoria.md',
+      anchor: null,
+    })
+  })
+
+  it('formats internal links according to Obsidian link format settings (shortest, relative, absolute, wikilink vs markdown)', () => {
+    expect(formatInternalLink({
+      sourcePath: 'README.md',
+      targetPath: 'Projects/Roadmap.md',
+      allFiles: knownFiles,
+      format: 'shortest',
+      useWikilinks: true,
+    })).toBe('[[Roadmap]]')
+
+    // Design.md exists in both Projects/ and Archive/, so shortest must disambiguate with path
+    expect(formatInternalLink({
+      sourcePath: 'README.md',
+      targetPath: 'Projects/Design.md',
+      allFiles: knownFiles,
+      format: 'shortest',
+      useWikilinks: true,
+    })).toBe('[[Projects/Design]]')
+
+    expect(formatInternalLink({
+      sourcePath: 'Projects/Sub/Deep.md',
+      targetPath: 'Projects/Roadmap.md',
+      allFiles: knownFiles,
+      format: 'relative',
+      useWikilinks: false,
+      alias: 'Plano',
+    })).toBe('[Plano](../Roadmap.md)')
+
+    expect(formatInternalLink({
+      sourcePath: 'Projects/Roadmap.md',
+      targetPath: 'Notas Pessoais/Arquitetura 🌸.md',
+      allFiles: knownFiles,
+      format: 'absolute',
+      useWikilinks: false,
+    })).toBe('[Arquitetura 🌸](Notas%20Pessoais/Arquitetura%20%F0%9F%8C%B8.md)')
+  })
+
+  it('extracts all outgoing references from both Properties and Markdown body while ignoring code blocks and comments', () => {
+    const md = [
+      '---',
+      'title: Cosmologia',
+      'related:',
+      '  - "[[Física]]"',
+      '  - "[[Leis Universais|Leis]]"',
+      'parent: "[[Conhecimento/Índice]]"',
+      '---',
+      '# Cosmologia',
+      '',
+      'Veja [[Teoria da Informação#Entropia]] e [Roadmap](Projects/Roadmap.md).',
+      'Embed: ![[Diagrama#^bloco-1]].',
+      '%% Comentário ignorado [[LinkIgnorado]] %%',
+      '`[[CodigoInlineIgnorado]]`',
+      '```md',
+      '[[BlocoDeCodigoIgnorado]]',
+      '```',
+    ].join('\n')
+
+    const refs = extractNoteReferences(md, 'Cosmologia.md')
+    expect(refs.map((r) => ({ target: r.target, location: r.location, isEmbed: r.isEmbed }))).toEqual([
+      { target: 'Física', location: 'property', isEmbed: false },
+      { target: 'Leis Universais', location: 'property', isEmbed: false },
+      { target: 'Conhecimento/Índice', location: 'property', isEmbed: false },
+      { target: 'Teoria da Informação', location: 'body', isEmbed: false },
+      { target: 'Projects/Roadmap.md', location: 'body', isEmbed: false },
+      { target: 'Diagrama', location: 'body', isEmbed: true },
+    ])
+
+    const headings = extractHeadings(md)
+    expect(headings).toEqual([{ level: 1, text: 'Cosmologia', line: 8, from: md.indexOf('# Cosmologia') }])
   })
 })

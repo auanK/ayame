@@ -246,4 +246,50 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     await previewLink.trigger('click')
     expect(wrapper.emitted('open-link')?.length).toBe(2)
   })
+
+  it('9. supports Obsidian Flavored Markdown (interactive checklists, ==highlights==, %%comments%%, > [!NOTE] callouts, ^block-ids, embeds, math, footnotes, and clickable #tags)', async () => {
+    const doc = [
+      '- [ ] Tarefa interativa',
+      'Texto com ==destaque==, %%comentário interno%%, $E = mc^2$, [^1] e #conhecimento/filosofia ^bloco-chave',
+      '> [!NOTE] Nota importante',
+      '> Conteúdo do callout',
+      '![[Projects/Design]]',
+      'Linha final para posicionar o cursor.',
+    ].join('\n')
+
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: doc,
+        sourcePath: 'README.md',
+        knownFiles: ['README.md', 'Projects/Design.md'],
+      },
+    })
+
+    // Position cursor on the last line
+    wrapper.vm.setCursor(doc.length)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.cm-live-highlight').text()).toBe('destaque')
+    // %%comentário interno%% is hidden when cursor is not on it
+    expect(wrapper.findAll('.cm-line')[1].text()).not.toContain('comentário interno')
+    expect(wrapper.find('.cm-live-math').text()).toBe('E = mc^2')
+    expect(wrapper.find('.cm-live-footnote').text()).toBe('[^1]')
+    expect(wrapper.find('.cm-live-block-id').text()).toBe('^bloco-chave')
+    expect(wrapper.find('.cm-live-callout--note').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-embed').exists()).toBe(true)
+
+    const inlineTag = wrapper.find('.cm-live-tag')
+    expect(inlineTag.exists()).toBe(true)
+    await inlineTag.trigger('click')
+    expect(wrapper.emitted('click-tag')?.[0]).toEqual(['conhecimento/filosofia'])
+
+    // Click interactive checklist marker -> toggles [ ] to [x] in the document!
+    const checklistMarker = wrapper.find('.cm-live-checklist-marker')
+    expect(checklistMarker.attributes('aria-checked')).toBe('false')
+    await checklistMarker.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.getText().startsWith('- [x] Tarefa interativa')).toBe(true)
+    expect(wrapper.find('.cm-live-checklist-marker').attributes('aria-checked')).toBe('true')
+  })
 })
