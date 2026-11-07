@@ -35,7 +35,7 @@ test('validVaultName enforces name contract', () => {
 
 test('registerVault registers vault and stores metadata', () => {
   const db = openDatabase(':memory:')
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-reg-test-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-reg-test-'))
   fs.mkdirSync(path.join(vaultsRoot, 'personal'))
 
   try {
@@ -68,7 +68,7 @@ test('registerVault registers vault and stores metadata', () => {
 
 test('registerVault rejects invalid name with INVALID_VAULT_NAME', () => {
   const db = openDatabase(':memory:')
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-invalid-name-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-invalid-name-'))
   fs.mkdirSync(path.join(vaultsRoot, 'personal'))
 
   try {
@@ -88,7 +88,7 @@ test('registerVault rejects invalid name with INVALID_VAULT_NAME', () => {
 
 test('registerVault rejects non-existing directory with INVALID_VAULT_DIRECTORY', () => {
   const db = openDatabase(':memory:')
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-missing-dir-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-missing-dir-'))
 
   try {
     assert.throws(
@@ -103,7 +103,7 @@ test('registerVault rejects non-existing directory with INVALID_VAULT_DIRECTORY'
 
 test('registerVault rejects differently-cased directory alias with INVALID_VAULT_DIRECTORY', () => {
   const db = openDatabase(':memory:')
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-reg-case-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-reg-case-'))
   fs.mkdirSync(path.join(vaultsRoot, 'Personal'))
 
   try {
@@ -126,7 +126,7 @@ test('registerVault rejects differently-cased directory alias with INVALID_VAULT
 
 test('registerVault rejects duplicate directory with VAULT_ALREADY_REGISTERED', () => {
   const db = openDatabase(':memory:')
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-dup-test-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-dup-test-'))
   fs.mkdirSync(path.join(vaultsRoot, 'personal'))
 
   try {
@@ -143,7 +143,7 @@ test('registerVault rejects duplicate directory with VAULT_ALREADY_REGISTERED', 
 })
 
 test('duplicate registration across independent database connections allows only one winner', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-dup-conn-reg-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-dup-conn-reg-'))
   const dbPath = path.join(tempDir, 'dup-conn.sqlite')
   const vaultsRoot = path.join(tempDir, 'vaults')
   fs.mkdirSync(vaultsRoot)
@@ -182,7 +182,7 @@ test('duplicate registration across independent database connections allows only
 
 test('listVaults provides deterministic order by name case-insensitively then directory', () => {
   const db = openDatabase(':memory:')
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-list-order-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-list-order-'))
   fs.mkdirSync(path.join(vaultsRoot, 'dir-z'))
   fs.mkdirSync(path.join(vaultsRoot, 'dir-a'))
   fs.mkdirSync(path.join(vaultsRoot, 'dir-b'))
@@ -205,7 +205,7 @@ test('listVaults provides deterministic order by name case-insensitively then di
 
 test('unregister regression: unregistering removes metadata only and falls back to discovered vault', () => {
   const db = openDatabase(':memory:')
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-unreg-regress-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-unreg-regress-'))
   const personalDir = path.join(vaultsRoot, 'personal')
   fs.mkdirSync(personalDir)
   const sentinelFile = path.join(personalDir, 'sentinel.txt')

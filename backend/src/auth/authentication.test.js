@@ -235,7 +235,7 @@ test('two independent sessions and logout revokes only current session', (t) => 
 })
 
 test('corruption invariant: sessions without owner fail startup closed and preserve db unchanged', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-corrupt-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-corrupt-'))
   const dbPath = path.join(tempDir, 'corrupt.sqlite')
 
   try {
@@ -251,8 +251,14 @@ test('corruption invariant: sessions without owner fail startup closed and prese
         token_hash TEXT PRIMARY KEY,
         expires_at INTEGER NOT NULL
       );
+      CREATE TABLE vault (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        directory TEXT NOT NULL UNIQUE
+      );
       INSERT INTO session (token_hash, expires_at) VALUES ('dummyhash', 9999999999);
     `)
+    rawDb.pragma('user_version = 1')
     rawDb.close()
 
     // openDatabase must fail closed
@@ -261,7 +267,7 @@ test('corruption invariant: sessions without owner fail startup closed and prese
         openDatabase(dbPath)
       },
       (err) => {
-        assert.match(err.message, /Database corrupt/i)
+        assert.match(err.message, /sessions exist without owner/i)
         return true
       }
     )
@@ -282,7 +288,7 @@ test('corruption invariant: sessions without owner fail startup closed and prese
 })
 
 test('corruption invariant: partial schema with session-only fails closed without mutating schema or journal mode', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-corrupt-session-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-corrupt-session-'))
   const dbPath = path.join(tempDir, 'corrupt-session.sqlite')
 
   try {
@@ -330,7 +336,7 @@ test('corruption invariant: partial schema with session-only fails closed withou
 })
 
 test('corruption invariant: partial schema with owner-only fails closed without creating session table', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-corrupt-owner-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-corrupt-owner-'))
   const dbPath = path.join(tempDir, 'corrupt-owner.sqlite')
 
   try {
@@ -376,7 +382,7 @@ test('corruption invariant: partial schema with owner-only fails closed without 
 })
 
 test('corruption invariant: more than one owner fails closed', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-corrupt-multi-owner-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-corrupt-multi-owner-'))
   const dbPath = path.join(tempDir, 'corrupt-multi.sqlite')
 
   try {
@@ -391,14 +397,20 @@ test('corruption invariant: more than one owner fails closed', () => {
         token_hash TEXT PRIMARY KEY,
         expires_at INTEGER NOT NULL
       );
+      CREATE TABLE vault (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        directory TEXT NOT NULL UNIQUE
+      );
       INSERT INTO owner (id, username, password_hash) VALUES (1, 'u1', 'p1'), (2, 'u2', 'p2');
     `)
+    rawDb.pragma('user_version = 1')
     rawDb.close()
 
     assert.throws(
       () => openDatabase(dbPath),
       (err) => {
-        assert.match(err.message, /Database corrupt/i)
+        assert.match(err.message, /more than one owner exists/i)
         return true
       }
     )
@@ -408,7 +420,7 @@ test('corruption invariant: more than one owner fails closed', () => {
 })
 
 test('corruption invariant: unrelated existing SQLite database rejected without mutation', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-unrelated-db-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-unrelated-db-'))
   const dbPath = path.join(tempDir, 'unrelated.sqlite')
 
   try {
@@ -454,8 +466,8 @@ test('corruption invariant: unrelated existing SQLite database rejected without 
   }
 })
 
-test('corruption invariant: Nia schema mixed with unrelated table rejected without mutation', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-mixed-db-'))
+test('corruption invariant: schema mixed with unrelated table rejected without mutation', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-mixed-db-'))
   const dbPath = path.join(tempDir, 'mixed.sqlite')
 
   try {
@@ -511,7 +523,7 @@ test('corruption invariant: Nia schema mixed with unrelated table rejected witho
 })
 
 test('corruption invariant: owner with id != 1 rejected', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-wrong-owner-id-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-wrong-owner-id-'))
   const dbPath = path.join(tempDir, 'wrong-id.sqlite')
 
   try {
@@ -526,14 +538,20 @@ test('corruption invariant: owner with id != 1 rejected', () => {
         token_hash TEXT PRIMARY KEY,
         expires_at INTEGER NOT NULL
       );
+      CREATE TABLE vault (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        directory TEXT NOT NULL UNIQUE
+      );
       INSERT INTO owner (id, username, password_hash) VALUES (2, 'auank', 'somehash');
     `)
+    rawDb.pragma('user_version = 1')
     rawDb.close()
 
     assert.throws(
       () => openDatabase(dbPath),
       (err) => {
-        assert.match(err.message, /Database corrupt/i)
+        assert.match(err.message, /owner id must be 1/i)
         return true
       }
     )
@@ -543,7 +561,7 @@ test('corruption invariant: owner with id != 1 rejected', () => {
 })
 
 test('database initialization: existing truly empty SQLite file initializes normally', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-empty-file-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-empty-file-'))
   const dbPath = path.join(tempDir, 'empty.sqlite')
 
   try {
@@ -588,7 +606,7 @@ test('authenticateUser: wrong username does not structurally bypass password ver
 })
 
 test('closeDatabase preserves WAL journal mode persistently without switching to DELETE', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-wal-persist-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-wal-persist-'))
   const dbPath = path.join(tempDir, 'persist-wal.sqlite')
 
   try {

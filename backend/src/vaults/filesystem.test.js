@@ -11,7 +11,7 @@ import {
 } from './filesystem.js'
 
 test('prepareVaultsRoot: 1. missing default root can be created when createIfMissing = true', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-1-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-prep-1-'))
   const missingRoot = path.join(tempDir, 'data', 'vaults')
 
   try {
@@ -25,7 +25,7 @@ test('prepareVaultsRoot: 1. missing default root can be created when createIfMis
 })
 
 test('prepareVaultsRoot: 2. nested parents are created when needed', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-2-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-prep-2-'))
   const deeplyNested = path.join(tempDir, 'level1', 'level2', 'vaults')
 
   try {
@@ -38,7 +38,7 @@ test('prepareVaultsRoot: 2. nested parents are created when needed', () => {
 })
 
 test('prepareVaultsRoot: 3. returned root is canonical absolute directory', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-3-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-prep-3-'))
 
   try {
     const prepared = prepareVaultsRoot(tempDir, { createIfMissing: false })
@@ -50,7 +50,7 @@ test('prepareVaultsRoot: 3. returned root is canonical absolute directory', () =
 })
 
 test('prepareVaultsRoot: 4. existing normal directory is accepted', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-4-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-prep-4-'))
   const normalDir = path.join(tempDir, 'vaults')
   fs.mkdirSync(normalDir)
 
@@ -63,7 +63,7 @@ test('prepareVaultsRoot: 4. existing normal directory is accepted', () => {
 })
 
 test('prepareVaultsRoot: 5. missing explicit root with create disabled fails', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-5-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-prep-5-'))
   const missingRoot = path.join(tempDir, 'not-there')
 
   try {
@@ -78,7 +78,7 @@ test('prepareVaultsRoot: 5. missing explicit root with create disabled fails', (
 })
 
 test('prepareVaultsRoot: 6. regular file fails', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-6-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-prep-6-'))
   const regularFile = path.join(tempDir, 'file.txt')
   fs.writeFileSync(regularFile, 'not a dir')
 
@@ -120,7 +120,7 @@ test('prepareVaultsRoot: 8. filesystem root fails', () => {
 })
 
 test('prepareVaultsRoot: 9. root symlink fails where symlink creation is supported', (t) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-9-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-prep-9-'))
   const targetDir = path.join(tempDir, 'target')
   const symlinkPath = path.join(tempDir, 'symlink-root')
   fs.mkdirSync(targetDir)
@@ -144,7 +144,7 @@ test('prepareVaultsRoot: 9. root symlink fails where symlink creation is support
 })
 
 test('prepareVaultsRoot: 10. preparation never writes anything outside the requested root hierarchy', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-prep-10-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-prep-10-'))
   const sentinelFile = path.join(tempDir, 'sentinel.txt')
   fs.writeFileSync(sentinelFile, 'untouched')
   const targetRoot = path.join(tempDir, 'sub', 'vaults')
@@ -160,7 +160,7 @@ test('prepareVaultsRoot: 10. preparation never writes anything outside the reque
 })
 
 test('resolveVaultRoot validates direct child directory', () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-fs-root-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-fs-root-'))
   const canonicalRoot = fs.realpathSync.native(vaultsRoot)
   try {
     const personalDir = path.join(vaultsRoot, 'personal')
@@ -218,8 +218,8 @@ test('resolveVaultRoot validates direct child directory', () => {
 })
 
 test('resolveVaultRoot rejects symlink vault roots', (t) => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-fs-symlink-root-'))
-  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-fs-outside-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-fs-symlink-root-'))
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-fs-outside-'))
   try {
     const symlinkPath = path.join(vaultsRoot, 'linked')
     try {
@@ -240,7 +240,7 @@ test('resolveVaultRoot rejects symlink vault roots', (t) => {
 })
 
 test('resolveVaultRoot requires exact physical directory name and rejects case mismatched alias on case-insensitive filesystems', () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-fs-case-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-fs-case-'))
   try {
     const physicalName = 'Personal'
     fs.mkdirSync(path.join(vaultsRoot, physicalName))
@@ -260,7 +260,7 @@ test('resolveVaultRoot requires exact physical directory name and rejects case m
 })
 
 test('case-distinct sibling directories can coexist where filesystem supports them', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-fs-case-siblings-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-fs-case-siblings-'))
   try {
     try {
       fs.mkdirSync(path.join(tempDir, 'Foo'))
@@ -297,7 +297,7 @@ test('findExactDirectoryEntry matches only exact string equality and requires di
 })
 
 test('resolveExistingVaultPath resolves valid existing files and nested directories', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-fs-valid-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-fs-valid-'))
   const canonicalRoot = fs.realpathSync.native(tempDir)
   try {
     const noteFile = path.join(tempDir, 'note.md')
@@ -324,7 +324,7 @@ test('resolveExistingVaultPath resolves valid existing files and nested director
 })
 
 test('resolveExistingVaultPath rejects invalid paths and cross-platform traversal fail-closed', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-fs-invalid-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-fs-invalid-'))
   const canonicalRoot = fs.realpathSync.native(tempDir)
   try {
     // Missing target -> VAULT_PATH_NOT_FOUND
@@ -392,7 +392,7 @@ test('resolveExistingVaultPath rejects invalid paths and cross-platform traversa
 })
 
 test('resolveExistingVaultPath prevents sibling-prefix containment trick', () => {
-  const baseTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-sibling-base-'))
+  const baseTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-sibling-base-'))
   const vaultDir = path.join(baseTemp, 'personal')
   const siblingDir = path.join(baseTemp, 'personal2')
   fs.mkdirSync(vaultDir)
@@ -415,8 +415,8 @@ test('resolveExistingVaultPath prevents sibling-prefix containment trick', () =>
 })
 
 test('resolveExistingVaultPath prevents descendant symlink escape', (t) => {
-  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-desc-vault-'))
-  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-desc-outside-'))
+  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-desc-vault-'))
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-desc-outside-'))
   fs.writeFileSync(path.join(outsideDir, 'outside-secret.txt'), 'secret')
 
   const symlinkPath = path.join(vaultDir, 'escape')
@@ -442,7 +442,7 @@ test('resolveExistingVaultPath prevents descendant symlink escape', (t) => {
 })
 
 test('resolveExistingVaultPath allows internal-contained symlink', (t) => {
-  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-internal-symlink-'))
+  const vaultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-internal-symlink-'))
   const canonicalVault = fs.realpathSync.native(vaultDir)
   const notesDir = path.join(vaultDir, 'notes')
   fs.mkdirSync(notesDir)

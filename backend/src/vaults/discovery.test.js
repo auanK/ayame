@@ -7,7 +7,7 @@ import { openDatabase, closeDatabase } from '../database.js'
 import { discoverVaultDirectories, mergeVaults } from './discovery.js'
 
 test('1. direct child directory is discovered', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-1-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-1-'))
   try {
     fs.mkdirSync(path.join(tempDir, 'personal'))
     const discovered = discoverVaultDirectories(tempDir)
@@ -18,7 +18,7 @@ test('1. direct child directory is discovered', () => {
 })
 
 test('2. multiple directories are discovered deterministically', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-2-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-2-'))
   try {
     fs.mkdirSync(path.join(tempDir, 'zeta'))
     fs.mkdirSync(path.join(tempDir, 'Alpha'))
@@ -31,7 +31,7 @@ test('2. multiple directories are discovered deterministically', () => {
 })
 
 test('3. regular file in vaults root is ignored', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-3-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-3-'))
   try {
     fs.mkdirSync(path.join(tempDir, 'personal'))
     fs.writeFileSync(path.join(tempDir, 'readme.txt'), 'hello')
@@ -43,7 +43,7 @@ test('3. regular file in vaults root is ignored', () => {
 })
 
 test('4. nested directory is not independently discovered', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-4-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-4-'))
   try {
     const parentDir = path.join(tempDir, 'personal')
     const nestedDir = path.join(parentDir, 'subfolder')
@@ -56,8 +56,8 @@ test('4. nested directory is not independently discovered', () => {
 })
 
 test('5. direct-child symlink is not discovered as vault', (t) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-5-'))
-  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-outside-5-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-5-'))
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-outside-5-'))
   try {
     fs.mkdirSync(path.join(tempDir, 'valid-vault'))
     const symlinkPath = path.join(tempDir, 'symlinked-vault')
@@ -76,7 +76,7 @@ test('5. direct-child symlink is not discovered as vault', (t) => {
 })
 
 test('6. newly created directory appears on next discovery without restart', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-6-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-6-'))
   try {
     fs.mkdirSync(path.join(tempDir, 'first'))
     assert.deepEqual(discoverVaultDirectories(tempDir), ['first'])
@@ -89,7 +89,7 @@ test('6. newly created directory appears on next discovery without restart', () 
 })
 
 test('7. removed directory disappears on next discovery', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-7-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-7-'))
   try {
     const dirA = path.join(tempDir, 'alpha')
     const dirB = path.join(tempDir, 'beta')
@@ -106,7 +106,7 @@ test('7. removed directory disappears on next discovery', () => {
 
 test('8. discovery does not mutate SQLite', () => {
   const db = openDatabase(':memory:')
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-8-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-8-'))
   try {
     fs.mkdirSync(path.join(tempDir, 'vault-a'))
     fs.mkdirSync(path.join(tempDir, 'vault-b'))
@@ -220,7 +220,7 @@ test('13. if missing directory returns, stored metadata applies again', () => {
 })
 
 test('14. dot-prefixed directory is discovered as a vault', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-dot-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-dot-'))
   try {
     fs.mkdirSync(path.join(tempDir, '.private'))
     const discovered = discoverVaultDirectories(tempDir)

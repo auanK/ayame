@@ -12,9 +12,6 @@ import {
 } from './auth/authentication.js'
 import { registerVaultRoutes } from './vaults/routes.js'
 
-const selectSessionCookie = (cookies = {}) =>
-  Object.hasOwn(cookies, 'ayame_session') ? cookies.ayame_session : cookies.nia_session
-
 export const createApp = ({
   db,
   vaultsRoot,
@@ -40,7 +37,7 @@ export const createApp = ({
       return
     }
 
-    const token = selectSessionCookie(req.cookies)
+    const token = req.cookies?.ayame_session
     if (token) {
       const session = validateSession(db, token)
       if (session) {
@@ -112,7 +109,6 @@ export const createApp = ({
       destroySession(db, req.sessionToken)
     }
     reply.clearCookie('ayame_session', { path: '/' })
-    reply.clearCookie('nia_session', { path: '/' })
     return reply.code(204).send()
   })
 

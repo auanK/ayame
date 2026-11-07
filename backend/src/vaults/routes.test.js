@@ -17,7 +17,7 @@ const setupAuthApp = async (vaultsRoot) => {
 }
 
 test('vault routes fail with 401 UNAUTHORIZED without valid session', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-unauth-root-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-unauth-root-'))
   const db = openDatabase(':memory:')
   const app = createApp({ db, vaultsRoot })
 
@@ -50,7 +50,7 @@ test('vault routes fail with 401 UNAUTHORIZED without valid session', async () =
 })
 
 test('GET /vaults returns empty list initially when authenticated', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-empty-root-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-empty-root-'))
   const { app, cookie } = await setupAuthApp(vaultsRoot)
 
   try {
@@ -68,7 +68,7 @@ test('GET /vaults returns empty list initially when authenticated', async () => 
 })
 
 test('GET /vaults returns discovered unregistered vaults without mutating database', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-disc-route-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-route-'))
   fs.mkdirSync(path.join(vaultsRoot, 'personal'))
   fs.mkdirSync(path.join(vaultsRoot, 'work'))
   const { db, app, cookie } = await setupAuthApp(vaultsRoot)
@@ -109,7 +109,7 @@ test('GET /vaults returns discovered unregistered vaults without mutating databa
 })
 
 test('POST /vaults creates vault and returns 201 with registered public shape', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-post-reg-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-post-reg-'))
   fs.mkdirSync(path.join(vaultsRoot, 'my-vault'))
   const { app, cookie } = await setupAuthApp(vaultsRoot)
 
@@ -143,7 +143,7 @@ test('POST /vaults creates vault and returns 201 with registered public shape', 
 })
 
 test('POST /vaults rejects invalid name with 400 INVALID_VAULT_NAME', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-inv-name-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-inv-name-'))
   fs.mkdirSync(path.join(vaultsRoot, 'personal'))
   const { app, cookie } = await setupAuthApp(vaultsRoot)
 
@@ -163,7 +163,7 @@ test('POST /vaults rejects invalid name with 400 INVALID_VAULT_NAME', async () =
 })
 
 test('POST /vaults rejects invalid directory with 400 INVALID_VAULT_DIRECTORY', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-inv-dir-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-inv-dir-'))
   const { app, cookie } = await setupAuthApp(vaultsRoot)
 
   try {
@@ -204,7 +204,7 @@ test('POST /vaults rejects invalid directory with 400 INVALID_VAULT_DIRECTORY', 
 })
 
 test('POST /vaults rejects duplicate directory with 409 VAULT_ALREADY_REGISTERED', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-dup-route-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-dup-route-'))
   fs.mkdirSync(path.join(vaultsRoot, 'personal'))
   const { app, cookie } = await setupAuthApp(vaultsRoot)
 
@@ -232,7 +232,7 @@ test('POST /vaults rejects duplicate directory with 409 VAULT_ALREADY_REGISTERED
 })
 
 test('DELETE /vaults/:id unregisters metadata and falls back to detected vault', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-route-del-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-route-del-'))
   const personalDir = path.join(vaultsRoot, 'personal')
   fs.mkdirSync(personalDir)
   const sentinelFile = path.join(personalDir, 'sentinel.txt')
@@ -297,7 +297,7 @@ test('DELETE /vaults/:id unregisters metadata and falls back to detected vault',
 })
 
 test('live rescan: external creation and deletion reflected on subsequent GET /vaults', async () => {
-  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-live-rescan-'))
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-live-rescan-'))
   const { app, cookie } = await setupAuthApp(vaultsRoot)
 
   try {

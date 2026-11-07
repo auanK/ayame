@@ -3,11 +3,9 @@ import test from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import crypto from 'node:crypto'
-import Database from 'better-sqlite3'
 import { createApp } from './app.js'
 import { openDatabase, getSession } from './database.js'
-import { createSession, destroySession, hashToken } from './auth/authentication.js'
+import { createSession, hashToken } from './auth/authentication.js'
 
 test('createApp throws TypeError when database is missing or undefined', () => {
   assert.throws(
@@ -54,7 +52,7 @@ test('createApp throws TypeError when vaultsRoot is missing or undefined', () =>
   }
 })
 
-const defaultTestVaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-app-test-vaults-'))
+const defaultTestVaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-app-test-vaults-'))
 const createTestApp = ({ db, vaultsRoot = defaultTestVaultsRoot, secure } = {}) => {
   return createApp({ db, vaultsRoot, secure })
 }
@@ -288,7 +286,6 @@ test('POST /auth/login sets cookie with required flags and Secure when configure
   const cookie = res.headers['set-cookie']
   assert.ok(cookie)
   assert.match(cookie, /^ayame_session=[0-9a-f]{64};/)
-  assert.doesNotMatch(cookie, /nia_session=/)
   assert.match(cookie, /HttpOnly/i)
   assert.match(cookie, /SameSite=Strict/i)
   assert.match(cookie, /Path=\//)
@@ -338,7 +335,7 @@ test('private-by-default route behavior and fail-closed checks', async (t) => {
   const resMalformed = await app.inject({
     method: 'GET',
     url: '/private-test',
-    headers: { cookie: 'nia_session=not-a-valid-token' },
+    headers: { cookie: 'ayame_session=not-a-valid-token' },
   })
   assert.equal(resMalformed.statusCode, 401)
   assert.deepEqual(resMalformed.json(), { error: 'UNAUTHORIZED' })
@@ -347,10 +344,24 @@ test('private-by-default route behavior and fail-closed checks', async (t) => {
   const resUnknown = await app.inject({
     method: 'GET',
     url: '/private-test',
-    headers: { cookie: `nia_session=${'a'.repeat(64)}` },
+    headers: { cookie: `ayame_session=${'a'.repeat(64)}` },
   })
   assert.equal(resUnknown.statusCode, 401)
   assert.deepEqual(resUnknown.json(), { error: 'UNAUTHORIZED' })
+
+  // Expired session token
+  const expiredSession = createSession(db, { now: 1000 })
+  db.prepare('UPDATE session SET expires_at = ? WHERE token_hash = ?').run(
+    Date.now() - 1000,
+    hashToken(expiredSession.rawToken)
+  )
+  const resExpired = await app.inject({
+    method: 'GET',
+    url: '/private-test',
+    headers: { cookie: `ayame_session=${expiredSession.rawToken}` },
+  })
+  assert.equal(resExpired.statusCode, 401)
+  assert.deepEqual(resExpired.json(), { error: 'UNAUTHORIZED' })
 
   // Create owner and login
   await app.inject({
@@ -375,58 +386,69 @@ test('private-by-default route behavior and fail-closed checks', async (t) => {
   assert.deepEqual(resValid.json(), { secret: 'data' })
 })
 
-test('accepts valid legacy cookies and rejects expired, revoked, and malformed ones', async (t) => {
+test('unrelated cookies are ignored and never authenticate even when holding a valid session token', async (t) => {
   const db = openDatabase(':memory:')
   const app = createTestApp({ db })
   t.after(() => app.close())
   app.get('/private-test', async () => ({ secret: true }))
 
-  const validLegacy = createSession(db)
-  const expiredLegacy = createSession(db, { now: Date.now() - 8 * 24 * 60 * 60 * 1000 })
-  const revokedLegacy = createSession(db)
-  destroySession(db, revokedLegacy.rawToken)
+  const validTokenInDb = createSession(db)
 
-  const validRes = await app.inject({
-    method: 'GET',
-    url: '/private-test',
-    headers: { cookie: `nia_session=${validLegacy.rawToken}` },
-  })
-  assert.equal(validRes.statusCode, 200)
-
-  for (const token of [expiredLegacy.rawToken, revokedLegacy.rawToken, 'malformed']) {
-    const response = await app.inject({
+  for (const cookieHeader of [
+    `other_cookie=${validTokenInDb.rawToken}`,
+    `unrelated_session=${validTokenInDb.rawToken}`,
+    `other_cookie=value; unrelated_session=${validTokenInDb.rawToken}`,
+  ]) {
+    const res = await app.inject({
       method: 'GET',
       url: '/private-test',
-      headers: { cookie: `nia_session=${token}` },
+      headers: { cookie: cookieHeader },
     })
-    assert.equal(response.statusCode, 401)
+    assert.equal(res.statusCode, 401)
+    assert.deepEqual(res.json(), { error: 'UNAUTHORIZED' })
   }
 })
 
-test('new cookie takes precedence and invalid new cookie never falls back to a valid legacy cookie', async (t) => {
+test('ayame_session authenticates alongside unrelated cookies and fails closed when ayame_session is invalid', async (t) => {
   const db = openDatabase(':memory:')
   const app = createTestApp({ db })
   t.after(() => app.close())
   app.get('/private-test', async () => ({ secret: true }))
 
   const ayameSession = createSession(db)
-  const niaSession = createSession(db)
-  const bothCookies = `ayame_session=${ayameSession.rawToken}; nia_session=${niaSession.rawToken}`
-  const bothValid = await app.inject({
+  const otherStoredSession = createSession(db)
+
+  // 1. ayame_session alone authenticates normally
+  const ayameOnly = await app.inject({
     method: 'GET',
     url: '/private-test',
-    headers: { cookie: bothCookies },
+    headers: { cookie: `ayame_session=${ayameSession.rawToken}` },
   })
-  assert.equal(bothValid.statusCode, 200)
+  assert.equal(ayameOnly.statusCode, 200)
 
-  const invalidNewCookie = await app.inject({
+  // 2. ayame_session with other cookies authenticates using ayame_session
+  const combinedCookies = `other_cookie=abc; ayame_session=${ayameSession.rawToken}; unrelated_session=${otherStoredSession.rawToken}`
+  const withOtherCookies = await app.inject({
     method: 'GET',
     url: '/private-test',
-    headers: { cookie: `ayame_session=invalid; nia_session=${niaSession.rawToken}` },
+    headers: { cookie: combinedCookies },
   })
-  assert.equal(invalidNewCookie.statusCode, 401)
+  assert.equal(withOtherCookies.statusCode, 200)
 
-  const logout = await app.inject({ method: 'POST', url: '/auth/logout', headers: { cookie: bothCookies } })
+  // 3. Invalid ayame_session with other cookies fails closed
+  const invalidAyameCookie = await app.inject({
+    method: 'GET',
+    url: '/private-test',
+    headers: { cookie: `ayame_session=invalid; unrelated_session=${otherStoredSession.rawToken}` },
+  })
+  assert.equal(invalidAyameCookie.statusCode, 401)
+
+  // 4. Logout revokes only the session associated with ayame_session
+  const logout = await app.inject({
+    method: 'POST',
+    url: '/auth/logout',
+    headers: { cookie: combinedCookies },
+  })
   assert.equal(logout.statusCode, 204)
 
   const ayameAfterLogout = await app.inject({
@@ -435,12 +457,7 @@ test('new cookie takes precedence and invalid new cookie never falls back to a v
     headers: { cookie: `ayame_session=${ayameSession.rawToken}` },
   })
   assert.equal(ayameAfterLogout.statusCode, 401)
-  const niaAfterLogout = await app.inject({
-    method: 'GET',
-    url: '/private-test',
-    headers: { cookie: `nia_session=${niaSession.rawToken}` },
-  })
-  assert.equal(niaAfterLogout.statusCode, 200)
+  assert.ok(getSession(db, hashToken(otherStoredSession.rawToken)))
 })
 
 test('private access does not refresh expiry', async (t) => {
@@ -537,7 +554,6 @@ test('POST /auth/logout clears cookie and revokes only current session', async (
   assert.ok(clearedCookie)
   const clearedCookies = Array.isArray(clearedCookie) ? clearedCookie : [clearedCookie]
   assert.ok(clearedCookies.some((value) => /ayame_session=;/i.test(value)))
-  assert.ok(clearedCookies.some((value) => /nia_session=;/i.test(value)))
 
   // Session 1 is now revoked
   const afterLogout1 = await app.inject({ method: 'GET', url: '/auth/status', headers: { cookie: cookie1 } })
@@ -549,7 +565,7 @@ test('POST /auth/logout clears cookie and revokes only current session', async (
 })
 
 test('restart preserves owner and session', async (t) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-restart-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-restart-'))
   const dbPath = path.join(tempDir, 'persist.sqlite')
 
   try {
@@ -582,82 +598,6 @@ test('restart preserves owner and session', async (t) => {
       assert.deepEqual(statusRes.json(), { initialized: true, authenticated: true })
     } finally {
       await app2.close()
-    }
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true })
-  }
-})
-
-test('upgrade from legacy auth-only DB preserves active login cookie and initializes empty vault registry', async (t) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-upgrade-'))
-  const dbPath = path.join(tempDir, 'legacy-upgrade.sqlite')
-  const vaultDir = path.join(tempDir, 'my-vault')
-  fs.mkdirSync(vaultDir)
-
-  try {
-    const rawToken = crypto.randomBytes(32).toString('hex')
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
-    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000
-
-    const rawDb = new Database(dbPath)
-    rawDb.exec(`
-      CREATE TABLE owner (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        username TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL
-      );
-      CREATE TABLE session (
-        token_hash TEXT PRIMARY KEY,
-        expires_at INTEGER NOT NULL
-      );
-      INSERT INTO owner (id, username, password_hash) VALUES (1, 'auank', 'legacy-hash');
-      INSERT INTO session (token_hash, expires_at) VALUES ('${tokenHash}', ${expiresAt});
-    `)
-    rawDb.pragma('user_version = 0')
-    rawDb.close()
-
-    const vaultsRoot = path.join(tempDir, 'vaults')
-    fs.mkdirSync(vaultsRoot)
-
-    const db = openDatabase(dbPath)
-    const app = createApp({ db, vaultsRoot })
-    const cookie = `nia_session=${rawToken}`
-
-    try {
-      // User remains authenticated with active cookie
-      const statusRes = await app.inject({
-        method: 'GET',
-        url: '/auth/status',
-        headers: { cookie },
-      })
-      assert.equal(statusRes.statusCode, 200)
-      assert.deepEqual(statusRes.json(), { initialized: true, authenticated: true })
-
-      // Vault registry initially empty
-      const listRes = await app.inject({
-        method: 'GET',
-        url: '/vaults',
-        headers: { cookie },
-      })
-      assert.equal(listRes.statusCode, 200)
-      assert.deepEqual(listRes.json(), { vaults: [] })
-
-      // Create physical directory under vaultsRoot
-      fs.mkdirSync(path.join(vaultsRoot, 'my-vault'))
-
-      // Can register vault
-      const regRes = await app.inject({
-        method: 'POST',
-        url: '/vaults',
-        headers: { cookie },
-        payload: { name: 'Migrated Vault', directory: 'my-vault' },
-      })
-      assert.equal(regRes.statusCode, 201)
-      assert.equal(regRes.json().vault.name, 'Migrated Vault')
-      assert.equal(regRes.json().vault.directory, 'my-vault')
-      assert.equal(regRes.json().vault.registered, true)
-    } finally {
-      await app.close()
     }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true })

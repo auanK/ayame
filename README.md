@@ -12,8 +12,12 @@ backend/  → Node.js + Fastify + JavaScript
 
 Requirements: Node.js 22.12 or newer and npm.
 
-`AYAME_DATABASE_PATH` and `AYAME_VAULTS_PATH` configure storage locations. Existing installations can
-continue using `NIA_DATABASE_PATH` and `NIA_VAULTS_PATH`.
+### Configuration
+
+Storage locations are configured via environment variables:
+
+- `AYAME_DATABASE_PATH`: path to SQLite database (default: `data/ayame.sqlite`).
+- `AYAME_VAULTS_PATH`: path to vaults root directory (default: `data/vaults`).
 
 Install dependencies:
 

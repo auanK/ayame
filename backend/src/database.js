@@ -27,11 +27,6 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
     .sort()
 
   const isFresh = userTables.length === 0 && userVersion === 0
-  const isLegacyAuth =
-    userVersion === 0 &&
-    userTables.length === 2 &&
-    userTables[0] === 'owner' &&
-    userTables[1] === 'session'
   const isCurrentSchema =
     userVersion === 1 &&
     userTables.length === 3 &&
@@ -39,7 +34,7 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
     userTables[1] === 'session' &&
     userTables[2] === 'vault'
 
-  if (!isFresh && !isLegacyAuth && !isCurrentSchema) {
+  if (!isFresh && !isCurrentSchema) {
     failCorruption(db, 'Database corrupted: unexpected schema')
   }
 
@@ -87,24 +82,6 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
     })
     try {
       initialize()
-    } catch (err) {
-      db.close()
-      throw err
-    }
-  } else if (isLegacyAuth) {
-    validateOwnerSessionInvariants()
-    const migrate = db.transaction(() => {
-      db.exec(`
-        CREATE TABLE vault (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          directory TEXT NOT NULL UNIQUE
-        );
-      `)
-      db.pragma('user_version = 1')
-    })
-    try {
-      migrate()
     } catch (err) {
       db.close()
       throw err

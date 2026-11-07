@@ -37,7 +37,6 @@ describe('App authentication flow', () => {
       expect(wrapper.find('h1').text()).toBe('ayame')
       expect(wrapper.text()).toContain('A place to think.')
       expect(wrapper.text()).toContain('Loading Ayame...')
-      expect(wrapper.text()).not.toContain('Nia')
       expect(wrapper.find('form').exists()).toBe(false)
     })
 
@@ -50,7 +49,6 @@ describe('App authentication flow', () => {
       expect(wrapper.find('[data-testid="setup-form"]').exists()).toBe(true)
       expect(wrapper.text()).toContain('Create your Ayame space')
       expect(wrapper.text()).toContain('Create the owner account for this Ayame installation.')
-      expect(wrapper.text()).not.toContain('Nia')
       expect(wrapper.find('label[for="setup-username"]').text()).toBe('Username')
       expect(wrapper.find('label[for="setup-password"]').text()).toBe('Password')
     })
@@ -64,7 +62,6 @@ describe('App authentication flow', () => {
       expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
       expect(wrapper.text()).toContain('Sign in')
       expect(wrapper.find('h1').text()).toBe('ayame')
-      expect(wrapper.text()).not.toContain('Nia')
       expect(wrapper.find('label[for="login-username"]').text()).toBe('Username')
       expect(wrapper.find('label[for="login-password"]').text()).toBe('Password')
       expect(wrapper.find('button[type="submit"]').text()).toBe('Sign In')
@@ -82,7 +79,6 @@ describe('App authentication flow', () => {
       expect(wrapper.find('button[data-testid="logout-button"]').exists()).toBe(true)
       expect(wrapper.find('h1').text()).toBe('ayame')
       expect(wrapper.text()).toContain('A place to think.')
-      expect(wrapper.text()).not.toContain('Nia')
       expect(vaultApi.getVaults).toHaveBeenCalledTimes(1)
     })
 
@@ -146,7 +142,6 @@ describe('App authentication flow', () => {
 
       expect(wrapper.find('[data-testid="error-state"]').exists()).toBe(true)
       expect(wrapper.text()).toContain('Ayame could not reach the server.')
-      expect(wrapper.text()).not.toContain('Nia')
 
       api.getAuthStatus.mockResolvedValueOnce({ initialized: true, authenticated: false })
       await wrapper.find('button[data-testid="retry-button"]').trigger('click')

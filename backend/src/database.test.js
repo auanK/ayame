@@ -9,6 +9,8 @@ import {
   closeDatabase,
   getOwner,
   getSession,
+  insertOwner,
+  insertSession,
 } from './database.js'
 
 test('fresh DB initializes schema version 1 with owner, session, and vault', () => {
@@ -29,90 +31,14 @@ test('fresh DB initializes schema version 1 with owner, session, and vault', () 
   }
 })
 
-test('legacy auth-only database with user_version = 0 migrates to version 1', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-legacy-migration-'))
-  const dbPath = path.join(tempDir, 'legacy.sqlite')
-
-  try {
-    const rawDb = new Database(dbPath)
-    rawDb.exec(`
-      CREATE TABLE owner (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        username TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL
-      );
-      CREATE TABLE session (
-        token_hash TEXT PRIMARY KEY,
-        expires_at INTEGER NOT NULL
-      );
-    `)
-    rawDb.pragma('user_version = 0')
-    rawDb.close()
-
-    const db = openDatabase(dbPath)
-    try {
-      const version = db.pragma('user_version', { simple: true })
-      assert.equal(version, 1)
-
-      const tables = db
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
-        .all()
-        .map((r) => r.name)
-        .sort()
-
-      assert.deepEqual(tables, ['owner', 'session', 'vault'])
-    } finally {
-      closeDatabase(db)
-    }
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
-  }
-})
-
-test('migration preserves existing owner row', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-legacy-owner-'))
-  const dbPath = path.join(tempDir, 'legacy-owner.sqlite')
-
-  try {
-    const rawDb = new Database(dbPath)
-    rawDb.exec(`
-      CREATE TABLE owner (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        username TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL
-      );
-      CREATE TABLE session (
-        token_hash TEXT PRIMARY KEY,
-        expires_at INTEGER NOT NULL
-      );
-      INSERT INTO owner (id, username, password_hash) VALUES (1, 'auank', 'hash-1234');
-    `)
-    rawDb.pragma('user_version = 0')
-    rawDb.close()
-
-    const db = openDatabase(dbPath)
-    try {
-      const owner = getOwner(db)
-      assert.deepEqual(owner, {
-        id: 1,
-        username: 'auank',
-        password_hash: 'hash-1234',
-      })
-    } finally {
-      closeDatabase(db)
-    }
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
-  }
-})
-
-test('migration preserves existing session row', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-legacy-session-'))
-  const dbPath = path.join(tempDir, 'legacy-session.sqlite')
+test('user_version 0 with existing owner and session tables is rejected without mutation', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-unsupported-v0-'))
+  const dbPath = path.join(tempDir, 'unsupported-v0.sqlite')
 
   try {
     const expiresAt = Date.now() + 1000000
     const rawDb = new Database(dbPath)
+    rawDb.pragma('journal_mode = DELETE')
     rawDb.exec(`
       CREATE TABLE owner (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -129,41 +55,70 @@ test('migration preserves existing session row', () => {
     rawDb.pragma('user_version = 0')
     rawDb.close()
 
-    const db = openDatabase(dbPath)
+    assert.throws(
+      () => {
+        const unexpectedDb = openDatabase(dbPath)
+        closeDatabase(unexpectedDb)
+      },
+      (err) => {
+        assert.match(err.message, /Database corrupt/i)
+        return true
+      }
+    )
+
+    const inspectDb = new Database(dbPath)
     try {
-      const session = getSession(db, 'tok-hash-1')
-      assert.deepEqual(session, {
-        token_hash: 'tok-hash-1',
-        expires_at: expiresAt,
-      })
+      const version = inspectDb.pragma('user_version', { simple: true })
+      const journalMode = inspectDb.pragma('journal_mode', { simple: true })
+      const tables = inspectDb
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .all()
+        .map((r) => r.name)
+        .sort()
+      const owners = inspectDb.prepare('SELECT id, username, password_hash FROM owner').all()
+      const sessions = inspectDb.prepare('SELECT token_hash, expires_at FROM session').all()
+
+      assert.equal(version, 0)
+      assert.equal(String(journalMode).toLowerCase(), 'delete')
+      assert.deepEqual(tables, ['owner', 'session'])
+      assert.deepEqual(owners, [{ id: 1, username: 'auank', password_hash: 'hash-1234' }])
+      assert.deepEqual(sessions, [{ token_hash: 'tok-hash-1', expires_at: expiresAt }])
     } finally {
-      closeDatabase(db)
+      inspectDb.close()
     }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 })
 
-test('version 1 schema reopens normally', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-v1-reopen-'))
+test('version 1 schema reopens and preserves owner, session, and vault rows', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-v1-reopen-'))
   const dbPath = path.join(tempDir, 'v1.sqlite')
 
   try {
+    const expiresAt = Date.now() + 1000000
     const db1 = openDatabase(dbPath)
-    const version1 = db1.pragma('user_version', { simple: true })
-    assert.equal(version1, 1)
+    assert.equal(db1.pragma('user_version', { simple: true }), 1)
+    insertOwner(db1, 'auank', 'hash-1234')
+    insertSession(db1, 'tok-hash-1', expiresAt)
+    db1.prepare('INSERT INTO vault (id, name, directory) VALUES (?, ?, ?)').run('v-1', 'Notes', 'notes')
     closeDatabase(db1)
 
     const db2 = openDatabase(dbPath)
     try {
-      const version2 = db2.pragma('user_version', { simple: true })
-      assert.equal(version2, 1)
+      assert.equal(db2.pragma('user_version', { simple: true }), 1)
       const tables = db2
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
         .all()
         .map((r) => r.name)
         .sort()
       assert.deepEqual(tables, ['owner', 'session', 'vault'])
+      assert.deepEqual(getOwner(db2), { id: 1, username: 'auank', password_hash: 'hash-1234' })
+      assert.deepEqual(getSession(db2, 'tok-hash-1'), { token_hash: 'tok-hash-1', expires_at: expiresAt })
+      assert.deepEqual(
+        db2.prepare('SELECT id, name, directory FROM vault').all(),
+        [{ id: 'v-1', name: 'Notes', directory: 'notes' }]
+      )
     } finally {
       closeDatabase(db2)
     }
@@ -173,7 +128,7 @@ test('version 1 schema reopens normally', () => {
 })
 
 test('version 1 with missing vault fails closed', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-v1-missing-vault-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-v1-missing-vault-'))
   const dbPath = path.join(tempDir, 'missing-vault.sqlite')
 
   try {
@@ -193,7 +148,10 @@ test('version 1 with missing vault fails closed', () => {
     rawDb.close()
 
     assert.throws(
-      () => openDatabase(dbPath),
+      () => {
+        const unexpectedDb = openDatabase(dbPath)
+        closeDatabase(unexpectedDb)
+      },
       (err) => {
         assert.match(err.message, /Database corrupt/i)
         return true
@@ -205,7 +163,7 @@ test('version 1 with missing vault fails closed', () => {
 })
 
 test('unknown future user_version fails closed', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-future-version-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-future-version-'))
   const dbPath = path.join(tempDir, 'future.sqlite')
 
   try {
@@ -230,7 +188,10 @@ test('unknown future user_version fails closed', () => {
     rawDb.close()
 
     assert.throws(
-      () => openDatabase(dbPath),
+      () => {
+        const unexpectedDb = openDatabase(dbPath)
+        closeDatabase(unexpectedDb)
+      },
       (err) => {
         assert.match(err.message, /Database corrupt/i)
         return true
@@ -241,9 +202,9 @@ test('unknown future user_version fails closed', () => {
   }
 })
 
-test('legacy auth schema mixed with unrelated table remains rejected', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-legacy-mixed-'))
-  const dbPath = path.join(tempDir, 'legacy-mixed.sqlite')
+test('schema mixed with unexpected table is rejected without mutation', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-mixed-tables-'))
+  const dbPath = path.join(tempDir, 'mixed.sqlite')
 
   try {
     const rawDb = new Database(dbPath)
@@ -266,7 +227,10 @@ test('legacy auth schema mixed with unrelated table remains rejected', () => {
     rawDb.close()
 
     assert.throws(
-      () => openDatabase(dbPath),
+      () => {
+        const unexpectedDb = openDatabase(dbPath)
+        closeDatabase(unexpectedDb)
+      },
       (err) => {
         assert.match(err.message, /Database corrupt/i)
         return true
@@ -278,7 +242,7 @@ test('legacy auth schema mixed with unrelated table remains rejected', () => {
 })
 
 test('failed/rejected schema inspection does not create vault table', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-corrupt-no-create-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-corrupt-no-create-'))
   const dbPath = path.join(tempDir, 'corrupt.sqlite')
 
   try {
@@ -293,7 +257,10 @@ test('failed/rejected schema inspection does not create vault table', () => {
     rawDb.close()
 
     assert.throws(
-      () => openDatabase(dbPath),
+      () => {
+        const unexpectedDb = openDatabase(dbPath)
+        closeDatabase(unexpectedDb)
+      },
       (err) => {
         assert.match(err.message, /Database corrupt/i)
         return true
@@ -316,7 +283,7 @@ test('failed/rejected schema inspection does not create vault table', () => {
 })
 
 test('fresh initialization rolls back all schema changes when initialization fails', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-fresh-rollback-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-fresh-rollback-'))
   const dbPath = path.join(tempDir, 'fresh-fail.sqlite')
 
   try {
@@ -356,7 +323,7 @@ test('fresh initialization rolls back all schema changes when initialization fai
 })
 
 test('discarded root_path vault schema is rejected without mutation', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-discarded-root-path-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-discarded-root-path-'))
   const dbPath = path.join(tempDir, 'discarded.sqlite')
 
   try {
@@ -381,7 +348,10 @@ test('discarded root_path vault schema is rejected without mutation', () => {
     rawDb.close()
 
     assert.throws(
-      () => openDatabase(dbPath),
+      () => {
+        const unexpectedDb = openDatabase(dbPath)
+        closeDatabase(unexpectedDb)
+      },
       (err) => {
         assert.match(err.message, /Database corrupt/i)
         return true

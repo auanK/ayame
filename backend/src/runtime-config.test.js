@@ -12,7 +12,7 @@ const makeDataDirectory = (t) => {
   return dataDirectory
 }
 
-test('resolveDatabasePath uses the Ayame default when neither database exists', (t) => {
+test('resolveDatabasePath returns the default ayame.sqlite path when configuredPath is omitted', (t) => {
   const dataDirectory = makeDataDirectory(t)
   assert.equal(
     resolveDatabasePath({ dataDirectory }),
@@ -20,98 +20,78 @@ test('resolveDatabasePath uses the Ayame default when neither database exists', 
   )
 })
 
-test('resolveDatabasePath keeps using the sole existing legacy database', (t) => {
+test('resolveDatabasePath returns configuredPath when explicitly defined', (t) => {
   const dataDirectory = makeDataDirectory(t)
-  const legacyPath = path.join(dataDirectory, 'nia.sqlite')
-  fs.writeFileSync(legacyPath, 'legacy database')
-  assert.equal(resolveDatabasePath({ dataDirectory }), legacyPath)
-})
-
-test('resolveDatabasePath uses the sole existing Ayame database', (t) => {
-  const dataDirectory = makeDataDirectory(t)
-  const ayamePath = path.join(dataDirectory, 'ayame.sqlite')
-  fs.writeFileSync(ayamePath, 'ayame database')
-  assert.equal(resolveDatabasePath({ dataDirectory }), ayamePath)
-})
-
-test('resolveDatabasePath rejects both default database names explicitly', (t) => {
-  const dataDirectory = makeDataDirectory(t)
-  fs.writeFileSync(path.join(dataDirectory, 'nia.sqlite'), 'legacy database')
-  fs.writeFileSync(path.join(dataDirectory, 'ayame.sqlite'), 'ayame database')
-  assert.throws(() => resolveDatabasePath({ dataDirectory }), /ambiguous database state/i)
-})
-
-test('resolveDatabasePath honors Ayame and legacy explicit configuration', (t) => {
-  const dataDirectory = makeDataDirectory(t)
-  const ayamePath = path.join(dataDirectory, 'custom-ayame.sqlite')
-  const legacyPath = path.join(dataDirectory, 'custom-nia.sqlite')
+  const customPath = path.join(dataDirectory, 'custom-ayame.sqlite')
   assert.equal(
-    resolveDatabasePath({ dataDirectory, configuredPath: ayamePath }),
-    ayamePath
-  )
-  assert.equal(
-    resolveDatabasePath({ dataDirectory, legacyConfiguredPath: legacyPath }),
-    legacyPath
+    resolveDatabasePath({ dataDirectory, configuredPath: customPath }),
+    customPath
   )
 })
 
-test('resolveDatabasePath rejects conflicting or empty explicit configuration', (t) => {
+test('resolveDatabasePath rejects empty, whitespace-only, or null-byte configuredPath values', (t) => {
   const dataDirectory = makeDataDirectory(t)
-  assert.throws(
-    () => resolveDatabasePath({ dataDirectory, configuredPath: '/new.sqlite', legacyConfiguredPath: '/old.sqlite' }),
-    /conflict/i
-  )
-  assert.throws(
-    () => resolveDatabasePath({ dataDirectory, configuredPath: '', legacyConfiguredPath: '' }),
-    /conflict/i
-  )
-  assert.throws(() => resolveDatabasePath({ dataDirectory, configuredPath: '' }), /non-empty/i)
-  assert.throws(() => resolveDatabasePath({ dataDirectory, legacyConfiguredPath: '' }), /non-empty/i)
+  for (const invalidValue of ['', '   ', 'bad\0path.sqlite', 123, null]) {
+    assert.throws(
+      () => resolveDatabasePath({ dataDirectory, configuredPath: invalidValue }),
+      /AYAME_DATABASE_PATH must be a non-empty valid path/
+    )
+  }
 })
 
-test('database selection leaves both database files untouched', (t) => {
+test('unrelated files in dataDirectory do not alter default database resolution and remain untouched', (t) => {
   const dataDirectory = makeDataDirectory(t)
-  const legacyPath = path.join(dataDirectory, 'nia.sqlite')
-  const ayamePath = path.join(dataDirectory, 'ayame.sqlite')
-  fs.writeFileSync(legacyPath, 'legacy bytes')
-  const before = fs.readFileSync(legacyPath)
+  const unrelatedSqlite = path.join(dataDirectory, 'unrelated.sqlite')
+  const notesDb = path.join(dataDirectory, 'notes.db')
+  fs.writeFileSync(unrelatedSqlite, 'unrelated-sqlite-bytes')
+  fs.writeFileSync(notesDb, 'notes-db-bytes')
 
-  assert.equal(resolveDatabasePath({ dataDirectory }), legacyPath)
-  assert.deepEqual(fs.readFileSync(legacyPath), before)
-  assert.equal(fs.existsSync(ayamePath), false)
+  const resolved = resolveDatabasePath({ dataDirectory })
+  assert.equal(resolved, path.join(dataDirectory, 'ayame.sqlite'))
+  assert.equal(fs.readFileSync(unrelatedSqlite, 'utf8'), 'unrelated-sqlite-bytes')
+  assert.equal(fs.readFileSync(notesDb, 'utf8'), 'notes-db-bytes')
+  assert.equal(fs.existsSync(resolved), false)
 })
 
-test('resolveVaultsRootConfig preserves either configured path and rejects ambiguity or emptiness', (t) => {
+test('resolveVaultsRootConfig uses defaultPath with createIfMissing true when configuredPath is omitted', (t) => {
+  const defaultPath = path.join(makeDataDirectory(t), 'vaults')
+  assert.deepEqual(
+    resolveVaultsRootConfig({ defaultPath }),
+    { path: defaultPath, createIfMissing: true }
+  )
+})
+
+test('resolveVaultsRootConfig uses configuredPath with createIfMissing false when explicitly defined', (t) => {
   const defaultPath = path.join(makeDataDirectory(t), 'vaults')
   const selectedPath = '/mnt/knowledge'
   assert.deepEqual(
     resolveVaultsRootConfig({ defaultPath, configuredPath: selectedPath }),
     { path: selectedPath, createIfMissing: false }
   )
-  assert.deepEqual(
-    resolveVaultsRootConfig({ defaultPath, legacyConfiguredPath: selectedPath }),
-    { path: selectedPath, createIfMissing: false }
-  )
-  assert.deepEqual(resolveVaultsRootConfig({ defaultPath }), { path: defaultPath, createIfMissing: true })
-  assert.throws(
-    () => resolveVaultsRootConfig({ defaultPath, configuredPath: selectedPath, legacyConfiguredPath: '/old' }),
-    /conflict/i
-  )
-  assert.throws(() => resolveVaultsRootConfig({ defaultPath, configuredPath: '' }), /non-empty/i)
-  assert.throws(() => resolveVaultsRootConfig({ defaultPath, legacyConfiguredPath: '' }), /non-empty/i)
 })
 
-test('main fails startup on environment conflicts and invalid explicit paths', (t) => {
+test('resolveVaultsRootConfig rejects empty, whitespace-only, or null-byte configuredPath values', (t) => {
+  const defaultPath = path.join(makeDataDirectory(t), 'vaults')
+  for (const invalidValue of ['', '   ', 'bad\0vaults', 123, null]) {
+    assert.throws(
+      () => resolveVaultsRootConfig({ defaultPath, configuredPath: invalidValue }),
+      /AYAME_VAULTS_PATH must be a non-empty valid path/
+    )
+  }
+})
+
+test('main fails startup when AYAME_VAULTS_PATH points to an inexistent directory or AYAME_DATABASE_PATH is invalid or corrupted', (t) => {
   const tempDirectory = makeDataDirectory(t)
   const existingVaults = path.join(tempDirectory, 'mounted-vaults')
   fs.mkdirSync(existingVaults)
+  const corruptedDbPath = path.join(tempDirectory, 'corrupt.sqlite')
+  fs.writeFileSync(corruptedDbPath, 'not a valid sqlite database')
   const mainPath = path.join(import.meta.dirname, 'main.js')
 
   const runMain = (values) => {
     const env = { ...process.env }
-    for (const name of ['AYAME_DATABASE_PATH', 'NIA_DATABASE_PATH', 'AYAME_VAULTS_PATH', 'NIA_VAULTS_PATH']) {
-      delete env[name]
-    }
+    delete env.AYAME_DATABASE_PATH
+    delete env.AYAME_VAULTS_PATH
     Object.assign(env, values)
     return spawnSync(process.execPath, [mainPath], {
       cwd: path.resolve(import.meta.dirname, '../..'),
@@ -122,58 +102,30 @@ test('main fails startup on environment conflicts and invalid explicit paths', (
   }
 
   for (const [values, message] of [
-    [{ AYAME_DATABASE_PATH: '/new.sqlite', NIA_DATABASE_PATH: '/old.sqlite' }, /AYAME_DATABASE_PATH and NIA_DATABASE_PATH/],
-    [{ AYAME_DATABASE_PATH: path.join(tempDirectory, 'custom.sqlite'), AYAME_VAULTS_PATH: '/new', NIA_VAULTS_PATH: '/old' }, /AYAME_VAULTS_PATH and NIA_VAULTS_PATH/],
-    [{ AYAME_DATABASE_PATH: path.join(tempDirectory, 'custom.sqlite'), NIA_VAULTS_PATH: path.join(tempDirectory, 'missing-vaults') }, /Vault root does not exist/],
-    [{ AYAME_DATABASE_PATH: tempDirectory, AYAME_VAULTS_PATH: existingVaults }, /SQLITE_CANTOPEN|unable to open database file/i],
+    [
+      {
+        AYAME_DATABASE_PATH: path.join(tempDirectory, 'custom.sqlite'),
+        AYAME_VAULTS_PATH: path.join(tempDirectory, 'missing-vaults'),
+      },
+      /Vault root does not exist/,
+    ],
+    [
+      {
+        AYAME_DATABASE_PATH: tempDirectory,
+        AYAME_VAULTS_PATH: existingVaults,
+      },
+      /SQLITE_CANTOPEN|unable to open database file/i,
+    ],
+    [
+      {
+        AYAME_DATABASE_PATH: corruptedDbPath,
+        AYAME_VAULTS_PATH: existingVaults,
+      },
+      /SQLITE_NOTADB|file is not a database/i,
+    ],
   ]) {
     const result = runMain(values)
     assert.notEqual(result.status, 0, result.stdout + result.stderr)
     assert.match(result.stderr, message)
   }
-})
-
-test('main rejects ambiguous defaults and never replaces a corrupt legacy database', (t) => {
-  const tempDirectory = makeDataDirectory(t)
-  const projectDirectory = path.join(tempDirectory, 'project')
-  const backendDirectory = path.join(projectDirectory, 'backend')
-  const sourceDirectory = path.resolve(import.meta.dirname)
-  fs.mkdirSync(backendDirectory, { recursive: true })
-  fs.cpSync(sourceDirectory, path.join(backendDirectory, 'src'), { recursive: true })
-  fs.copyFileSync(path.join(sourceDirectory, '../package.json'), path.join(backendDirectory, 'package.json'))
-  const symlinkType = process.platform === 'win32' ? 'junction' : 'dir'
-  fs.symlinkSync(path.resolve(sourceDirectory, '../../node_modules'), path.join(backendDirectory, 'node_modules'), symlinkType)
-
-  const dataDirectory = path.join(projectDirectory, 'data')
-  fs.mkdirSync(dataDirectory)
-  const legacyPath = path.join(dataDirectory, 'nia.sqlite')
-  const ayamePath = path.join(dataDirectory, 'ayame.sqlite')
-  const mainPath = path.join(backendDirectory, 'src/main.js')
-  const env = { ...process.env }
-  for (const name of ['AYAME_DATABASE_PATH', 'NIA_DATABASE_PATH', 'AYAME_VAULTS_PATH', 'NIA_VAULTS_PATH']) {
-    delete env[name]
-  }
-  const runMain = () => spawnSync(process.execPath, [mainPath], {
-    cwd: projectDirectory,
-    env,
-    encoding: 'utf8',
-    timeout: 5000,
-  })
-
-  const legacyBytes = Buffer.from('legacy database')
-  const ayameBytes = Buffer.from('ayame database')
-  fs.writeFileSync(legacyPath, legacyBytes)
-  fs.writeFileSync(ayamePath, ayameBytes)
-  const ambiguous = runMain()
-  assert.notEqual(ambiguous.status, 0)
-  assert.match(ambiguous.stderr, /Ambiguous database state/)
-  assert.deepEqual(fs.readFileSync(legacyPath), legacyBytes)
-  assert.deepEqual(fs.readFileSync(ayamePath), ayameBytes)
-
-  fs.rmSync(ayamePath)
-  const corruptLegacy = runMain()
-  assert.notEqual(corruptLegacy.status, 0)
-  assert.match(corruptLegacy.stderr, /not a database|SQLITE_NOTADB/i)
-  assert.deepEqual(fs.readFileSync(legacyPath), legacyBytes)
-  assert.equal(fs.existsSync(ayamePath), false)
 })

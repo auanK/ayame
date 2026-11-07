@@ -9,7 +9,7 @@ import { createOwner, createSession } from '../auth/authentication.js'
 import { prepareVaultsRoot, resolveExistingVaultPath } from './filesystem.js'
 
 test('backend manual smoke sequence (sections 22, 26, 53 & 54)', async (t) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-smoke-'))
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-smoke-'))
   const defaultVaultsRoot = path.join(tempDir, 'data', 'vaults')
 
   // 1. Ensure default root does not exist initially
@@ -22,7 +22,7 @@ test('backend manual smoke sequence (sections 22, 26, 53 & 54)', async (t) => {
   assert.equal(canonicalRoot, fs.realpathSync.native(defaultVaultsRoot))
 
   // 3. Test explicit configuration: existing vs missing
-  const explicitValidDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nia-explicit-valid-'))
+  const explicitValidDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-explicit-valid-'))
   const explicitPrepared = prepareVaultsRoot(explicitValidDir, { createIfMissing: false })
   assert.equal(explicitPrepared, fs.realpathSync.native(explicitValidDir))
   fs.rmSync(explicitValidDir, { recursive: true, force: true })

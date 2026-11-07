@@ -8,13 +8,11 @@ const dataDirectory = path.resolve(import.meta.dirname, '../../data')
 const dbPath = resolveDatabasePath({
   dataDirectory,
   configuredPath: process.env.AYAME_DATABASE_PATH,
-  legacyConfiguredPath: process.env.NIA_DATABASE_PATH,
 })
 
 const vaultsRootConfig = resolveVaultsRootConfig({
   defaultPath: path.join(dataDirectory, 'vaults'),
   configuredPath: process.env.AYAME_VAULTS_PATH,
-  legacyConfiguredPath: process.env.NIA_VAULTS_PATH,
 })
 const vaultsRoot = prepareVaultsRoot(vaultsRootConfig.path, {
   createIfMissing: vaultsRootConfig.createIfMissing,
