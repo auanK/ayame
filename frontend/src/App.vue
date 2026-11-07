@@ -64,7 +64,17 @@
       data-testid="authenticated-shell"
       class="workspace"
     >
-      <VaultsPanel @unauthorized="handleVaultUnauthorized" />
+      <VaultBrowser
+        v-if="activeVault"
+        :vault="activeVault"
+        @back="handleCloseVault"
+        @unauthorized="handleVaultUnauthorized"
+      />
+      <VaultsPanel
+        v-else
+        @open="handleOpenVault"
+        @unauthorized="handleVaultUnauthorized"
+      />
       <p
         v-if="errorMessage"
         class="error-message"
@@ -82,12 +92,24 @@ import { ref, onMounted } from 'vue'
 import SetupForm from './auth/SetupForm.vue'
 import LoginForm from './auth/LoginForm.vue'
 import VaultsPanel from './vaults/VaultsPanel.vue'
+import VaultBrowser from './vaults/VaultBrowser.vue'
 import { getAuthStatus, createOwner, login, logout } from './auth/api.js'
 
 const view = ref('loading')
 const pending = ref(false)
 const errorMessage = ref('')
 const preservedUsername = ref('')
+const activeVault = ref(null)
+
+const handleOpenVault = (vault) => {
+  activeVault.value = vault
+  errorMessage.value = ''
+}
+
+const handleCloseVault = () => {
+  activeVault.value = null
+  errorMessage.value = ''
+}
 
 const fetchStatus = async () => {
   view.value = 'loading'
@@ -166,10 +188,12 @@ const handleLogout = async () => {
 
   try {
     await logout()
+    activeVault.value = null
     view.value = 'login'
     errorMessage.value = ''
   } catch (err) {
     if (err.code === 'UNAUTHORIZED') {
+      activeVault.value = null
       view.value = 'login'
       errorMessage.value = ''
     } else {
@@ -181,6 +205,7 @@ const handleLogout = async () => {
 }
 
 const handleVaultUnauthorized = () => {
+  activeVault.value = null
   view.value = 'login'
   errorMessage.value = ''
 }

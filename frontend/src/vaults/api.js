@@ -121,3 +121,65 @@ export const unregisterVault = async (id) => {
   }
   return { ok: true }
 }
+
+const validateEntry = (entry) => {
+  if (
+    !entry
+    || typeof entry !== 'object'
+    || Array.isArray(entry)
+    || typeof entry.name !== 'string'
+    || entry.name.length === 0
+    || !['directory', 'file'].includes(entry.type)
+    || (entry.path !== null && typeof entry.path !== 'string')
+  ) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+
+  return {
+    name: entry.name,
+    path: entry.path,
+    type: entry.type,
+  }
+}
+
+export const getVaultEntries = async (directory, path = '') => {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ''
+  const url = `/vaults/${encodeURIComponent(directory)}/entries${query}`
+  const response = await request(url, {
+    method: 'GET',
+    credentials: 'same-origin',
+  }, 'FAILED_TO_FETCH_ENTRIES')
+
+  if (response.status === 401) {
+    throw apiError('UNAUTHORIZED')
+  }
+  if (response.status !== 200) {
+    let errorCode
+    try {
+      errorCode = (await response.json())?.error
+    } catch {}
+    if (['INVALID_VAULT_DIRECTORY', 'INVALID_VAULT_PATH', 'VAULT_PATH_NOT_FOUND', 'VAULT_PATH_NOT_DIRECTORY'].includes(errorCode)) {
+      throw apiError(errorCode)
+    }
+    throw apiError('FAILED_TO_FETCH_ENTRIES')
+  }
+
+  const data = await readJson(response)
+  if (
+    !data
+    || typeof data !== 'object'
+    || Array.isArray(data)
+    || typeof data.directory !== 'string'
+    || data.directory.length === 0
+    || typeof data.path !== 'string'
+    || !Array.isArray(data.entries)
+  ) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+
+  return {
+    directory: data.directory,
+    path: data.path,
+    entries: data.entries.map(validateEntry),
+  }
+}

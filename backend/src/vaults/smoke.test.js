@@ -171,3 +171,146 @@ test('backend manual smoke sequence (sections 22, 26, 53 & 54)', async (t) => {
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('read-only vault browser smoke flow (section 8)', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-smoke-browser-'))
+  const vaultsRoot = path.join(tempDir, 'vaults')
+
+  // Setup fixture tree
+  const personalDir = path.join(vaultsRoot, 'personal')
+  const writingDir = path.join(vaultsRoot, 'writing')
+  fs.mkdirSync(path.join(personalDir, 'projects'), { recursive: true })
+  fs.mkdirSync(path.join(personalDir, 'empty'), { recursive: true })
+  fs.mkdirSync(path.join(writingDir, 'drafts'), { recursive: true })
+
+  fs.writeFileSync(path.join(personalDir, 'README.md'), '# Personal README')
+  fs.writeFileSync(path.join(personalDir, 'projects', 'project-a.md'), '# Project A')
+  fs.writeFileSync(path.join(personalDir, 'projects', 'project-b.md'), '# Project B')
+  fs.writeFileSync(path.join(writingDir, 'drafts', 'chapter-01.md'), '# Chapter 1')
+
+  const initialReadmeContent = fs.readFileSync(path.join(personalDir, 'README.md'), 'utf8')
+  const initialProjectAContent = fs.readFileSync(path.join(personalDir, 'projects', 'project-a.md'), 'utf8')
+
+  // 1. Initialise application with prepared temporary directory
+  const canonicalVaultsRoot = prepareVaultsRoot(vaultsRoot, { createIfMissing: false })
+  const db = openDatabase(':memory:')
+
+  // 2. Authenticate owner
+  await createOwner(db, { username: 'auank', password: 'password123' })
+  const session = createSession(db)
+  const app = createApp({ db, vaultsRoot: canonicalVaultsRoot })
+  const cookie = `ayame_session=${session.rawToken}`
+
+  try {
+    // 3. Discover personal and writing
+    const resDiscovery = await app.inject({
+      method: 'GET',
+      url: '/vaults',
+      headers: { cookie },
+    })
+    assert.equal(resDiscovery.statusCode, 200)
+    const vaults = resDiscovery.json().vaults
+    assert.deepEqual(
+      vaults.map((v) => v.directory),
+      ['personal', 'writing']
+    )
+
+    // 4. Navigate personal root
+    const resPersonalRoot = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries',
+      headers: { cookie },
+    })
+    assert.equal(resPersonalRoot.statusCode, 200)
+    const rootBody = resPersonalRoot.json()
+    assert.equal(rootBody.directory, 'personal')
+    assert.equal(rootBody.path, '')
+    assert.deepEqual(rootBody.entries, [
+      { name: 'empty', path: 'empty', type: 'directory' },
+      { name: 'projects', path: 'projects', type: 'directory' },
+      { name: 'README.md', path: 'README.md', type: 'file' },
+    ])
+
+    // 5. Open projects
+    const resProjects = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=projects',
+      headers: { cookie },
+    })
+    assert.equal(resProjects.statusCode, 200)
+    const projectsBody = resProjects.json()
+    assert.equal(projectsBody.directory, 'personal')
+    assert.equal(projectsBody.path, 'projects')
+
+    // 6. Obtain existing files in projects
+    assert.deepEqual(projectsBody.entries, [
+      { name: 'project-a.md', path: 'projects/project-a.md', type: 'file' },
+      { name: 'project-b.md', path: 'projects/project-b.md', type: 'file' },
+    ])
+
+    // 7. Return to root
+    const resBackToRoot = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=',
+      headers: { cookie },
+    })
+    assert.equal(resBackToRoot.statusCode, 200)
+    assert.equal(resBackToRoot.json().path, '')
+
+    // 8. Confirm empty is empty
+    const resEmpty = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=empty',
+      headers: { cookie },
+    })
+    assert.equal(resEmpty.statusCode, 200)
+    assert.deepEqual(resEmpty.json().entries, [])
+
+    // 9. Externally create projects/new.md
+    fs.writeFileSync(path.join(personalDir, 'projects', 'new.md'), '# New Note')
+
+    // 10. Refresh / query projects again
+    const resProjectsUpdated = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=projects',
+      headers: { cookie },
+    })
+    assert.equal(resProjectsUpdated.statusCode, 200)
+
+    // 11. Confirm new file appears without restart
+    assert.deepEqual(resProjectsUpdated.json().entries, [
+      { name: 'new.md', path: 'projects/new.md', type: 'file' },
+      { name: 'project-a.md', path: 'projects/project-a.md', type: 'file' },
+      { name: 'project-b.md', path: 'projects/project-b.md', type: 'file' },
+    ])
+
+    // 12. Externally remove empty directory
+    fs.rmSync(path.join(personalDir, 'empty'), { recursive: true, force: true })
+
+    // 13. Confirm expected error (404 VAULT_PATH_NOT_FOUND) when accessing it
+    const resEmptyDeleted = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=empty',
+      headers: { cookie },
+    })
+    assert.equal(resEmptyDeleted.statusCode, 404)
+    assert.deepEqual(resEmptyDeleted.json(), { error: 'VAULT_PATH_NOT_FOUND' })
+
+    // 14. Validate traversal attempt fails closed
+    const resTraversal = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=..%2Fwriting',
+      headers: { cookie },
+    })
+    assert.equal(resTraversal.statusCode, 400)
+    assert.deepEqual(resTraversal.json(), { error: 'INVALID_VAULT_PATH' })
+
+    // 15. Confirm files and contents remain completely unchanged
+    assert.equal(fs.readFileSync(path.join(personalDir, 'README.md'), 'utf8'), initialReadmeContent)
+    assert.equal(fs.readFileSync(path.join(personalDir, 'projects', 'project-a.md'), 'utf8'), initialProjectAContent)
+  } finally {
+    await app.close()
+    closeDatabase(db)
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+})

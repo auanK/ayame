@@ -96,6 +96,15 @@
           </div>
           <div v-if="!needsRefresh" class="vault-actions">
             <button
+              type="button"
+              class="btn btn-secondary"
+              data-testid="open-vault-button"
+              :disabled="Boolean(operation)"
+              @click="$emit('open', vault)"
+            >
+              Open
+            </button>
+            <button
               v-if="!vault.registered"
               type="button"
               class="btn btn-secondary"
@@ -124,7 +133,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getVaults, registerVault, unregisterVault } from './api.js'
 
-const emit = defineEmits(['unauthorized'])
+const emit = defineEmits(['unauthorized', 'open'])
 
 const vaults = ref([])
 const hasLoaded = ref(false)

@@ -341,3 +341,163 @@ test('live rescan: external creation and deletion reflected on subsequent GET /v
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
   }
 })
+
+test('GET /vaults/:directory/entries requires authentication', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-route-unauth-'))
+  const db = openDatabase(':memory:')
+  const app = createApp({ db, vaultsRoot })
+
+  try {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries',
+    })
+    assert.equal(res.statusCode, 401)
+    assert.deepEqual(res.json(), { error: 'UNAUTHORIZED' })
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('GET /vaults/:directory/entries returns 200 for valid root without database registration', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-route-root-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'personal', 'projects'), { recursive: true })
+  fs.writeFileSync(path.join(vaultsRoot, 'personal', 'README.md'), 'readme')
+  const { db, app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const dbRowsBefore = db.prepare('SELECT COUNT(*) AS count FROM vault').get().count
+    assert.equal(dbRowsBefore, 0)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries',
+      headers: { cookie },
+    })
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.json(), {
+      directory: 'personal',
+      path: '',
+      entries: [
+        { name: 'projects', path: 'projects', type: 'directory' },
+        { name: 'README.md', path: 'README.md', type: 'file' },
+      ],
+    })
+
+    const dbRowsAfter = db.prepare('SELECT COUNT(*) AS count FROM vault').get().count
+    assert.equal(dbRowsAfter, 0)
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('GET /vaults/:directory/entries returns 200 for valid subdirectory and encodes query path', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-route-subdir-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'personal', 'projects', 'ayame'), { recursive: true })
+  fs.writeFileSync(path.join(vaultsRoot, 'personal', 'projects', 'spec.md'), 'spec')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=projects',
+      headers: { cookie },
+    })
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.json(), {
+      directory: 'personal',
+      path: 'projects',
+      entries: [
+        { name: 'ayame', path: 'projects/ayame', type: 'directory' },
+        { name: 'spec.md', path: 'projects/spec.md', type: 'file' },
+      ],
+    })
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('GET /vaults/:directory/entries handles directory with spaces and unicode', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-route-spaces-'))
+  const vaultDirName = 'Minhas Notas 🌸'
+  fs.mkdirSync(path.join(vaultsRoot, vaultDirName, 'Sub Pasta'), { recursive: true })
+  fs.writeFileSync(path.join(vaultsRoot, vaultDirName, 'Livro 📖.txt'), 'capitulo')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/vaults/${encodeURIComponent(vaultDirName)}/entries`,
+      headers: { cookie },
+    })
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.json(), {
+      directory: vaultDirName,
+      path: '',
+      entries: [
+        { name: 'Sub Pasta', path: 'Sub Pasta', type: 'directory' },
+        { name: 'Livro 📖.txt', path: 'Livro 📖.txt', type: 'file' },
+      ],
+    })
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('GET /vaults/:directory/entries returns error codes and never leaks server absolute paths', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-route-err-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'personal'))
+  fs.writeFileSync(path.join(vaultsRoot, 'personal', 'note.txt'), 'hello')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    // 400 INVALID_VAULT_DIRECTORY
+    const resInvDir = await app.inject({
+      method: 'GET',
+      url: '/vaults/nonexistent/entries',
+      headers: { cookie },
+    })
+    assert.equal(resInvDir.statusCode, 400)
+    assert.deepEqual(resInvDir.json(), { error: 'INVALID_VAULT_DIRECTORY' })
+
+    // 400 INVALID_VAULT_PATH (traversal)
+    const resInvPath = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=..%2Foutside',
+      headers: { cookie },
+    })
+    assert.equal(resInvPath.statusCode, 400)
+    assert.deepEqual(resInvPath.json(), { error: 'INVALID_VAULT_PATH' })
+
+    // 404 VAULT_PATH_NOT_FOUND
+    const resNotFound = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=missing-folder',
+      headers: { cookie },
+    })
+    assert.equal(resNotFound.statusCode, 404)
+    assert.deepEqual(resNotFound.json(), { error: 'VAULT_PATH_NOT_FOUND' })
+
+    // 400 VAULT_PATH_NOT_DIRECTORY
+    const resNotDir = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries?path=note.txt',
+      headers: { cookie },
+    })
+    assert.equal(resNotDir.statusCode, 400)
+    assert.deepEqual(resNotDir.json(), { error: 'VAULT_PATH_NOT_DIRECTORY' })
+
+    // Confirm no response contains absolute root path
+    for (const res of [resInvDir, resInvPath, resNotFound, resNotDir]) {
+      const text = res.body
+      assert.equal(text.includes(vaultsRoot), false)
+    }
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})

@@ -83,15 +83,35 @@ describe('VaultsPanel', () => {
     expect(rows[0].text()).toContain('personal')
     expect(rows[0].text()).toContain('Personal Dir/')
     expect(rows[0].text()).toContain('Detected')
+    expect(rows[0].text()).toContain('Open')
     expect(rows[0].text()).toContain('Customize')
     expect(rows[0].text()).not.toContain('Reset')
     expect(rows[1].text()).toContain('Personal Notes')
     expect(rows[1].text()).toContain('personal/')
     expect(rows[1].text()).toContain('Customized')
+    expect(rows[1].text()).toContain('Open')
     expect(rows[1].text()).toContain('Reset')
     expect(rows[1].findAll('button').map((button) => button.text())).not.toContain('Customize')
     expect(wrapper.find('a').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('/private/server/path')
+  })
+
+  it('emits open event with the vault object when Open button is clicked', async () => {
+    const wrapper = await mountPanel([detected, customized])
+    const rows = wrapper.findAll('[data-testid="vault-row"]')
+
+    const detectedOpenButton = rows[0].findAll('button').find((b) => b.text() === 'Open')
+    expect(detectedOpenButton).toBeDefined()
+    await detectedOpenButton.trigger('click')
+
+    expect(wrapper.emitted('open')).toBeTruthy()
+    expect(wrapper.emitted('open')[0]).toEqual([detected])
+
+    const customizedOpenButton = rows[1].findAll('button').find((b) => b.text() === 'Open')
+    expect(customizedOpenButton).toBeDefined()
+    await customizedOpenButton.trigger('click')
+
+    expect(wrapper.emitted('open')[1]).toEqual([customized])
   })
 
   it('renders complete 100-character unbroken customized and detected names', async () => {

@@ -16,6 +16,7 @@ vi.mock('./vaults/api.js', () => ({
   getVaults: vi.fn(),
   registerVault: vi.fn(),
   unregisterVault: vi.fn(),
+  getVaultEntries: vi.fn(),
 }))
 
 describe('App authentication flow', () => {
@@ -24,6 +25,7 @@ describe('App authentication flow', () => {
     localStorage.clear()
     sessionStorage.clear()
     vaultApi.getVaults.mockResolvedValue({ vaults: [] })
+    vaultApi.getVaultEntries.mockResolvedValue({ directory: 'personal', path: '', entries: [] })
   })
 
   describe('Bootstrap & status resolution', () => {
@@ -401,6 +403,136 @@ describe('App authentication flow', () => {
 
       expect(localStorage.length).toBe(0)
       expect(sessionStorage.length).toBe(0)
+    })
+  })
+
+  describe('Vault browsing integration', () => {
+    const detectedVault = { id: null, name: 'personal', directory: 'personal-dir', registered: false }
+    const customizedVault = { id: 'v1', name: 'Personal Notes', directory: 'personal', registered: true }
+
+    it('opens detected vault and displays its browser', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir',
+        path: '',
+        entries: [{ name: 'file.txt', path: 'file.txt', type: 'file' }],
+      })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="vaults-panel"]').exists()).toBe(true)
+      const openBtn = wrapper.find('[data-testid="open-vault-button"]')
+      expect(openBtn.exists()).toBe(true)
+      await openBtn.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="vaults-panel"]').exists()).toBe(false)
+      expect(vaultApi.getVaultEntries).toHaveBeenCalledWith('personal-dir', '')
+    })
+
+    it('opens customized vault using its physical directory', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [customizedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal',
+        path: '',
+        entries: [],
+      })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(true)
+      expect(vaultApi.getVaultEntries).toHaveBeenCalledWith('personal', '')
+    })
+
+    it('returns to vault list from browser while preserving authenticated state', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir',
+        path: '',
+        entries: [],
+      })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(true)
+
+      await wrapper.find('[data-testid="back-to-vaults-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="vaults-panel"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(true)
+    })
+
+    it('logout while browser is active returns to login', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockResolvedValue({ ok: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(true)
+
+      await wrapper.find('[data-testid="logout-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(false)
+    })
+
+    it('401 inside browser returns to login', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockRejectedValue(Object.assign(new Error('UNAUTHORIZED'), { code: 'UNAUTHORIZED' }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(false)
+    })
+
+    it('late response from browser does not restore authenticated view after logout', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockResolvedValue({ ok: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+
+      let resolveEntries
+      vaultApi.getVaultEntries.mockReturnValue(new Promise((res) => { resolveEntries = res }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('[data-testid="logout-button"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+
+      resolveEntries({ directory: 'personal-dir', path: '', entries: [] })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(false)
     })
   })
 })

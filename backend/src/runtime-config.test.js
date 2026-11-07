@@ -141,7 +141,8 @@ test('main rejects ambiguous defaults and never replaces a corrupt legacy databa
   fs.mkdirSync(backendDirectory, { recursive: true })
   fs.cpSync(sourceDirectory, path.join(backendDirectory, 'src'), { recursive: true })
   fs.copyFileSync(path.join(sourceDirectory, '../package.json'), path.join(backendDirectory, 'package.json'))
-  fs.symlinkSync(path.resolve(sourceDirectory, '../../node_modules'), path.join(backendDirectory, 'node_modules'), 'dir')
+  const symlinkType = process.platform === 'win32' ? 'junction' : 'dir'
+  fs.symlinkSync(path.resolve(sourceDirectory, '../../node_modules'), path.join(backendDirectory, 'node_modules'), symlinkType)
 
   const dataDirectory = path.join(projectDirectory, 'data')
   fs.mkdirSync(dataDirectory)

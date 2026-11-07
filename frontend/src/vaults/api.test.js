@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getVaults, registerVault, unregisterVault } from './api.js'
+import { getVaults, registerVault, unregisterVault, getVaultEntries } from './api.js'
 
 const originalFetch = globalThis.fetch
 const detected = { id: null, name: 'personal', directory: 'Personal Dir', registered: false }
@@ -148,6 +148,87 @@ describe('vault API', () => {
 
       globalThis.fetch.mockRejectedValueOnce(new TypeError('offline'))
       await expectCode(unregisterVault('vault-1'), 'FAILED_TO_UNREGISTER_VAULT')
+    })
+  })
+
+  describe('getVaultEntries', () => {
+    it('uses GET, same-origin credentials, encodes directory and query path, and validates entries', async () => {
+      const validBody = {
+        directory: 'personal space',
+        path: 'projects/ayame',
+        entries: [
+          { name: 'notes', path: 'projects/ayame/notes', type: 'directory' },
+          { name: 'README.md', path: 'projects/ayame/README.md', type: 'file' },
+          { name: 'odd-file', path: null, type: 'file' },
+        ],
+      }
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, validBody))
+
+      const result = await getVaultEntries('personal space', 'projects/ayame')
+      expect(result).toEqual(validBody)
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/vaults/personal%20space/entries?path=projects%2Fayame',
+        {
+          method: 'GET',
+          credentials: 'same-origin',
+        }
+      )
+    })
+
+    it('omits query string when path is empty or omitted', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, {
+        directory: 'personal',
+        path: '',
+        entries: [],
+      }))
+
+      await getVaultEntries('personal')
+      expect(globalThis.fetch).toHaveBeenCalledWith('/vaults/personal/entries', {
+        method: 'GET',
+        credentials: 'same-origin',
+      })
+    })
+
+    it.each([
+      ['non-object response', null],
+      ['missing entries array', { directory: 'd', path: '' }],
+      ['non-string directory', { directory: 123, path: '', entries: [] }],
+      ['empty directory', { directory: '', path: '', entries: [] }],
+      ['non-string path', { directory: 'd', path: 123, entries: [] }],
+      ['invalid entry type', { directory: 'd', path: '', entries: [{ name: 'a', path: 'a', type: 'symlink' }] }],
+      ['empty entry name', { directory: 'd', path: '', entries: [{ name: '', path: 'a', type: 'file' }] }],
+      ['invalid entry path type', { directory: 'd', path: '', entries: [{ name: 'a', path: 123, type: 'file' }] }],
+    ])('rejects %s', async (_desc, body) => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, body))
+      await expectCode(getVaultEntries('personal'), 'INVALID_VAULT_RESPONSE')
+    })
+
+    it('rejects invalid JSON', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, null, true))
+      await expectCode(getVaultEntries('personal'), 'INVALID_VAULT_RESPONSE')
+    })
+
+    it('maps known 400 and 404 error codes from server', async () => {
+      for (const [status, code] of [
+        [400, 'INVALID_VAULT_DIRECTORY'],
+        [400, 'INVALID_VAULT_PATH'],
+        [404, 'VAULT_PATH_NOT_FOUND'],
+        [400, 'VAULT_PATH_NOT_DIRECTORY'],
+      ]) {
+        globalThis.fetch = vi.fn().mockResolvedValueOnce(response(status, { error: code }))
+        await expectCode(getVaultEntries('personal'), code)
+      }
+    })
+
+    it('maps 401 to UNAUTHORIZED, network errors to FAILED_TO_FETCH_ENTRIES', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(response(401, { error: 'UNAUTHORIZED' }))
+      await expectCode(getVaultEntries('personal'), 'UNAUTHORIZED')
+
+      globalThis.fetch.mockResolvedValueOnce(response(500, {}))
+      await expectCode(getVaultEntries('personal'), 'FAILED_TO_FETCH_ENTRIES')
+
+      globalThis.fetch.mockRejectedValueOnce(new TypeError('network fail'))
+      await expectCode(getVaultEntries('personal'), 'FAILED_TO_FETCH_ENTRIES')
     })
   })
 })
