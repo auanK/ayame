@@ -228,3 +228,90 @@ export const resolveExistingVaultPath = (vaultRoot, relativePath) => {
     type: stat.isDirectory() ? 'directory' : 'file',
   }
 }
+
+export const resolveMutableVaultPath = (vaultRoot, relativePath) => {
+  if (
+    typeof relativePath !== 'string' ||
+    relativePath.length === 0 ||
+    relativePath.includes('\0')
+  ) {
+    failVaultPath('INVALID_VAULT_PATH', 'Invalid vault path')
+  }
+
+  if (
+    path.isAbsolute(relativePath) ||
+    relativePath.startsWith('/') ||
+    relativePath.startsWith('\\') ||
+    /^[a-zA-Z]:/.test(relativePath)
+  ) {
+    failVaultPath('INVALID_VAULT_PATH', 'Invalid vault path format')
+  }
+
+  const segments = relativePath.split(/[/\\]+/)
+  if (segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
+    failVaultPath('INVALID_VAULT_PATH', 'Invalid vault path segments')
+  }
+
+  let canonicalVaultRoot
+  try {
+    canonicalVaultRoot = fs.realpathSync.native(vaultRoot)
+    if (!fs.statSync(canonicalVaultRoot).isDirectory()) {
+      failVaultPath('INVALID_VAULT_PATH', 'Vault root is not a directory')
+    }
+  } catch {
+    failVaultPath('INVALID_VAULT_PATH', 'Cannot resolve canonical vault root')
+  }
+
+  let current = canonicalVaultRoot
+  let lastStat = null
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i]
+    current = path.join(current, segment)
+
+    if (
+      current !== canonicalVaultRoot &&
+      !current.startsWith(canonicalVaultRoot + path.sep)
+    ) {
+      failVaultPath('INVALID_VAULT_PATH', 'Vault path escapes vault root')
+    }
+
+    try {
+      lastStat = fs.lstatSync(current)
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        failVaultPath('VAULT_PATH_NOT_FOUND', 'Vault path not found')
+      }
+      failVaultPath('INVALID_VAULT_PATH', 'Failed to inspect vault path')
+    }
+
+    if (lastStat.isSymbolicLink()) {
+      failVaultPath('INVALID_VAULT_PATH', 'Symbolic links are not permitted')
+    }
+
+    if (i < segments.length - 1) {
+      if (!lastStat.isDirectory()) {
+        failVaultPath('VAULT_PATH_NOT_DIRECTORY', 'Path segment is not a directory')
+      }
+    }
+  }
+
+  let canonicalTarget
+  try {
+    canonicalTarget = fs.realpathSync.native(current)
+  } catch {
+    failVaultPath('VAULT_PATH_NOT_FOUND', 'Vault path not found')
+  }
+
+  if (
+    canonicalTarget !== canonicalVaultRoot &&
+    !canonicalTarget.startsWith(canonicalVaultRoot + path.sep)
+  ) {
+    failVaultPath('INVALID_VAULT_PATH', 'Canonical path escapes vault root')
+  }
+
+  return {
+    absolutePath: current,
+    type: lastStat.isDirectory() ? 'directory' : 'file',
+  }
+}

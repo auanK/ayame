@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { resolveVaultRoot, resolveExistingVaultPath } from './filesystem.js'
-import { readVaultMarkdown } from './reader.js'
+import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
 
 const EMPTY_REVISION = crypto.createHash('sha256').update(Buffer.alloc(0)).digest('hex')
 const SUPPORTED_NOTE_EXTENSIONS = new Set(['.md', '.markdown'])
@@ -31,20 +31,54 @@ const sameSnapshot = (expected, actual) =>
   expected.length === actual.length &&
   expected.every((stat, index) => fileIdentity(stat) === fileIdentity(actual[index]))
 
-const validatePayload = (payload) => {
+const validatePayload = (payload, allowNoteOptions = false) => {
   if (
     !payload ||
     typeof payload !== 'object' ||
     Array.isArray(payload) ||
-    Object.keys(payload).length !== 2 ||
     typeof payload.parentPath !== 'string' ||
     typeof payload.name !== 'string'
   ) {
     fail('INVALID_CREATE_PAYLOAD', 'Invalid creation payload')
   }
+
+  const allowedKeys = allowNoteOptions
+    ? new Set(['parentPath', 'name', 'content', 'createParents'])
+    : new Set(['parentPath', 'name'])
+
+  for (const key of Object.keys(payload)) {
+    if (!allowedKeys.has(key)) {
+      fail('INVALID_CREATE_PAYLOAD', 'Invalid creation payload')
+    }
+  }
+
+  let content = ''
+  if (allowNoteOptions && payload.content !== undefined) {
+    if (typeof payload.content !== 'string') {
+      fail('INVALID_CREATE_PAYLOAD', 'Invalid note content')
+    }
+    if (Buffer.byteLength(payload.content, 'utf8') > MAX_MARKDOWN_BYTES) {
+      fail('VAULT_FILE_TOO_LARGE', 'Note content exceeds 2 MiB limit')
+    }
+    if (!isValidUtf8String(payload.content)) {
+      fail('INVALID_CREATE_PAYLOAD', 'Invalid UTF-8 content')
+    }
+    content = payload.content
+  }
+
+  let createParents = false
+  if (allowNoteOptions && payload.createParents !== undefined) {
+    if (typeof payload.createParents !== 'boolean') {
+      fail('INVALID_CREATE_PAYLOAD', 'Invalid createParents flag')
+    }
+    createParents = payload.createParents
+  }
+
   return {
     parentPath: payload.parentPath,
     name: payload.name,
+    content,
+    createParents,
   }
 }
 
@@ -308,17 +342,65 @@ export const createVaultFolder = (vaultsRoot, directory, rawPayload) => {
   }
 }
 
+const ensureParentChainStepByStep = (vaultsRoot, directory, rawParentPath) => {
+  const parentPath = validateParentPath(rawParentPath)
+  const vaultRoot = resolveVaultRoot(vaultsRoot, directory)
+  if (parentPath === '') return
+
+  let currentDir = vaultRoot
+  for (const segment of parentPath.split('/')) {
+    validateFolderName(segment)
+    const nextDir = path.join(currentDir, segment)
+    if (!isWithin(vaultRoot, nextDir)) {
+      fail('INVALID_VAULT_PATH', 'Parent path escapes the vault')
+    }
+    let stat
+    try {
+      stat = fs.lstatSync(nextDir, { bigint: true })
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err
+      fs.mkdirSync(nextDir, { recursive: false })
+      stat = fs.lstatSync(nextDir, { bigint: true })
+    }
+    if (stat.isSymbolicLink()) {
+      fail('INVALID_VAULT_PATH', 'Symbolic links are not permitted in vault paths')
+    }
+    if (!stat.isDirectory()) {
+      fail('VAULT_PATH_NOT_DIRECTORY', 'Parent path segment is not a directory')
+    }
+    const canonicalNext = fs.realpathSync.native(nextDir)
+    if (!isWithin(vaultRoot, canonicalNext)) {
+      fail('INVALID_VAULT_PATH', 'Parent directory is outside the vault')
+    }
+    currentDir = canonicalNext
+  }
+}
+
 export const createVaultNote = (vaultsRoot, directory, rawPayload) => {
   let committed = false
   try {
-    const { parentPath: rawParentPath, name: rawName } = validatePayload(rawPayload)
+    const {
+      parentPath: rawParentPath,
+      name: rawName,
+      content,
+      createParents,
+    } = validatePayload(rawPayload, true)
     const finalName = validateAndNormalizeNoteName(rawName)
+    if (createParents && rawParentPath !== '') {
+      ensureParentChainStepByStep(vaultsRoot, directory, rawParentPath)
+    }
     const parent = resolveValidatedParent(vaultsRoot, directory, rawParentPath)
     const targetAbsolutePath = path.join(parent.parentDir, finalName)
     const relativePath = parent.parentPath === '' ? finalName : `${parent.parentPath}/${finalName}`
 
     ensureTargetAbsent(parent.vaultRoot, targetAbsolutePath)
     verifyParentUnchanged(parent)
+
+    const contentBytes = Buffer.from(content, 'utf8')
+    const expectedRevision =
+      contentBytes.length === 0
+        ? EMPTY_REVISION
+        : crypto.createHash('sha256').update(contentBytes).digest('hex')
 
     const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW ?? 0)
     let fd
@@ -358,6 +440,14 @@ export const createVaultNote = (vaultsRoot, directory, rawPayload) => {
       if (!openedStat.isFile() || openedStat.size !== 0n) {
         fail('VAULT_CREATE_RESULT_UNKNOWN', 'Created file state could not be verified')
       }
+      let offset = 0
+      while (offset < contentBytes.length) {
+        const written = fs.writeSync(fd, contentBytes, offset, contentBytes.length - offset)
+        if (written <= 0) {
+          fail('VAULT_CREATE_RESULT_UNKNOWN', 'Initial note content write did not complete')
+        }
+        offset += written
+      }
       fs.fsyncSync(fd)
       fs.closeSync(fd)
       fdClosed = true
@@ -366,8 +456,8 @@ export const createVaultNote = (vaultsRoot, directory, rawPayload) => {
       syncDirectory(parent.parentDir)
 
       const verified = readVaultMarkdown(vaultsRoot, directory, relativePath)
-      if (verified.content !== '' || verified.revision !== EMPTY_REVISION) {
-        fail('VAULT_CREATE_RESULT_UNKNOWN', 'Created note content or revision did not match empty UTF-8')
+      if (verified.content !== content || verified.revision !== expectedRevision) {
+        fail('VAULT_CREATE_RESULT_UNKNOWN', 'Created note content or revision did not match expected UTF-8')
       }
 
       return {

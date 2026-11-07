@@ -1,5 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getVaults, registerVault, unregisterVault, getVaultEntries, getVaultMarkdown, saveVaultMarkdown, createVaultFolder, createVaultNote } from './api.js'
+import {
+  getVaults,
+  registerVault,
+  unregisterVault,
+  getVaultEntries,
+  getVaultMarkdown,
+  saveVaultMarkdown,
+  createVaultFolder,
+  createVaultNote,
+  getVaultIndex,
+  relocateVaultEntry,
+  trashVaultEntry,
+  getVaultTrash,
+  restoreVaultTrashEntry,
+  deleteVaultTrashItem,
+  deleteVaultEntryPermanently,
+} from './api.js'
 
 const originalFetch = globalThis.fetch
 const detected = { id: null, name: 'personal', directory: 'Personal Dir', registered: false }
@@ -464,6 +480,42 @@ describe('vault API', () => {
 
       globalThis.fetch = vi.fn().mockResolvedValue(response(201, { directory: 'personal', path: 'A.md', revision: 'bad' }))
       await expectCode(createVaultNote('personal', { parentPath: '', name: 'A.md' }), 'INVALID_VAULT_RESPONSE')
+    })
+
+    it('supports index, relocate, trash, restore, and delete operations', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        response(200, { directory: 'personal', complete: true, folders: [], files: ['A.md'], notes: [] })
+      )
+      await expect(getVaultIndex('personal')).resolves.toMatchObject({ directory: 'personal', files: ['A.md'] })
+
+      globalThis.fetch.mockResolvedValueOnce(
+        response(200, { directory: 'personal', oldPath: 'A.md', newPath: 'B.md', updatedFiles: [], failedFiles: [] })
+      )
+      await expect(relocateVaultEntry('personal', { sourcePath: 'A.md', targetPath: 'B.md' })).resolves.toMatchObject({
+        oldPath: 'A.md',
+        newPath: 'B.md',
+      })
+
+      globalThis.fetch.mockResolvedValueOnce(
+        response(200, { directory: 'personal', id: 'trash-1', originalPath: 'B.md', name: 'B.md', type: 'file' })
+      )
+      await expect(trashVaultEntry('personal', { path: 'B.md' })).resolves.toMatchObject({ id: 'trash-1' })
+
+      globalThis.fetch.mockResolvedValueOnce(
+        response(200, { directory: 'personal', items: [{ id: 'trash-1', originalPath: 'B.md' }] })
+      )
+      await expect(getVaultTrash('personal')).resolves.toMatchObject({ items: [{ id: 'trash-1' }] })
+
+      globalThis.fetch.mockResolvedValueOnce(
+        response(200, { directory: 'personal', id: 'trash-1', path: 'B.md', type: 'file' })
+      )
+      await expect(restoreVaultTrashEntry('personal', { id: 'trash-1' })).resolves.toMatchObject({ path: 'B.md' })
+
+      globalThis.fetch.mockResolvedValueOnce(response(200, { directory: 'personal', id: 'trash-1' }))
+      await expect(deleteVaultTrashItem('personal', 'trash-1')).resolves.toMatchObject({ id: 'trash-1' })
+
+      globalThis.fetch.mockResolvedValueOnce(response(200, { directory: 'personal', path: 'B.md', type: 'file' }))
+      await expect(deleteVaultEntryPermanently('personal', { path: 'B.md' })).resolves.toMatchObject({ path: 'B.md' })
     })
   })
 })

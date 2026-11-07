@@ -3,6 +3,15 @@ import { listVaultEntries } from './browser.js'
 import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
 import { saveVaultMarkdown } from './writer.js'
 import { createVaultFolder, createVaultNote } from './creator.js'
+import {
+  scanVaultIndex,
+  relocateVaultEntry,
+  moveVaultEntryToTrash,
+  listVaultTrash,
+  restoreVaultTrashEntry,
+  deleteVaultTrashEntryPermanently,
+  deleteVaultEntryPermanently,
+} from './operations.js'
 
 const CREATE_ERROR_STATUS = {
   INVALID_VAULT_DIRECTORY: 400,
@@ -12,9 +21,27 @@ const CREATE_ERROR_STATUS = {
   VAULT_PATH_NOT_DIRECTORY: 400,
   VAULT_PATH_NOT_FOUND: 404,
   VAULT_ENTRY_EXISTS: 409,
+  VAULT_FILE_TOO_LARGE: 413,
   UNSUPPORTED_FILE_TYPE: 415,
   VAULT_CREATE_FAILED: 500,
   VAULT_CREATE_RESULT_UNKNOWN: 500,
+}
+
+const OPERATION_ERROR_STATUS = {
+  INVALID_VAULT_DIRECTORY: 400,
+  INVALID_VAULT_PATH: 400,
+  INVALID_OPERATION_PAYLOAD: 400,
+  INVALID_ENTRY_NAME: 400,
+  INVALID_VAULT_MOVE: 400,
+  INVALID_TRASH_ID: 400,
+  VAULT_PATH_NOT_DIRECTORY: 400,
+  VAULT_PATH_NOT_FOUND: 404,
+  VAULT_TRASH_NOT_FOUND: 404,
+  VAULT_ENTRY_EXISTS: 409,
+  VAULT_FILE_CONFLICT: 409,
+  UNSUPPORTED_FILE_TYPE: 415,
+  VAULT_FILE_LOCKED: 423,
+  VAULT_TRASH_RESULT_UNKNOWN: 500,
 }
 
 export const registerVaultRoutes = (app, db, vaultsRoot) => {
@@ -129,6 +156,83 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
       return reply.code(201).send(result)
     } catch (err) {
       const status = CREATE_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.get('/vaults/:directory/index', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = scanVaultIndex(vaultsRoot, req.params.directory)
+      return reply.send(result)
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.post('/vaults/:directory/relocate', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = relocateVaultEntry(vaultsRoot, req.params.directory, req.body)
+      return reply.send(result)
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.get('/vaults/:directory/trash', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = listVaultTrash(vaultsRoot, req.params.directory)
+      return reply.send(result)
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.post('/vaults/:directory/trash', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = moveVaultEntryToTrash(vaultsRoot, req.params.directory, req.body)
+      return reply.send(result)
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.post('/vaults/:directory/trash/restore', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = restoreVaultTrashEntry(vaultsRoot, req.params.directory, req.body)
+      return reply.send(result)
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.delete('/vaults/:directory/trash/:id', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = deleteVaultTrashEntryPermanently(vaultsRoot, req.params.directory, req.params.id)
+      return reply.send(result)
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.delete('/vaults/:directory/entries', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const result = deleteVaultEntryPermanently(vaultsRoot, req.params.directory, req.body || { path: req.query?.path ?? '' })
+      return reply.send(result)
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
       if (status) return reply.code(status).send({ error: err.code })
       throw err
     }

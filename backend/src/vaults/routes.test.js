@@ -1022,3 +1022,118 @@ test('POST /vaults/:directory/folders and /notes map validation, conflict, and t
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
   }
 })
+
+test('GET /index, POST /relocate, and /trash endpoints enforce authentication, update links, and manage .trash with Cache-Control: no-store', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-ops-routes-'))
+  const personalDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(path.join(personalDir, 'Knowledge'), { recursive: true })
+  fs.writeFileSync(path.join(personalDir, 'Cosmologia.md'), '---\ntitle: Cosmologia\n---\n# Cosmologia\n')
+  fs.writeFileSync(path.join(personalDir, 'Indice.md'), 'Estudo de [[Cosmologia#Origem|Origem]]\n')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    // Unauthenticated requests are rejected with 401
+    const unauthIndex = await app.inject({ method: 'GET', url: '/vaults/personal/index' })
+    assert.equal(unauthIndex.statusCode, 401)
+    const unauthRelocate = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/relocate',
+      payload: { sourcePath: 'Cosmologia.md', targetPath: 'Nova.md' },
+    })
+    assert.equal(unauthRelocate.statusCode, 401)
+    const unauthTrash = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/trash',
+      payload: { path: 'Cosmologia.md' },
+    })
+    assert.equal(unauthTrash.statusCode, 401)
+
+    // GET /vaults/personal/index
+    const indexRes = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/index',
+      headers: { cookie },
+    })
+    assert.equal(indexRes.statusCode, 200)
+    assert.equal(indexRes.headers['cache-control'], 'no-store')
+    const indexBody = indexRes.json()
+    assert.equal(indexBody.complete, true)
+    assert.deepEqual(indexBody.folders, ['Knowledge'])
+    assert.deepEqual(indexBody.files, ['Cosmologia.md', 'Indice.md'])
+
+    // POST /vaults/personal/relocate
+    const relocateRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/relocate',
+      headers: { cookie },
+      payload: {
+        sourcePath: 'Cosmologia.md',
+        targetPath: 'Knowledge/Cosmologia Moderna.md',
+        updateLinks: true,
+        expectedRevision: revisionOf('---\ntitle: Cosmologia\n---\n# Cosmologia\n'),
+      },
+    })
+    assert.equal(relocateRes.statusCode, 200)
+    assert.equal(relocateRes.headers['cache-control'], 'no-store')
+    assert.deepEqual(relocateRes.json(), {
+      directory: 'personal',
+      oldPath: 'Cosmologia.md',
+      newPath: 'Knowledge/Cosmologia Moderna.md',
+      updatedFiles: ['Indice.md'],
+      failedFiles: [],
+    })
+    assert.equal(
+      fs.readFileSync(path.join(personalDir, 'Indice.md'), 'utf8'),
+      'Estudo de [[Cosmologia Moderna#Origem|Origem]]\n'
+    )
+
+    // POST /vaults/personal/trash (folder Knowledge)
+    const trashRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/trash',
+      headers: { cookie },
+      payload: { path: 'Knowledge' },
+    })
+    assert.equal(trashRes.statusCode, 200)
+    assert.equal(trashRes.headers['cache-control'], 'no-store')
+    const trashed = trashRes.json()
+    assert.equal(trashed.originalPath, 'Knowledge')
+    assert.equal(trashed.type, 'directory')
+    assert.equal(trashed.descendantCount, 1)
+
+    // GET /vaults/personal/entries hides .trash
+    const entriesRes = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries',
+      headers: { cookie },
+    })
+    assert.equal(entriesRes.statusCode, 200)
+    assert.deepEqual(
+      entriesRes.json().entries.map((e) => e.name),
+      ['Indice.md']
+    )
+
+    // GET /vaults/personal/trash lists trashed item
+    const trashListRes = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/trash',
+      headers: { cookie },
+    })
+    assert.equal(trashListRes.statusCode, 200)
+    assert.equal(trashListRes.json().items.length, 1)
+
+    // Restore from trash
+    const restoreRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/trash/restore',
+      headers: { cookie },
+      payload: { id: trashed.id },
+    })
+    assert.equal(restoreRes.statusCode, 200)
+    assert.equal(restoreRes.json().path, 'Knowledge')
+    assert.equal(fs.existsSync(path.join(personalDir, 'Knowledge', 'Cosmologia Moderna.md')), true)
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})

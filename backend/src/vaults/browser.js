@@ -26,12 +26,17 @@ const validateRelativePath = (relativePath) => {
   }
 
   const segments = relativePath.split('/')
-  if (segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
+  if (segments.some((seg) => seg === '' || seg === '.' || seg === '..') || segments[0] === '.trash') {
     failVaultPath('INVALID_VAULT_PATH')
   }
 
   return relativePath
 }
+
+const isHiddenInternalEntry = (name) =>
+  name === '.trash' ||
+  name.endsWith('.ayame.lock') ||
+  /^\..*\.ayame-[a-f0-9]+\.tmp$/i.test(name)
 
 export const listVaultEntries = (vaultsRoot, directory, rawPath = '') => {
   const relativePath = validateRelativePath(rawPath)
@@ -55,7 +60,7 @@ export const listVaultEntries = (vaultsRoot, directory, rawPath = '') => {
 
   const entries = []
   for (const dirent of dirEntries) {
-    if (dirent.isSymbolicLink()) {
+    if (dirent.isSymbolicLink() || isHiddenInternalEntry(dirent.name)) {
       continue
     }
 

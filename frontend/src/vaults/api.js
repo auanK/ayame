@@ -350,13 +350,17 @@ export const createVaultFolder = async (directory, { parentPath = '', name }) =>
   }
 }
 
-export const createVaultNote = async (directory, { parentPath = '', name }) => {
+export const createVaultNote = async (directory, { parentPath = '', name, content, createParents }) => {
   const url = `/vaults/${encodeURIComponent(directory ?? '')}/notes`
+  const payload = { parentPath, name }
+  if (content !== undefined) payload.content = content
+  if (createParents !== undefined) payload.createParents = createParents
+
   const response = await request(url, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parentPath, name }),
+    body: JSON.stringify(payload),
   }, 'FAILED_TO_CREATE_NOTE')
 
   if (response.status === 401) throw apiError('UNAUTHORIZED')
@@ -365,7 +369,7 @@ export const createVaultNote = async (directory, { parentPath = '', name }) => {
     try {
       errorCode = (await response.json())?.error
     } catch {}
-    if (CREATE_ERROR_CODES.includes(errorCode)) {
+    if ([...CREATE_ERROR_CODES, 'VAULT_FILE_TOO_LARGE'].includes(errorCode)) {
       throw apiError(errorCode)
     }
     throw apiError('FAILED_TO_CREATE_NOTE')
@@ -391,4 +395,145 @@ export const createVaultNote = async (directory, { parentPath = '', name }) => {
     path: data.path,
     revision: data.revision,
   }
+}
+
+const OPERATION_ERROR_CODES = [
+  'INVALID_VAULT_DIRECTORY',
+  'INVALID_VAULT_PATH',
+  'INVALID_OPERATION_PAYLOAD',
+  'INVALID_ENTRY_NAME',
+  'INVALID_VAULT_MOVE',
+  'INVALID_TRASH_ID',
+  'VAULT_PATH_NOT_DIRECTORY',
+  'VAULT_PATH_NOT_FOUND',
+  'VAULT_TRASH_NOT_FOUND',
+  'VAULT_ENTRY_EXISTS',
+  'VAULT_FILE_CONFLICT',
+  'UNSUPPORTED_FILE_TYPE',
+  'VAULT_FILE_LOCKED',
+  'VAULT_TRASH_RESULT_UNKNOWN',
+]
+
+const handleOperationResponse = async (response, fallbackCode) => {
+  if (response.status === 401) throw apiError('UNAUTHORIZED')
+  if (response.status !== 200) {
+    let errorCode
+    try {
+      errorCode = (await response.json())?.error
+    } catch {}
+    if (OPERATION_ERROR_CODES.includes(errorCode)) {
+      throw apiError(errorCode)
+    }
+    throw apiError(fallbackCode)
+  }
+  return readJson(response)
+}
+
+export const getVaultIndex = async (directory) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/index`
+  const response = await request(url, {
+    method: 'GET',
+    credentials: 'same-origin',
+  }, 'FAILED_TO_FETCH_INDEX')
+
+  const data = await handleOperationResponse(response, 'FAILED_TO_FETCH_INDEX')
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    Array.isArray(data) ||
+    typeof data.directory !== 'string' ||
+    !Array.isArray(data.folders) ||
+    !Array.isArray(data.files) ||
+    !Array.isArray(data.notes)
+  ) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+  return data
+}
+
+export const relocateVaultEntry = async (
+  directory,
+  { sourcePath, targetPath, updateLinks = true, expectedRevision }
+) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/relocate`
+  const payload = { sourcePath, targetPath, updateLinks }
+  if (expectedRevision !== undefined) payload.expectedRevision = expectedRevision
+
+  const response = await request(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, 'FAILED_TO_RELOCATE_ENTRY')
+
+  return handleOperationResponse(response, 'FAILED_TO_RELOCATE_ENTRY')
+}
+
+export const trashVaultEntry = async (directory, { path, expectedRevision }) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/trash`
+  const payload = { path }
+  if (expectedRevision !== undefined) payload.expectedRevision = expectedRevision
+
+  const response = await request(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, 'FAILED_TO_TRASH_ENTRY')
+
+  return handleOperationResponse(response, 'FAILED_TO_TRASH_ENTRY')
+}
+
+export const getVaultTrash = async (directory) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/trash`
+  const response = await request(url, {
+    method: 'GET',
+    credentials: 'same-origin',
+  }, 'FAILED_TO_FETCH_TRASH')
+
+  const data = await handleOperationResponse(response, 'FAILED_TO_FETCH_TRASH')
+  if (!data || typeof data !== 'object' || !Array.isArray(data.items)) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+  return data
+}
+
+export const restoreVaultTrashEntry = async (directory, { id, targetPath }) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/trash/restore`
+  const payload = { id }
+  if (targetPath !== undefined) payload.targetPath = targetPath
+
+  const response = await request(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, 'FAILED_TO_RESTORE_TRASH')
+
+  return handleOperationResponse(response, 'FAILED_TO_RESTORE_TRASH')
+}
+
+export const deleteVaultTrashItem = async (directory, id) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/trash/${encodeURIComponent(id ?? '')}`
+  const response = await request(url, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  }, 'FAILED_TO_DELETE_TRASH')
+
+  return handleOperationResponse(response, 'FAILED_TO_DELETE_TRASH')
+}
+
+export const deleteVaultEntryPermanently = async (directory, { path, expectedRevision }) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/entries`
+  const payload = { path }
+  if (expectedRevision !== undefined) payload.expectedRevision = expectedRevision
+
+  const response = await request(url, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, 'FAILED_TO_DELETE_ENTRY')
+
+  return handleOperationResponse(response, 'FAILED_TO_DELETE_ENTRY')
 }
