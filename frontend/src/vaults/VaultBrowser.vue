@@ -20,11 +20,11 @@
           <li class="breadcrumb-separator" aria-hidden="true">/</li>
           <li class="breadcrumb-item">
             <button
-              v-if="currentPath !== ''"
+              v-if="currentPath !== '' || selectedFile !== null"
               type="button"
               class="btn-breadcrumb"
               :disabled="loading"
-              @click="navigateTo('')"
+              @click="closeFileAndNavigate('')"
             >
               {{ vault.name }}
             </button>
@@ -34,15 +34,21 @@
             <li class="breadcrumb-separator" aria-hidden="true">/</li>
             <li class="breadcrumb-item">
               <button
-                v-if="idx < segments.length - 1"
+                v-if="idx < segments.length - 1 || selectedFile !== null"
                 type="button"
                 class="btn-breadcrumb"
                 :disabled="loading"
-                @click="navigateTo(pathTo(idx))"
+                @click="closeFileAndNavigate(pathTo(idx))"
               >
                 {{ segment }}
               </button>
               <span v-else class="breadcrumb-current" aria-current="location">{{ segment }}</span>
+            </li>
+          </template>
+          <template v-if="selectedFile !== null">
+            <li class="breadcrumb-separator" aria-hidden="true">/</li>
+            <li class="breadcrumb-item">
+              <span class="breadcrumb-current" aria-current="location">{{ selectedFileName }}</span>
             </li>
           </template>
         </ol>
@@ -50,6 +56,7 @@
 
       <div class="browser-header-actions">
         <button
+          v-if="selectedFile === null"
           type="button"
           class="btn btn-secondary"
           data-testid="refresh-button"
@@ -69,74 +76,101 @@
       </div>
     </header>
 
-    <p v-if="error" class="error-message" role="alert" aria-live="polite">
-      {{ error }}
-    </p>
+    <template v-if="selectedFile !== null">
+      <MarkdownViewer
+        :directory="vault.directory"
+        :path="selectedFile"
+        @back="closeFile"
+        @unauthorized="emit('unauthorized')"
+      />
+    </template>
 
-    <div v-if="error && !entries.length" class="browser-error-state">
-      <button
-        type="button"
-        class="btn btn-secondary"
-        data-testid="retry-button"
-        @click="retry"
-      >
-        Retry
-      </button>
-    </div>
+    <template v-else>
+      <p v-if="error" class="error-message" role="alert" aria-live="polite">
+        {{ error }}
+      </p>
 
-    <p v-if="stale" class="warning-message" role="alert">
-      Listing may be out of date.
-    </p>
-
-    <p v-if="loading && !entries.length && !error" class="status-message" role="status" aria-busy="true">
-      Loading directory...
-    </p>
-
-    <template v-if="hasLoaded && !error">
-      <div v-if="currentPath !== ''" class="browser-nav-up">
+      <div v-if="error && !entries.length" class="browser-error-state">
         <button
           type="button"
-          class="btn btn-secondary browser-parent-dir"
-          data-testid="parent-dir-button"
-          :disabled="loading || stale"
-          @click="navigateTo(parentPath)"
+          class="btn btn-secondary"
+          data-testid="retry-button"
+          @click="retry"
         >
-          .. (Parent directory)
+          Retry
         </button>
       </div>
 
-      <div v-if="entries.length === 0" class="browser-empty-state">
-        <p>No files or folders found.</p>
-      </div>
+      <p v-if="stale" class="warning-message" role="alert">
+        Listing may be out of date.
+      </p>
 
-      <div v-if="folders.length > 0" class="browser-section">
-        <h3 class="browser-section-title">Folders</h3>
-        <ul class="browser-folder-list" aria-label="Folders">
-          <li v-for="folder in folders" :key="folder.path || folder.name" class="browser-folder-item">
-            <button
-              v-if="folder.path !== null"
-              type="button"
-              class="btn-folder"
-              :disabled="loading || stale"
-              @click="navigateTo(folder.path)"
-            >
-              {{ folder.name }}/
-            </button>
-            <span v-else class="browser-folder-unnavigable" title="Cannot navigate ambiguous path">
-              {{ folder.name }}/
-            </span>
-          </li>
-        </ul>
-      </div>
+      <p v-if="loading && !entries.length && !error" class="status-message" role="status" aria-busy="true">
+        Loading directory...
+      </p>
 
-      <div v-if="files.length > 0" class="browser-section">
-        <h3 class="browser-section-title">Files</h3>
-        <ul class="browser-file-list" aria-label="Files">
-          <li v-for="file in files" :key="file.path || file.name" class="browser-file-item">
-            {{ file.name }}
-          </li>
-        </ul>
-      </div>
+      <template v-if="hasLoaded && !error">
+        <div v-if="currentPath !== ''" class="browser-nav-up">
+          <button
+            type="button"
+            class="btn btn-secondary browser-parent-dir"
+            data-testid="parent-dir-button"
+            :disabled="loading || stale"
+            @click="navigateTo(parentPath)"
+          >
+            .. (Parent directory)
+          </button>
+        </div>
+
+        <div v-if="entries.length === 0" class="browser-empty-state">
+          <p>No files or folders found.</p>
+        </div>
+
+        <div v-if="folders.length > 0" class="browser-section">
+          <h3 class="browser-section-title">Folders</h3>
+          <ul class="browser-folder-list" aria-label="Folders">
+            <li v-for="folder in folders" :key="folder.path || folder.name" class="browser-folder-item">
+              <button
+                v-if="folder.path !== null"
+                type="button"
+                class="btn-folder"
+                :disabled="loading || stale"
+                @click="navigateTo(folder.path)"
+              >
+                {{ folder.name }}/
+              </button>
+              <span v-else class="browser-folder-unnavigable" title="Cannot navigate ambiguous path">
+                {{ folder.name }}/
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <div v-if="files.length > 0" class="browser-section">
+          <h3 class="browser-section-title">Files</h3>
+          <ul class="browser-file-list" aria-label="Files">
+            <li v-for="file in files" :key="file.path || file.name" class="browser-file-item">
+              <button
+                v-if="isSupportedMarkdown(file.name) && file.path !== null"
+                type="button"
+                class="btn-file"
+                data-testid="open-file-button"
+                :disabled="loading || stale"
+                @click="openFile(file.path)"
+              >
+                {{ file.name }}
+              </button>
+              <span
+                v-else
+                class="browser-file-unsupported"
+                :title="file.path === null ? 'Ambiguous path' : 'Unsupported file type'"
+              >
+                {{ file.name }}
+              </span>
+            </li>
+          </ul>
+        </div>
+      </template>
     </template>
   </section>
 </template>
@@ -144,6 +178,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getVaultEntries } from './api.js'
+import MarkdownViewer from '../markdown/MarkdownViewer.vue'
 
 const props = defineProps({
   vault: {
@@ -155,6 +190,7 @@ const props = defineProps({
 const emit = defineEmits(['back', 'unauthorized'])
 
 const currentPath = ref('')
+const selectedFile = ref(null)
 const entries = ref([])
 const loading = ref(true)
 const hasLoaded = ref(false)
@@ -163,6 +199,29 @@ const stale = ref(false)
 
 let mounted = true
 let latestRequestId = 0
+
+const selectedFileName = computed(() => {
+  if (!selectedFile.value) return ''
+  const parts = selectedFile.value.split('/')
+  return parts[parts.length - 1] || selectedFile.value
+})
+
+const isSupportedMarkdown = (filename) => {
+  return typeof filename === 'string' && /\.(md|markdown)$/i.test(filename)
+}
+
+const openFile = (path) => {
+  selectedFile.value = path
+}
+
+const closeFile = () => {
+  selectedFile.value = null
+}
+
+const closeFileAndNavigate = (targetPath) => {
+  selectedFile.value = null
+  navigateTo(targetPath)
+}
 
 const segments = computed(() => {
   return currentPath.value ? currentPath.value.split('/') : []
@@ -392,10 +451,40 @@ onBeforeUnmount(() => {
 }
 
 .browser-file-item {
-  padding: 0.35rem 0.5rem;
   color: var(--ayame-text, #eeeaf3);
   font-size: 0.9375rem;
   border-radius: 4px;
+}
+
+.btn-file {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ayame-lavender, #d4cbe4);
+  font-family: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  cursor: pointer;
+  display: inline-block;
+  transition: all 0.15s ease;
+}
+
+.btn-file:hover:not(:disabled) {
+  background: var(--ayame-hover, #242530);
+  color: #fff;
+}
+
+.btn-file:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.browser-file-unsupported {
+  padding: 0.35rem 0.5rem;
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.9375rem;
+  display: inline-block;
 }
 
 .browser-empty-state {

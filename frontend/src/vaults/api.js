@@ -183,3 +183,54 @@ export const getVaultEntries = async (directory, path = '') => {
     entries: data.entries.map(validateEntry),
   }
 }
+
+export const getVaultMarkdown = async (directory, path) => {
+  const query = `?path=${encodeURIComponent(path ?? '')}`
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/content${query}`
+  const response = await request(url, {
+    method: 'GET',
+    credentials: 'same-origin',
+  }, 'FAILED_TO_FETCH_MARKDOWN')
+
+  if (response.status === 401) {
+    throw apiError('UNAUTHORIZED')
+  }
+  if (response.status !== 200) {
+    let errorCode
+    try {
+      errorCode = (await response.json())?.error
+    } catch {}
+    if ([
+      'INVALID_VAULT_DIRECTORY',
+      'INVALID_VAULT_PATH',
+      'VAULT_PATH_NOT_FOUND',
+      'VAULT_PATH_NOT_FILE',
+      'UNSUPPORTED_FILE_TYPE',
+      'VAULT_FILE_TOO_LARGE',
+      'INVALID_FILE_ENCODING',
+    ].includes(errorCode)) {
+      throw apiError(errorCode)
+    }
+    throw apiError('FAILED_TO_FETCH_MARKDOWN')
+  }
+
+  const data = await readJson(response)
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    Array.isArray(data) ||
+    typeof data.directory !== 'string' ||
+    typeof data.path !== 'string' ||
+    typeof data.content !== 'string' ||
+    data.directory !== directory ||
+    data.path !== path
+  ) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+
+  return {
+    directory: data.directory,
+    path: data.path,
+    content: data.content,
+  }
+}

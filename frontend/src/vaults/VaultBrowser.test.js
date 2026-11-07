@@ -5,6 +5,7 @@ import * as api from './api.js'
 
 vi.mock('./api.js', () => ({
   getVaultEntries: vi.fn(),
+  getVaultMarkdown: vi.fn(),
 }))
 
 const vault = {
@@ -277,12 +278,160 @@ describe('VaultBrowser', () => {
     expect(wrapper.text()).not.toContain('ayame/')
   })
 
-  it('files are displayed as static text and do not trigger navigation', async () => {
-    const wrapper = await mountBrowser()
+  it('unsupported files and ambiguous entries are displayed as static text and do not trigger navigation', async () => {
+    const mixedEntries = [
+      { name: 'notes.txt', path: 'notes.txt', type: 'file' },
+      { name: 'photo.png', path: 'photo.png', type: 'file' },
+      { name: 'ambiguous.md', path: null, type: 'file' },
+    ]
+    const wrapper = await mountBrowser({ vault }, mixedEntries)
 
-    const readmeItem = wrapper.findAll('.browser-file-item').find((i) => i.text().includes('README.md'))
-    expect(readmeItem).toBeDefined()
-    expect(readmeItem.find('button').exists()).toBe(false)
-    expect(readmeItem.find('a').exists()).toBe(false)
+    const items = wrapper.findAll('.browser-file-item')
+    expect(items.length).toBe(3)
+    for (const item of items) {
+      expect(item.find('button').exists()).toBe(false)
+      expect(item.find('a').exists()).toBe(false)
+    }
+  })
+
+  describe('Markdown Viewer integration', () => {
+    beforeEach(() => {
+      api.getVaultMarkdown.mockResolvedValue({
+        directory: 'personal',
+        path: 'README.md',
+        content: '# Hello README',
+      })
+    })
+
+    it('opens .md file and displays MarkdownViewer receiving correct props', async () => {
+      const wrapper = await mountBrowser()
+
+      const readmeButton = wrapper.findAll('button[data-testid="open-file-button"]').find((b) => b.text().includes('README.md'))
+      expect(readmeButton).toBeDefined()
+      await readmeButton.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+      expect(api.getVaultMarkdown).toHaveBeenCalledWith('personal', 'README.md')
+      expect(wrapper.text()).toContain('Hello README')
+    })
+
+    it('opens .markdown file', async () => {
+      const markdownEntry = [{ name: 'spec.markdown', path: 'spec.markdown', type: 'file' }]
+      const wrapper = await mountBrowser({ vault }, markdownEntry)
+
+      const button = wrapper.find('button[data-testid="open-file-button"]')
+      expect(button.exists()).toBe(true)
+      expect(button.text()).toBe('spec.markdown')
+
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'spec.markdown',
+        content: '# Spec Content',
+      })
+
+      await button.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Spec Content')
+    })
+
+    it('updates breadcrumbs to include the selected file name at the end', async () => {
+      const wrapper = await mountBrowser()
+
+      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+
+      const breadcrumbs = wrapper.find('[data-testid="breadcrumbs"]')
+      expect(breadcrumbs.text()).toContain('Vaults')
+      expect(breadcrumbs.text()).toContain('Personal Notes')
+      expect(breadcrumbs.text()).toContain('README.md')
+      expect(breadcrumbs.find('.breadcrumb-current').text()).toBe('README.md')
+    })
+
+    it('returning from MarkdownViewer restores the directory view with previous entries', async () => {
+      const wrapper = await mountBrowser()
+
+      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+
+      // Click back button inside viewer
+      await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Folders')
+      expect(wrapper.text()).toContain('README.md')
+    })
+
+    it('opening a different file does not display content from the previous note', async () => {
+      const entries = [
+        { name: 'note-a.md', path: 'note-a.md', type: 'file' },
+        { name: 'note-b.md', path: 'note-b.md', type: 'file' },
+      ]
+      const wrapper = await mountBrowser({ vault }, entries)
+
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'note-a.md',
+        content: '# Note A Content',
+      })
+
+      const buttons = wrapper.findAll('button[data-testid="open-file-button"]')
+      await buttons[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('Note A Content')
+
+      // Return to directory
+      await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
+      await flushPromises()
+
+      // Open second file with delayed response
+      let resolveSecond
+      api.getVaultMarkdown.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSecond = resolve
+        })
+      )
+
+      await wrapper.findAll('button[data-testid="open-file-button"]')[1].trigger('click')
+      // Note A content must NOT be displayed
+      expect(wrapper.text()).not.toContain('Note A Content')
+
+      resolveSecond({
+        directory: 'personal',
+        path: 'note-b.md',
+        content: '# Note B Content',
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain('Note B Content')
+    })
+
+    it('propagates unauthorized error from MarkdownViewer by emitting unauthorized', async () => {
+      const wrapper = await mountBrowser()
+
+      api.getVaultMarkdown.mockRejectedValueOnce(codedError('UNAUTHORIZED'))
+
+      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('unauthorized')).toBeTruthy()
+      expect(wrapper.emitted('unauthorized').length).toBe(1)
+    })
+
+    it('navigating breadcrumb back to vaults emits back and leaves viewer', async () => {
+      const wrapper = await mountBrowser()
+
+      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+
+      // Click "Vaults" in breadcrumbs
+      const vaultsBreadcrumb = wrapper.findAll('.btn-breadcrumb').find((b) => b.text() === 'Vaults')
+      await vaultsBreadcrumb.trigger('click')
+
+      expect(wrapper.emitted('back')).toBeTruthy()
+    })
   })
 })

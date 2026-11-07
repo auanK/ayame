@@ -43,6 +43,13 @@ test('vault routes fail with 401 UNAUTHORIZED without valid session', async () =
     })
     assert.equal(resDelete.statusCode, 401)
     assert.deepEqual(resDelete.json(), { error: 'UNAUTHORIZED' })
+
+    const resContent = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=README.md',
+    })
+    assert.equal(resContent.statusCode, 401)
+    assert.deepEqual(resContent.json(), { error: 'UNAUTHORIZED' })
   } finally {
     await app.close()
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
@@ -495,6 +502,142 @@ test('GET /vaults/:directory/entries returns error codes and never leaks server 
     for (const res of [resInvDir, resInvPath, resNotFound, resNotDir]) {
       const text = res.body
       assert.equal(text.includes(vaultsRoot), false)
+    }
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('GET /vaults/:directory/content returns 200, raw content and Cache-Control: no-store', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-content-route-'))
+  const vaultDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(path.join(vaultDir, 'docs'), { recursive: true })
+
+  const rawNote = '# My Project\r\n\r\nRaw line endings and unicode: 🌸.\n'
+  fs.writeFileSync(path.join(vaultDir, 'docs', 'readme.markdown'), rawNote, 'utf8')
+  fs.writeFileSync(path.join(vaultDir, 'empty.md'), '', 'utf8')
+
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    // 1. Read note in subfolder with .markdown extension
+    const res = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=docs%2Freadme.markdown',
+      headers: { cookie },
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.headers['cache-control'], 'no-store')
+    assert.equal(res.headers['content-type'], 'application/json; charset=utf-8')
+    assert.deepEqual(res.json(), {
+      directory: 'personal',
+      path: 'docs/readme.markdown',
+      content: rawNote,
+    })
+
+    // 2. Read empty file at root
+    const emptyRes = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=empty.md',
+      headers: { cookie },
+    })
+
+    assert.equal(emptyRes.statusCode, 200)
+    assert.equal(emptyRes.headers['cache-control'], 'no-store')
+    assert.deepEqual(emptyRes.json(), {
+      directory: 'personal',
+      path: 'empty.md',
+      content: '',
+    })
+
+    // 3. Confirm files are never modified by reading
+    assert.equal(fs.readFileSync(path.join(vaultDir, 'docs', 'readme.markdown'), 'utf8'), rawNote)
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('GET /vaults/:directory/content maps error conditions to expected HTTP status codes with Cache-Control: no-store', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-content-err-'))
+  const vaultDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(path.join(vaultDir, 'subfolder'), { recursive: true })
+
+  // Fixtures:
+  // - directory
+  fs.mkdirSync(path.join(vaultDir, 'folder.md'))
+  // - unsupported file type
+  fs.writeFileSync(path.join(vaultDir, 'image.png'), 'png bytes')
+  // - too large (2 MiB + 1 byte)
+  fs.writeFileSync(path.join(vaultDir, 'huge.md'), Buffer.alloc(2 * 1024 * 1024 + 1, 0x61))
+  // - invalid utf-8
+  fs.writeFileSync(path.join(vaultDir, 'bad-encoding.md'), Buffer.from([0xff, 0xfe]))
+
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const cases = [
+      {
+        url: '/vaults/unknown-vault/content?path=note.md',
+        expectedStatus: 400,
+        expectedError: 'INVALID_VAULT_DIRECTORY',
+      },
+      {
+        url: '/vaults/personal/content?path=..%2Foutside.md',
+        expectedStatus: 400,
+        expectedError: 'INVALID_VAULT_PATH',
+      },
+      {
+        url: '/vaults/personal/content?path=',
+        expectedStatus: 400,
+        expectedError: 'INVALID_VAULT_PATH',
+      },
+      {
+        url: '/vaults/personal/content',
+        expectedStatus: 400,
+        expectedError: 'INVALID_VAULT_PATH',
+      },
+      {
+        url: '/vaults/personal/content?path=folder.md',
+        expectedStatus: 400,
+        expectedError: 'VAULT_PATH_NOT_FILE',
+      },
+      {
+        url: '/vaults/personal/content?path=missing.md',
+        expectedStatus: 404,
+        expectedError: 'VAULT_PATH_NOT_FOUND',
+      },
+      {
+        url: '/vaults/personal/content?path=image.png',
+        expectedStatus: 415,
+        expectedError: 'UNSUPPORTED_FILE_TYPE',
+      },
+      {
+        url: '/vaults/personal/content?path=huge.md',
+        expectedStatus: 413,
+        expectedError: 'VAULT_FILE_TOO_LARGE',
+      },
+      {
+        url: '/vaults/personal/content?path=bad-encoding.md',
+        expectedStatus: 422,
+        expectedError: 'INVALID_FILE_ENCODING',
+      },
+    ]
+
+    for (const testCase of cases) {
+      const res = await app.inject({
+        method: 'GET',
+        url: testCase.url,
+        headers: { cookie },
+      })
+
+      assert.equal(res.statusCode, testCase.expectedStatus, `Failed for ${testCase.url}: expected status ${testCase.expectedStatus}, got ${res.statusCode}`)
+      assert.equal(res.headers['cache-control'], 'no-store')
+      assert.deepEqual(res.json(), { error: testCase.expectedError })
+      // Confirm absolute path is never leaked in body
+      assert.equal(res.body.includes(vaultsRoot), false)
     }
   } finally {
     await app.close()

@@ -17,6 +17,7 @@ vi.mock('./vaults/api.js', () => ({
   registerVault: vi.fn(),
   unregisterVault: vi.fn(),
   getVaultEntries: vi.fn(),
+  getVaultMarkdown: vi.fn(),
 }))
 
 describe('App authentication flow', () => {
@@ -26,6 +27,7 @@ describe('App authentication flow', () => {
     sessionStorage.clear()
     vaultApi.getVaults.mockResolvedValue({ vaults: [] })
     vaultApi.getVaultEntries.mockResolvedValue({ directory: 'personal', path: '', entries: [] })
+    vaultApi.getVaultMarkdown.mockResolvedValue({ directory: 'personal-dir', path: 'README.md', content: '# Welcome' })
   })
 
   describe('Bootstrap & status resolution', () => {
@@ -524,6 +526,145 @@ describe('App authentication flow', () => {
       expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
 
       resolveEntries({ directory: 'personal-dir', path: '', entries: [] })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(false)
+    })
+
+    it('opens vault and markdown note, displaying rendered content', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir',
+        path: '',
+        entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+      })
+      vaultApi.getVaultMarkdown.mockResolvedValue({
+        directory: 'personal-dir',
+        path: 'README.md',
+        content: '# Note in App',
+      })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Note in App')
+    })
+
+    it('returns from viewer back to vault list', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir',
+        path: '',
+        entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+      })
+      vaultApi.getVaultMarkdown.mockResolvedValue({
+        directory: 'personal-dir',
+        path: 'README.md',
+        content: '# Content',
+      })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('[data-testid="back-to-vaults-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="vaults-panel"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
+    })
+
+    it('logout while markdown viewer is active returns to login', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockResolvedValue({ ok: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir',
+        path: '',
+        entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+      })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+
+      await wrapper.find('[data-testid="logout-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
+    })
+
+    it('401 from viewer returns to login screen', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir',
+        path: '',
+        entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+      })
+      vaultApi.getVaultMarkdown.mockRejectedValue(Object.assign(new Error('UNAUTHORIZED'), { code: 'UNAUTHORIZED' }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
+    })
+
+    it('late response from markdown viewer does not restore authenticated view after logout', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockResolvedValue({ ok: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir',
+        path: '',
+        entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+      })
+
+      let resolveMarkdown
+      vaultApi.getVaultMarkdown.mockReturnValue(new Promise((res) => { resolveMarkdown = res }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+
+      await wrapper.find('[data-testid="logout-button"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+
+      resolveMarkdown({ directory: 'personal-dir', path: 'README.md', content: '# Late content' })
       await flushPromises()
 
       expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)

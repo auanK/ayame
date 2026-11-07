@@ -314,3 +314,184 @@ test('read-only vault browser smoke flow (section 8)', async () => {
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('read-only markdown viewer smoke sequence (section 25)', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-smoke-markdown-'))
+  const vaultsRoot = path.join(tempDir, 'vaults')
+
+  // Setup fixtures:
+  // vaults/personal/
+  //   README.md
+  //   projects/
+  //     roadmap.md
+  //     notes.markdown
+  //   empty.md
+  //   image.png
+  //   large.md
+  const personalDir = path.join(vaultsRoot, 'personal')
+  const projectsDir = path.join(personalDir, 'projects')
+  fs.mkdirSync(projectsDir, { recursive: true })
+
+  const readmeContent = '# Personal Knowledge Hub\n\nWelcome to Ayame.\n'
+  const roadmapContent = '## Q1 Roadmap\n- [ ] Viewer\n- [ ] Search\n'
+  const notesContent = '# Brainstorming Notes\n\nSome ideas.\n'
+  const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  const largeBytes = Buffer.alloc(2 * 1024 * 1024 + 1, 0x61) // 2 MiB + 1 byte
+
+  fs.writeFileSync(path.join(personalDir, 'README.md'), readmeContent, 'utf8')
+  fs.writeFileSync(path.join(projectsDir, 'roadmap.md'), roadmapContent, 'utf8')
+  fs.writeFileSync(path.join(projectsDir, 'notes.markdown'), notesContent, 'utf8')
+  fs.writeFileSync(path.join(personalDir, 'empty.md'), '', 'utf8')
+  fs.writeFileSync(path.join(personalDir, 'image.png'), imageBytes)
+  fs.writeFileSync(path.join(personalDir, 'large.md'), largeBytes)
+
+  // 1. Initialise backend
+  const canonicalRoot = prepareVaultsRoot(vaultsRoot, { createIfMissing: false })
+  const db = openDatabase(':memory:')
+
+  // 2. Authenticate owner
+  await createOwner(db, { username: 'auank', password: 'password123' })
+  const session = createSession(db)
+  const app = createApp({ db, vaultsRoot: canonicalRoot })
+  const cookie = `ayame_session=${session.rawToken}`
+
+  try {
+    // 3. Discover personal
+    const resDiscovery = await app.inject({
+      method: 'GET',
+      url: '/vaults',
+      headers: { cookie },
+    })
+    assert.equal(resDiscovery.statusCode, 200)
+    assert.deepEqual(
+      resDiscovery.json().vaults.map((v) => v.directory),
+      ['personal']
+    )
+
+    // 4. List root entries
+    const resListRoot = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries',
+      headers: { cookie },
+    })
+    assert.equal(resListRoot.statusCode, 200)
+    const rootEntries = resListRoot.json().entries
+    assert.ok(rootEntries.some((e) => e.name === 'README.md' && e.type === 'file'))
+    assert.ok(rootEntries.some((e) => e.name === 'projects' && e.type === 'directory'))
+
+    // 5. Read README.md
+    const resReadme = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=README.md',
+      headers: { cookie },
+    })
+    assert.equal(resReadme.statusCode, 200)
+    assert.equal(resReadme.headers['cache-control'], 'no-store')
+    assert.deepEqual(resReadme.json(), {
+      directory: 'personal',
+      path: 'README.md',
+      content: readmeContent,
+    })
+
+    // 6. Read projects/roadmap.md
+    const resRoadmap = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=projects%2Froadmap.md',
+      headers: { cookie },
+    })
+    assert.equal(resRoadmap.statusCode, 200)
+    assert.deepEqual(resRoadmap.json(), {
+      directory: 'personal',
+      path: 'projects/roadmap.md',
+      content: roadmapContent,
+    })
+
+    // 7. Read projects/notes.markdown
+    const resNotes = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=projects%2Fnotes.markdown',
+      headers: { cookie },
+    })
+    assert.equal(resNotes.statusCode, 200)
+    assert.deepEqual(resNotes.json(), {
+      directory: 'personal',
+      path: 'projects/notes.markdown',
+      content: notesContent,
+    })
+
+    // 8. Read empty.md
+    const resEmpty = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=empty.md',
+      headers: { cookie },
+    })
+    assert.equal(resEmpty.statusCode, 200)
+    assert.deepEqual(resEmpty.json(), {
+      directory: 'personal',
+      path: 'empty.md',
+      content: '',
+    })
+
+    // 9. Rejection of image.png (415 UNSUPPORTED_FILE_TYPE)
+    const resImage = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=image.png',
+      headers: { cookie },
+    })
+    assert.equal(resImage.statusCode, 415)
+    assert.deepEqual(resImage.json(), { error: 'UNSUPPORTED_FILE_TYPE' })
+
+    // 10. Rejection of large.md above limit (413 VAULT_FILE_TOO_LARGE)
+    const resLarge = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=large.md',
+      headers: { cookie },
+    })
+    assert.equal(resLarge.statusCode, 413)
+    assert.deepEqual(resLarge.json(), { error: 'VAULT_FILE_TOO_LARGE' })
+
+    // 11. External modification of projects/roadmap.md
+    const updatedRoadmapContent = '## Q1 Roadmap Updated!\n- [x] Viewer Complete\n'
+    fs.writeFileSync(path.join(projectsDir, 'roadmap.md'), updatedRoadmapContent, 'utf8')
+
+    // 12. Read again showing updated content without restart
+    const resUpdatedRoadmap = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=projects%2Froadmap.md',
+      headers: { cookie },
+    })
+    assert.equal(resUpdatedRoadmap.statusCode, 200)
+    assert.equal(resUpdatedRoadmap.json().content, updatedRoadmapContent)
+
+    // 13. External removal of empty.md
+    fs.unlinkSync(path.join(personalDir, 'empty.md'))
+
+    // 14. Reading deleted file returns 404
+    const resDeleted = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=empty.md',
+      headers: { cookie },
+    })
+    assert.equal(resDeleted.statusCode, 404)
+    assert.deepEqual(resDeleted.json(), { error: 'VAULT_PATH_NOT_FOUND' })
+
+    // 15. Traversal attempt rejected with 400
+    const resTraversal = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=..%2F..%2Foutside.md',
+      headers: { cookie },
+    })
+    assert.equal(resTraversal.statusCode, 400)
+    assert.deepEqual(resTraversal.json(), { error: 'INVALID_VAULT_PATH' })
+
+    // 16. Confirmation that other files were not modified
+    assert.equal(fs.readFileSync(path.join(personalDir, 'README.md'), 'utf8'), readmeContent)
+    assert.equal(fs.readFileSync(path.join(projectsDir, 'notes.markdown'), 'utf8'), notesContent)
+    assert.deepEqual(fs.readFileSync(path.join(personalDir, 'image.png')), imageBytes)
+    assert.deepEqual(fs.readFileSync(path.join(personalDir, 'large.md')), largeBytes)
+  } finally {
+    await app.close()
+    closeDatabase(db)
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+})
