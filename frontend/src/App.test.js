@@ -18,6 +18,8 @@ vi.mock('./vaults/api.js', () => ({
   unregisterVault: vi.fn(),
   getVaultEntries: vi.fn(),
   getVaultMarkdown: vi.fn(),
+  saveVaultMarkdown: vi.fn(),
+  MAX_MARKDOWN_BYTES: 2 * 1024 * 1024,
 }))
 
 describe('App authentication flow', () => {
@@ -27,7 +29,7 @@ describe('App authentication flow', () => {
     sessionStorage.clear()
     vaultApi.getVaults.mockResolvedValue({ vaults: [] })
     vaultApi.getVaultEntries.mockResolvedValue({ directory: 'personal', path: '', entries: [] })
-    vaultApi.getVaultMarkdown.mockResolvedValue({ directory: 'personal-dir', path: 'README.md', content: '# Welcome' })
+    vaultApi.getVaultMarkdown.mockResolvedValue({ directory: 'personal-dir', path: 'README.md', content: '# Welcome', revision: 'a'.repeat(64) })
   })
 
   describe('Bootstrap & status resolution', () => {
@@ -377,6 +379,67 @@ describe('App authentication flow', () => {
       expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(false)
       expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    })
+
+    it('asks before logout when a draft is dirty and preserves it when the user keeps editing', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockResolvedValue({ ok: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [{ id: null, name: 'personal', directory: 'personal-dir', registered: false }] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir', path: '', entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+      })
+      vaultApi.getVaultMarkdown.mockResolvedValue({
+        directory: 'personal-dir', path: 'README.md', content: 'base', revision: 'a'.repeat(64),
+      })
+
+      const wrapper = mount(App)
+      await flushPromises()
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+      await wrapper.find('[data-testid="markdown-editor"]').setValue('local draft')
+
+      await wrapper.find('[data-testid="logout-button"]').trigger('click')
+      expect(api.logout).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="logout-keep-editing"]').exists()).toBe(true)
+      await wrapper.find('[data-testid="logout-keep-editing"]').trigger('click')
+      expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('local draft')
+
+      await wrapper.find('[data-testid="logout-button"]').trigger('click')
+      await wrapper.find('[data-testid="logout-discard-changes"]').trigger('click')
+      await flushPromises()
+      expect(api.logout).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('local draft')
+    })
+
+    it('clears a dirty draft immediately when an edit request reports an expired session', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [{ id: null, name: 'personal', directory: 'personal-dir', registered: false }] })
+      vaultApi.getVaultEntries.mockResolvedValue({
+        directory: 'personal-dir', path: '', entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+      })
+      vaultApi.getVaultMarkdown.mockResolvedValue({
+        directory: 'personal-dir', path: 'README.md', content: 'base', revision: 'a'.repeat(64),
+      })
+      vaultApi.saveVaultMarkdown.mockRejectedValueOnce(Object.assign(new Error('expired'), { code: 'UNAUTHORIZED' }))
+
+      const wrapper = mount(App)
+      await flushPromises()
+      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+      await wrapper.find('[data-testid="markdown-editor"]').setValue('protected draft')
+      await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('protected draft')
     })
   })
 

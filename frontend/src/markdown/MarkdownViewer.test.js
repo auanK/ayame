@@ -5,7 +5,11 @@ import * as api from '../vaults/api.js'
 
 vi.mock('../vaults/api.js', () => ({
   getVaultMarkdown: vi.fn(),
+  saveVaultMarkdown: vi.fn(),
+  MAX_MARKDOWN_BYTES: 2 * 1024 * 1024,
 }))
+
+const revision = 'a'.repeat(64)
 
 const apiError = (code) => {
   const err = new Error(code)
@@ -318,11 +322,12 @@ describe('MarkdownViewer.vue', () => {
     expect(wrapper.emitted('back').length).toBe(1)
   })
 
-  it('17. performs exclusively read-only operations without save, edit or mutate controls', async () => {
+  it('17. keeps the source textarea hidden until Edit is selected', async () => {
     api.getVaultMarkdown.mockResolvedValue({
       directory: 'personal',
       path: 'projects/spec.md',
       content: '# Content',
+      revision,
     })
 
     const wrapper = mount(MarkdownViewer, {
@@ -332,8 +337,8 @@ describe('MarkdownViewer.vue', () => {
 
     expect(wrapper.find('textarea').exists()).toBe(false)
     expect(wrapper.find('input[type="text"]').exists()).toBe(false)
-    expect(wrapper.find('button[data-testid*="save"]').exists()).toBe(false)
-    expect(wrapper.find('button[data-testid*="edit"]').exists()).toBe(false)
+    expect(wrapper.find('button[data-testid="markdown-save-button"]').exists()).toBe(false)
+    expect(wrapper.find('button[data-testid="markdown-edit-button"]').exists()).toBe(true)
     expect(wrapper.find('button[data-testid*="delete"]').exists()).toBe(false)
   })
 
@@ -406,5 +411,153 @@ describe('MarkdownViewer.vue', () => {
     expect(wrapper.emitted('unauthorized')?.length).toBe(1)
     expect(wrapper.find('[data-testid="markdown-content"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="markdown-empty"]').exists()).toBe(false)
+  })
+
+  it('edits a draft, derives dirty state, and preserves mixed line endings on save', async () => {
+    const original = 'first\r\nsecond\nlast\r\n'
+    const removeListener = vi.spyOn(window, 'removeEventListener')
+    api.getVaultMarkdown.mockResolvedValue({ directory: 'personal', path: 'note.md', content: original, revision })
+    api.saveVaultMarkdown.mockResolvedValue({ directory: 'personal', path: 'note.md', revision: 'b'.repeat(64) })
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'note.md' } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+    const editor = wrapper.find('[data-testid="markdown-editor"]')
+    expect(editor.element.value).toBe('first\nsecond\nlast\n')
+    expect(wrapper.find('[data-testid="markdown-save-button"]').attributes('disabled')).toBeDefined()
+
+    await editor.setValue('first\ninserted\nsecond\nlast\n')
+    expect(wrapper.find('[data-testid="markdown-dirty-indicator"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+    await flushPromises()
+
+    expect(api.saveVaultMarkdown).toHaveBeenCalledWith('personal', 'note.md', {
+      content: 'first\r\ninserted\r\nsecond\nlast\r\n',
+      expectedRevision: revision,
+    })
+    expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Saved.')
+    expect(removeListener).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    vi.restoreAllMocks()
+  })
+
+  it('saves an empty draft and preserves it after a locked-save error', async () => {
+    api.getVaultMarkdown.mockResolvedValue({ directory: 'personal', path: 'note.md', content: '🌸', revision })
+    api.saveVaultMarkdown
+      .mockRejectedValueOnce(apiError('VAULT_FILE_LOCKED'))
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', revision: 'b'.repeat(64) })
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'note.md' } })
+    await flushPromises()
+    await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+    await wrapper.find('[data-testid="markdown-editor"]').setValue('')
+    await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('')
+    expect(wrapper.find('[role="alert"]').text()).toContain('Another Ayame save')
+    expect(api.saveVaultMarkdown).toHaveBeenCalledTimes(1)
+
+    await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+    await flushPromises()
+    expect(api.saveVaultMarkdown).toHaveBeenLastCalledWith('personal', 'note.md', {
+      content: '', expectedRevision: revision,
+    })
+    expect(wrapper.find('[data-testid="markdown-empty"]').exists()).toBe(true)
+  })
+
+  it('clears dirty state and disables Save when the draft is restored to its base content', async () => {
+    api.getVaultMarkdown.mockResolvedValue({ directory: 'personal', path: 'note.md', content: 'base', revision })
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'note.md' } })
+    await flushPromises()
+    await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+    const editor = wrapper.find('[data-testid="markdown-editor"]')
+    await editor.setValue('changed')
+    await editor.setValue('base')
+    expect(wrapper.find('[data-testid="markdown-dirty-indicator"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="markdown-save-button"]').attributes('disabled')).toBeDefined()
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('preserves draft and revision on conflict and requires confirmation before reload', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: 'base', revision })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: 'remote', revision: 'c'.repeat(64) })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: 'latest', revision: 'd'.repeat(64) })
+    api.saveVaultMarkdown.mockRejectedValue(Object.assign(new Error('conflict'), { code: 'VAULT_FILE_CONFLICT' }))
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'note.md' } })
+    await flushPromises()
+    await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+    await wrapper.find('[data-testid="markdown-editor"]').setValue('local draft')
+    await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="markdown-conflict"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('local draft')
+    expect(api.saveVaultMarkdown).toHaveBeenCalledTimes(1)
+    await wrapper.find('[data-testid="markdown-reload-server"]').trigger('click')
+    expect(wrapper.find('[data-testid="markdown-confirm-reload"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('local draft')
+    await wrapper.find('[data-testid="markdown-confirm-reload"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('remote')
+    expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(false)
+  })
+
+  it('verifies an uncertain save without retrying and reconciles matching server content', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: 'base', revision })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: 'draft', revision: 'e'.repeat(64) })
+    api.saveVaultMarkdown.mockRejectedValue(Object.assign(new Error('unknown'), { code: 'VAULT_SAVE_RESULT_UNKNOWN' }))
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'note.md' } })
+    await flushPromises()
+    await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+    await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
+    await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="markdown-save-unknown"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('draft')
+    await wrapper.find('[data-testid="markdown-verify-save"]').trigger('click')
+    await flushPromises()
+    expect(api.saveVaultMarkdown).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('matches your draft')
+  })
+
+  it('blocks duplicate saves, disables editing while pending, and ignores cancel without losing the draft', async () => {
+    let resolveSave
+    api.getVaultMarkdown.mockResolvedValue({ directory: 'personal', path: 'note.md', content: 'base', revision })
+    api.saveVaultMarkdown.mockReturnValue(new Promise((resolve) => { resolveSave = resolve }))
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'note.md' } })
+    await flushPromises()
+    await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+    await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
+    await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="markdown-editor"]').attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
+    expect(api.saveVaultMarkdown).toHaveBeenCalledTimes(1)
+    resolveSave({ directory: 'personal', path: 'note.md', revision: 'f'.repeat(64) })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(false)
+  })
+
+  it('requires an explicit discard decision and installs beforeunload only while dirty', async () => {
+    api.getVaultMarkdown.mockResolvedValue({ directory: 'personal', path: 'note.md', content: 'base', revision })
+    const add = vi.spyOn(window, 'addEventListener')
+    const remove = vi.spyOn(window, 'removeEventListener')
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'note.md' } })
+    await flushPromises()
+    await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+    await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
+    expect(add).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    await wrapper.find('[data-testid="markdown-cancel-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="markdown-keep-editing"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="markdown-keep-editing"]').trigger('click')
+    expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('draft')
+    await wrapper.find('[data-testid="markdown-cancel-button"]').trigger('click')
+    await wrapper.find('[data-testid="markdown-discard-changes"]').trigger('click')
+    expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(false)
+    expect(remove).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    wrapper.unmount()
   })
 })

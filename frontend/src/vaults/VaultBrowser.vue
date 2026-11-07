@@ -12,7 +12,8 @@
             <button
               type="button"
               class="btn-breadcrumb"
-              @click="$emit('back')"
+              :disabled="editorSaving"
+              @click="requestNavigation(() => emit('back'))"
             >
               Vaults
             </button>
@@ -23,7 +24,7 @@
               v-if="currentPath !== '' || selectedFile !== null"
               type="button"
               class="btn-breadcrumb"
-              :disabled="loading"
+              :disabled="loading || editorSaving"
               @click="closeFileAndNavigate('')"
             >
               {{ vault.name }}
@@ -37,7 +38,7 @@
                 v-if="idx < segments.length - 1 || selectedFile !== null"
                 type="button"
                 class="btn-breadcrumb"
-                :disabled="loading"
+                :disabled="loading || editorSaving"
                 @click="closeFileAndNavigate(pathTo(idx))"
               >
                 {{ segment }}
@@ -60,7 +61,7 @@
           type="button"
           class="btn btn-secondary"
           data-testid="refresh-button"
-          :disabled="loading"
+          :disabled="loading || editorSaving"
           @click="refresh"
         >
           {{ loading ? 'Refreshing...' : 'Refresh' }}
@@ -69,7 +70,7 @@
           type="button"
           class="btn btn-secondary"
           data-testid="back-to-vaults-button"
-          @click="$emit('back')"
+          @click="requestNavigation(() => emit('back'))"
         >
           Back to vaults
         </button>
@@ -80,8 +81,9 @@
       <MarkdownViewer
         :directory="vault.directory"
         :path="selectedFile"
-        @back="closeFile"
+        @back="requestNavigation(closeFile)"
         @unauthorized="emit('unauthorized')"
+        @state="handleEditorState"
       />
     </template>
 
@@ -115,7 +117,7 @@
             type="button"
             class="btn btn-secondary browser-parent-dir"
             data-testid="parent-dir-button"
-            :disabled="loading || stale"
+            :disabled="loading || stale || editorSaving"
             @click="navigateTo(parentPath)"
           >
             .. (Parent directory)
@@ -134,7 +136,7 @@
                 v-if="folder.path !== null"
                 type="button"
                 class="btn-folder"
-                :disabled="loading || stale"
+                :disabled="loading || stale || editorSaving"
                 @click="navigateTo(folder.path)"
               >
                 {{ folder.name }}/
@@ -155,7 +157,7 @@
                 type="button"
                 class="btn-file"
                 data-testid="open-file-button"
-                :disabled="loading || stale"
+                :disabled="loading || stale || editorSaving"
                 @click="openFile(file.path)"
               >
                 {{ file.name }}
@@ -172,6 +174,12 @@
         </div>
       </template>
     </template>
+
+    <div v-if="navigationConfirm" class="editor-confirm" role="dialog" aria-modal="true" aria-labelledby="navigation-title">
+      <p id="navigation-title">Discard your unsaved changes?</p>
+      <button type="button" class="btn btn-secondary" data-testid="navigation-keep-editing" @click="keepEditing">Keep editing</button>
+      <button type="button" class="btn btn-secondary" data-testid="navigation-discard-changes" @click="discardAndNavigate">Discard changes</button>
+    </div>
   </section>
 </template>
 
@@ -187,7 +195,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['back', 'unauthorized'])
+const emit = defineEmits(['back', 'unauthorized', 'state'])
 
 const currentPath = ref('')
 const selectedFile = ref(null)
@@ -196,6 +204,10 @@ const loading = ref(true)
 const hasLoaded = ref(false)
 const error = ref('')
 const stale = ref(false)
+const editorDirty = ref(false)
+const editorSaving = ref(false)
+const navigationConfirm = ref(false)
+let pendingNavigation = null
 
 let mounted = true
 let latestRequestId = 0
@@ -211,7 +223,7 @@ const isSupportedMarkdown = (filename) => {
 }
 
 const openFile = (path) => {
-  selectedFile.value = path
+  requestNavigation(() => { selectedFile.value = path })
 }
 
 const closeFile = () => {
@@ -219,8 +231,39 @@ const closeFile = () => {
 }
 
 const closeFileAndNavigate = (targetPath) => {
-  selectedFile.value = null
-  navigateTo(targetPath)
+  requestNavigation(() => {
+    selectedFile.value = null
+    loadDirectory(targetPath)
+  })
+}
+
+const handleEditorState = (state) => {
+  editorDirty.value = Boolean(state?.dirty)
+  editorSaving.value = Boolean(state?.saving)
+  emit('state', { dirty: editorDirty.value, saving: editorSaving.value })
+}
+
+const requestNavigation = (action) => {
+  if (editorSaving.value) return
+  if (editorDirty.value) {
+    pendingNavigation = action
+    navigationConfirm.value = true
+    return
+  }
+  action()
+}
+
+const keepEditing = () => {
+  navigationConfirm.value = false
+  pendingNavigation = null
+}
+
+const discardAndNavigate = () => {
+  const action = pendingNavigation
+  navigationConfirm.value = false
+  pendingNavigation = null
+  editorDirty.value = false
+  if (action) action()
 }
 
 const segments = computed(() => {
@@ -292,7 +335,7 @@ const loadDirectory = async (targetPath, { isRefresh = false } = {}) => {
 }
 
 const navigateTo = (targetPath) => {
-  loadDirectory(targetPath)
+  requestNavigation(() => loadDirectory(targetPath))
 }
 
 const refresh = () => {
@@ -495,5 +538,12 @@ onBeforeUnmount(() => {
 
 .browser-error-state {
   margin-top: 0.5rem;
+}
+
+.editor-confirm {
+  padding: 0.75rem;
+  border: 1px solid rgba(212, 203, 228, 0.2);
+  border-radius: 6px;
+  background: rgba(17, 18, 24, 0.9);
 }
 </style>

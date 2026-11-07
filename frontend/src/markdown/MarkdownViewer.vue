@@ -1,50 +1,122 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { getVaultMarkdown } from '../vaults/api.js'
+import { getVaultMarkdown, saveVaultMarkdown, MAX_MARKDOWN_BYTES } from '../vaults/api.js'
 import { renderMarkdown } from './render.js'
+import MarkdownEditor from './MarkdownEditor.vue'
 
 const props = defineProps({
-  directory: {
-    type: String,
-    required: true,
-  },
-  path: {
-    type: String,
-    required: true,
-  },
+  directory: { type: String, required: true },
+  path: { type: String, required: true },
 })
 
-const emit = defineEmits(['back', 'unauthorized'])
+const emit = defineEmits(['back', 'unauthorized', 'state'])
 
+const mode = ref('view')
 const loading = ref(true)
 const refreshing = ref(false)
+const saving = ref(false)
 const error = ref(null)
 const errorCode = ref(null)
-const content = ref('')
+const baseContent = ref('')
+const draft = ref('')
+const revision = ref(null)
 const hasConfirmedContent = ref(false)
 const stale = ref(false)
+const saveError = ref('')
+const conflict = ref(false)
+const saveResultUnknown = ref(false)
+const discardConfirm = ref(false)
+const reloadConfirm = ref(false)
+const copyMessage = ref('')
+const saveNotice = ref('')
+
+const dirty = computed(() => draft.value !== baseContent.value)
+const revisionReady = computed(() => typeof revision.value === 'string' && /^[a-f0-9]{64}$/.test(revision.value))
+const filename = computed(() => props.path.split('/').at(-1) || props.path)
+const renderedHtml = computed(() => renderMarkdown(baseContent.value))
+const editorText = computed(() => normalizeLineEndings(draft.value))
 
 let activeRequestId = 0
+let recoveryRequestId = 0
 let isMounted = true
+let unloadHandler = null
 
-const filename = computed(() => {
-  if (!props.path) return ''
-  const parts = props.path.split('/')
-  return parts[parts.length - 1] || props.path
-})
+function normalizeLineEndings(text) {
+  return text.replace(/\r\n|\r/g, '\n')
+}
 
-const renderedHtml = computed(() => renderMarkdown(content.value))
+function newlineTokens(text) {
+  return [...text.matchAll(/\r\n|\r|\n/g)].map(([ending]) => ending)
+}
+
+function defaultLineEnding(tokens) {
+  if (!tokens.length) return '\n'
+  const counts = new Map()
+  for (const ending of tokens) counts.set(ending, (counts.get(ending) ?? 0) + 1)
+  return [...counts].sort((a, b) => b[1] - a[1])[0][0]
+}
+
+function updateDraft(nextValue) {
+  const previous = normalizeLineEndings(draft.value)
+  const next = normalizeLineEndings(nextValue)
+  let prefix = 0
+  while (prefix < previous.length && prefix < next.length && previous[prefix] === next[prefix]) prefix++
+  let suffix = 0
+  while (
+    suffix < previous.length - prefix &&
+    suffix < next.length - prefix &&
+    previous[previous.length - 1 - suffix] === next[next.length - 1 - suffix]
+  ) suffix++
+
+  const oldTokens = newlineTokens(draft.value)
+  const prefixTokens = newlineTokens(previous.slice(0, prefix)).length
+  const oldMiddleEnd = previous.length - suffix
+  const suffixTokens = newlineTokens(previous.slice(oldMiddleEnd)).length
+  const addedBreaks = (next.slice(prefix, next.length - suffix).match(/\n/g) ?? []).length
+  const lineEnding = defaultLineEnding(oldTokens)
+  const tokens = [
+    ...oldTokens.slice(0, prefixTokens),
+    ...Array(addedBreaks).fill(lineEnding),
+    ...(suffixTokens ? oldTokens.slice(-suffixTokens) : []),
+  ]
+  let tokenIndex = 0
+  draft.value = next.replace(/\n/g, () => tokens[tokenIndex++] ?? lineEnding)
+  saveNotice.value = ''
+  copyMessage.value = ''
+}
+
+const publishState = () => emit('state', { dirty: dirty.value, saving: saving.value })
+
+const clearProtectedContent = () => {
+  mode.value = 'view'
+  baseContent.value = ''
+  draft.value = ''
+  revision.value = null
+  hasConfirmedContent.value = false
+  conflict.value = false
+  saveResultUnknown.value = false
+  discardConfirm.value = false
+  reloadConfirm.value = false
+  publishState()
+}
 
 const load = async (isRefresh = false) => {
+  if (isRefresh && (mode.value === 'edit' || dirty.value || saving.value)) return
   const reqId = ++activeRequestId
 
   if (!isRefresh) {
     loading.value = true
     error.value = null
     errorCode.value = null
-    content.value = ''
+    baseContent.value = ''
+    draft.value = ''
+    revision.value = null
     hasConfirmedContent.value = false
     stale.value = false
+    mode.value = 'view'
+    saveError.value = ''
+    conflict.value = false
+    saveResultUnknown.value = false
   } else {
     refreshing.value = true
   }
@@ -52,41 +124,38 @@ const load = async (isRefresh = false) => {
   try {
     const result = await getVaultMarkdown(props.directory, props.path)
     if (!isMounted || reqId !== activeRequestId) return
-
-    content.value = result.content
+    baseContent.value = result.content
+    draft.value = result.content
+    revision.value = result.revision
     hasConfirmedContent.value = true
     error.value = null
     errorCode.value = null
     stale.value = false
+    saveError.value = ''
+    saveNotice.value = ''
   } catch (err) {
     if (!isMounted || reqId !== activeRequestId) return
-
     if (err.code === 'UNAUTHORIZED') {
-      content.value = ''
-      hasConfirmedContent.value = false
+      clearProtectedContent()
       stale.value = false
       error.value = null
       errorCode.value = null
       emit('unauthorized')
       return
     }
-
     errorCode.value = err.code || 'FAILED_TO_FETCH_MARKDOWN'
-
     if (isRefresh && hasConfirmedContent.value) {
       stale.value = true
+    } else if (err.code === 'VAULT_FILE_TOO_LARGE') {
+      error.value = 'Note exceeds the 2 MiB limit and cannot be displayed.'
+    } else if (err.code === 'INVALID_FILE_ENCODING') {
+      error.value = 'Note contains invalid UTF-8 encoding and cannot be displayed.'
+    } else if (err.code === 'VAULT_PATH_NOT_FOUND') {
+      error.value = 'Note not found in vault.'
+    } else if (err.code === 'UNSUPPORTED_FILE_TYPE') {
+      error.value = 'Unsupported file type. Only Markdown notes (.md, .markdown) are supported.'
     } else {
-      if (err.code === 'VAULT_FILE_TOO_LARGE') {
-        error.value = 'Note exceeds the 2 MiB limit and cannot be displayed.'
-      } else if (err.code === 'INVALID_FILE_ENCODING') {
-        error.value = 'Note contains invalid UTF-8 encoding and cannot be displayed.'
-      } else if (err.code === 'VAULT_PATH_NOT_FOUND') {
-        error.value = 'Note not found in vault.'
-      } else if (err.code === 'UNSUPPORTED_FILE_TYPE') {
-        error.value = 'Unsupported file type. Only Markdown notes (.md, .markdown) are supported.'
-      } else {
-        error.value = 'Could not load note from server. Please try again.'
-      }
+      error.value = 'Could not load note from server. Please try again.'
     }
   } finally {
     if (isMounted && reqId === activeRequestId) {
@@ -96,21 +165,185 @@ const load = async (isRefresh = false) => {
   }
 }
 
-watch(
-  () => [props.directory, props.path],
-  () => {
-    load()
+const cancelEdit = () => {
+  if (dirty.value) {
+    discardConfirm.value = true
+    return
   }
-)
+  mode.value = 'view'
+}
+
+const discardDraft = () => {
+  recoveryRequestId++
+  draft.value = baseContent.value
+  mode.value = 'view'
+  discardConfirm.value = false
+  reloadConfirm.value = false
+  conflict.value = false
+  saveResultUnknown.value = false
+  saveError.value = ''
+}
+
+const save = async () => {
+  if (saving.value || !dirty.value || conflict.value || saveResultUnknown.value) return
+  if (!hasConfirmedContent.value || !revisionReady.value) {
+    saveError.value = 'Reload this note to confirm its current revision before saving.'
+    return
+  }
+  const bytes = new TextEncoder().encode(draft.value)
+  if (bytes.byteLength > MAX_MARKDOWN_BYTES) {
+    saveError.value = 'This note exceeds the 2 MiB limit.'
+    return
+  }
+  if (new TextDecoder('utf-8', { fatal: true }).decode(bytes) !== draft.value) {
+    saveError.value = 'The draft contains invalid Unicode and cannot be saved.'
+    return
+  }
+
+  const reqId = activeRequestId
+  saving.value = true
+  saveError.value = ''
+  saveNotice.value = ''
+  publishState()
+  try {
+    const result = await saveVaultMarkdown(props.directory, props.path, {
+      content: draft.value,
+      expectedRevision: revision.value,
+    })
+    if (!isMounted || reqId !== activeRequestId) return
+    baseContent.value = draft.value
+    revision.value = result.revision
+    mode.value = 'view'
+    conflict.value = false
+    saveResultUnknown.value = false
+    saveNotice.value = 'Saved.'
+  } catch (err) {
+    if (!isMounted || reqId !== activeRequestId) return
+    if (err.code === 'UNAUTHORIZED') {
+      clearProtectedContent()
+      emit('unauthorized')
+    } else if (err.code === 'VAULT_FILE_CONFLICT') {
+      conflict.value = true
+      saveError.value = 'This note changed on the server. Your draft is preserved.'
+    } else if (err.code === 'VAULT_SAVE_RESULT_UNKNOWN') {
+      saveResultUnknown.value = true
+      saveError.value = 'The save result is uncertain. Verify the server copy before continuing.'
+    } else if (err.code === 'VAULT_FILE_LOCKED') {
+      saveError.value = 'Another Ayame save is using this note. Your draft is preserved.'
+    } else if (err.code === 'VAULT_FILE_TOO_LARGE') {
+      saveError.value = 'This note exceeds the 2 MiB limit.'
+    } else if (err.code === 'INVALID_MARKDOWN_CONTENT') {
+      saveError.value = 'The draft contains invalid Unicode and cannot be saved.'
+    } else {
+      saveError.value = 'Could not save this note. Your draft is preserved.'
+    }
+  } finally {
+    if (isMounted && reqId === activeRequestId) {
+      saving.value = false
+      publishState()
+    }
+  }
+}
+
+const verifyServer = async () => {
+  const reqId = activeRequestId
+  const recoveryId = ++recoveryRequestId
+  saveError.value = ''
+  try {
+    const remote = await getVaultMarkdown(props.directory, props.path)
+    if (!isMounted || reqId !== activeRequestId || recoveryId !== recoveryRequestId) return
+    if (remote.content === draft.value) {
+      baseContent.value = remote.content
+      draft.value = remote.content
+      revision.value = remote.revision
+      conflict.value = false
+      saveResultUnknown.value = false
+      mode.value = 'view'
+      saveNotice.value = 'The server copy matches your draft.'
+    } else {
+      conflict.value = true
+      saveResultUnknown.value = false
+      saveError.value = 'The server has a different copy. Your draft remains unchanged.'
+    }
+  } catch (err) {
+    if (!isMounted || reqId !== activeRequestId || recoveryId !== recoveryRequestId) return
+    if (err.code === 'UNAUTHORIZED') {
+      clearProtectedContent()
+      emit('unauthorized')
+    } else {
+      saveError.value = 'Could not verify the server copy. Your draft is preserved.'
+    }
+  }
+}
+
+const reloadServerCopy = async () => {
+  const reqId = activeRequestId
+  const recoveryId = ++recoveryRequestId
+  try {
+    const remote = await getVaultMarkdown(props.directory, props.path)
+    if (!isMounted || reqId !== activeRequestId || recoveryId !== recoveryRequestId) return
+    baseContent.value = remote.content
+    draft.value = remote.content
+    revision.value = remote.revision
+    mode.value = 'view'
+    conflict.value = false
+    saveResultUnknown.value = false
+    reloadConfirm.value = false
+    discardConfirm.value = false
+    saveError.value = ''
+    saveNotice.value = 'Loaded the current server copy.'
+  } catch (err) {
+    if (!isMounted || reqId !== activeRequestId || recoveryId !== recoveryRequestId) return
+    if (err.code === 'UNAUTHORIZED') {
+      clearProtectedContent()
+      emit('unauthorized')
+    } else {
+      saveError.value = 'Could not load the server copy. Your draft is preserved.'
+    }
+  }
+}
+
+const copyDraft = async () => {
+  try {
+    await navigator.clipboard.writeText(draft.value)
+    copyMessage.value = 'Draft copied.'
+  } catch {
+    copyMessage.value = 'Clipboard access is unavailable. Select the draft text and copy it.'
+  }
+}
+
+const handleBeforeUnload = (event) => {
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+watch(dirty, (isDirty) => {
+  if (typeof window === 'undefined') return
+  if (isDirty && !unloadHandler) {
+    unloadHandler = handleBeforeUnload
+    window.addEventListener('beforeunload', unloadHandler)
+  } else if (!isDirty && unloadHandler) {
+    window.removeEventListener('beforeunload', unloadHandler)
+    unloadHandler = null
+  }
+  publishState()
+}, { flush: 'sync' })
+
+watch(saving, publishState, { flush: 'sync' })
+watch(() => [props.directory, props.path], () => load())
 
 onMounted(() => {
   isMounted = true
   load()
+  publishState()
 })
 
 onUnmounted(() => {
   isMounted = false
   activeRequestId++
+  recoveryRequestId++
+  if (unloadHandler) window.removeEventListener('beforeunload', unloadHandler)
+  emit('state', { dirty: false, saving: false })
 })
 </script>
 
@@ -122,6 +355,7 @@ onUnmounted(() => {
           type="button"
           class="back-button"
           data-testid="markdown-back-button"
+          :disabled="saving"
           @click="emit('back')"
         >
           ← Back
@@ -139,10 +373,19 @@ onUnmounted(() => {
 
       <div class="header-actions">
         <button
+          v-if="mode === 'view' && hasConfirmedContent && revisionReady"
+          type="button"
+          class="action-button"
+          data-testid="markdown-edit-button"
+          :disabled="loading || saving"
+          @click="mode = 'edit'; saveNotice = ''; saveError = ''"
+        >Edit</button>
+        <button
+          v-if="mode === 'view'"
           type="button"
           class="action-button refresh-button"
           data-testid="markdown-refresh-button"
-          :disabled="loading || refreshing"
+          :disabled="loading || refreshing || saving"
           @click="load(true)"
         >
           {{ refreshing ? 'Refreshing...' : 'Refresh' }}
@@ -193,8 +436,46 @@ onUnmounted(() => {
       </div>
 
       <!-- Content State -->
+      <p v-show="saveNotice && mode === 'view'" class="editor-status" role="status">{{ saveNotice }}</p>
+      <div v-if="mode === 'edit' && hasConfirmedContent" class="content-container editor-container">
+        <div class="editor-heading">
+          <strong>{{ filename }}</strong>
+          <span v-if="dirty" data-testid="markdown-dirty-indicator">Unsaved changes</span>
+        </div>
+        <MarkdownEditor :model-value="editorText" :disabled="saving || loading" @update:model-value="updateDraft" />
+        <p v-if="saving" class="editor-status" role="status" data-testid="markdown-saving">Saving…</p>
+        <p v-if="saveError" class="editor-error" role="alert" data-testid="markdown-save-error">{{ saveError }}</p>
+        <p v-if="saveNotice" class="editor-status" role="status">{{ saveNotice }}</p>
+        <p v-if="copyMessage" class="editor-status" role="status">{{ copyMessage }}</p>
+        <div v-if="conflict" class="editor-conflict" role="alert" data-testid="markdown-conflict">
+          <p>This note changed on the server. Your local draft is still here.</p>
+          <button type="button" class="action-button" data-testid="markdown-copy-draft" @click="copyDraft">Copy draft</button>
+          <button type="button" class="action-button" data-testid="markdown-reload-server" @click="reloadConfirm = true">Load server copy…</button>
+        </div>
+        <div v-if="saveResultUnknown" class="editor-conflict" role="alert" data-testid="markdown-save-unknown">
+          <p>The server may have saved this note. Verify its current contents before trying again.</p>
+          <button type="button" class="action-button" data-testid="markdown-verify-save" :disabled="saving" @click="verifyServer">Verify server copy</button>
+        </div>
+        <div class="editor-actions">
+          <button type="button" class="action-button" data-testid="markdown-save-button" :disabled="!dirty || saving || conflict || saveResultUnknown" @click="save">
+            {{ saving ? 'Saving…' : 'Save' }}
+          </button>
+          <button type="button" class="action-button" data-testid="markdown-cancel-button" :disabled="saving" @click="cancelEdit">Cancel</button>
+        </div>
+        <div v-if="discardConfirm" class="editor-confirm" role="dialog" aria-modal="true" aria-labelledby="discard-title">
+          <p id="discard-title">Discard your unsaved changes?</p>
+          <button type="button" class="action-button" data-testid="markdown-keep-editing" @click="discardConfirm = false">Keep editing</button>
+          <button type="button" class="action-button" data-testid="markdown-discard-changes" @click="discardDraft">Discard changes</button>
+        </div>
+        <div v-if="reloadConfirm" class="editor-confirm" role="dialog" aria-modal="true" aria-labelledby="reload-title">
+          <p id="reload-title">Discard your draft and load the current server copy?</p>
+          <button type="button" class="action-button" @click="reloadConfirm = false">Keep editing</button>
+          <button type="button" class="action-button" data-testid="markdown-confirm-reload" @click="reloadServerCopy">Discard draft and reload</button>
+        </div>
+      </div>
+
       <div v-else-if="hasConfirmedContent" class="content-container">
-        <div v-if="content === ''" class="empty-state" data-testid="markdown-empty">
+        <div v-if="baseContent === ''" class="empty-state" data-testid="markdown-empty">
           <p>This note is empty.</p>
         </div>
         <div
@@ -490,5 +771,44 @@ onUnmounted(() => {
 
 :deep(tr:nth-child(even)) {
   background: rgba(212, 203, 228, 0.03);
+}
+
+.editor-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.editor-heading,
+.editor-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.editor-heading span,
+.editor-status {
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.875rem;
+}
+
+.editor-error {
+  color: #ff9d76;
+}
+
+.editor-conflict,
+.editor-confirm {
+  padding: 0.75rem;
+  border: 1px solid rgba(212, 203, 228, 0.2);
+  border-radius: 6px;
+  background: rgba(17, 18, 24, 0.9);
+}
+
+.editor-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 </style>

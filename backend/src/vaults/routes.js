@@ -1,6 +1,7 @@
 import { listVaults, registerVault, unregisterVault } from './registry.js'
 import { listVaultEntries } from './browser.js'
-import { readVaultMarkdown } from './reader.js'
+import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
+import { saveVaultMarkdown } from './writer.js'
 
 export const registerVaultRoutes = (app, db, vaultsRoot) => {
   app.get('/vaults', async (req, reply) => {
@@ -59,6 +60,40 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
       if (err.code === 'INVALID_FILE_ENCODING') {
         return reply.code(422).send({ error: 'INVALID_FILE_ENCODING' })
       }
+      throw err
+    }
+  })
+
+  app.put('/vaults/:directory/content', {
+    bodyLimit: MAX_MARKDOWN_BYTES * 6 + 1024,
+    config: { noStore: true },
+  }, async (req, reply) => {
+    try {
+      const result = saveVaultMarkdown(
+        vaultsRoot,
+        req.params.directory,
+        req.query?.path ?? '',
+        req.body
+      )
+      return reply.send(result)
+    } catch (err) {
+      const statusByCode = {
+        INVALID_VAULT_DIRECTORY: 400,
+        INVALID_VAULT_PATH: 400,
+        INVALID_MARKDOWN_PAYLOAD: 400,
+        VAULT_PATH_NOT_FOUND: 404,
+        VAULT_PATH_NOT_FILE: 400,
+        VAULT_FILE_CONFLICT: 409,
+        VAULT_FILE_LOCKED: 423,
+        VAULT_FILE_TOO_LARGE: 413,
+        UNSUPPORTED_FILE_TYPE: 415,
+        INVALID_FILE_ENCODING: 422,
+        INVALID_MARKDOWN_CONTENT: 422,
+        VAULT_SAVE_FAILED: 500,
+        VAULT_SAVE_RESULT_UNKNOWN: 500,
+      }
+      const status = statusByCode[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
       throw err
     }
   })

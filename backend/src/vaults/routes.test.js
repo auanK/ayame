@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import os from 'node:os'
 import { createApp } from '../app.js'
 import { openDatabase } from '../database.js'
 import { createOwner, createSession } from '../auth/authentication.js'
+
+const revisionOf = (content) => crypto.createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex')
 
 const setupAuthApp = async (vaultsRoot) => {
   const db = openDatabase(':memory:')
@@ -51,6 +54,25 @@ test('vault routes fail with 401 UNAUTHORIZED without valid session', async () =
     assert.equal(resContent.statusCode, 401)
     assert.equal(resContent.headers['cache-control'], 'no-store')
     assert.deepEqual(resContent.json(), { error: 'UNAUTHORIZED' })
+
+    const resPut = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=README.md',
+      payload: { content: 'updated', expectedRevision: revisionOf('original') },
+    })
+    assert.equal(resPut.statusCode, 401)
+    assert.equal(resPut.headers['cache-control'], 'no-store')
+    assert.deepEqual(resPut.json(), { error: 'UNAUTHORIZED' })
+
+    const resPutInvalidSession = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=README.md',
+      headers: { cookie: 'ayame_session=invalid-token' },
+      payload: { content: 'updated', expectedRevision: revisionOf('original') },
+    })
+    assert.equal(resPutInvalidSession.statusCode, 401)
+    assert.equal(resPutInvalidSession.headers['cache-control'], 'no-store')
+    assert.deepEqual(resPutInvalidSession.json(), { error: 'UNAUTHORIZED' })
   } finally {
     await app.close()
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
@@ -536,6 +558,7 @@ test('GET /vaults/:directory/content returns 200, raw content and Cache-Control:
       directory: 'personal',
       path: 'docs/readme.markdown',
       content: rawNote,
+      revision: revisionOf(rawNote),
     })
 
     // 2. Read empty file at root
@@ -551,6 +574,7 @@ test('GET /vaults/:directory/content returns 200, raw content and Cache-Control:
       directory: 'personal',
       path: 'empty.md',
       content: '',
+      revision: revisionOf(''),
     })
 
     // 3. Confirm files are never modified by reading
@@ -559,6 +583,160 @@ test('GET /vaults/:directory/content returns 200, raw content and Cache-Control:
     await app.close()
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
   }
+})
+
+test('PUT /vaults/:directory/content saves with no-store and GET returns the new revision', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-content-put-'))
+  const vaultDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(vaultDir)
+  const note = path.join(vaultDir, 'note.md')
+  fs.writeFileSync(note, 'before')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const savedContent = '# Updated\r\n🌸\n'
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=note.md',
+      headers: { cookie },
+      payload: { content: savedContent, expectedRevision: revisionOf('before') },
+    })
+    assert.equal(put.statusCode, 200)
+    assert.equal(put.headers['cache-control'], 'no-store')
+    assert.deepEqual(put.json(), {
+      directory: 'personal',
+      path: 'note.md',
+      revision: revisionOf(savedContent),
+    })
+    assert.equal(fs.readFileSync(note, 'utf8'), savedContent)
+
+    const get = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/content?path=note.md',
+      headers: { cookie },
+    })
+    assert.equal(get.statusCode, 200)
+    assert.deepEqual(get.json(), {
+      directory: 'personal',
+      path: 'note.md',
+      content: savedContent,
+      revision: revisionOf(savedContent),
+    })
+
+    const conflict = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=note.md',
+      headers: { cookie },
+      payload: { content: 'must not replace', expectedRevision: revisionOf('before') },
+    })
+    assert.equal(conflict.statusCode, 409)
+    assert.equal(conflict.headers['cache-control'], 'no-store')
+    assert.deepEqual(conflict.json(), { error: 'VAULT_FILE_CONFLICT' })
+    assert.equal(fs.readFileSync(note, 'utf8'), savedContent)
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('PUT maps locked, invalid, unsupported and oversized saves without leaking paths', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-content-put-errors-'))
+  const vaultDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(vaultDir)
+  fs.writeFileSync(path.join(vaultDir, 'note.md'), 'original')
+  fs.writeFileSync(path.join(vaultDir, '.note.md.ayame.lock'), 'held')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const cases = [
+      ['note.md', { content: 'next', expectedRevision: revisionOf('original') }, 423, 'VAULT_FILE_LOCKED'],
+      ['note.md', { content: 1, expectedRevision: revisionOf('original') }, 400, 'INVALID_MARKDOWN_PAYLOAD'],
+      ['image.png', { content: 'next', expectedRevision: revisionOf('original') }, 415, 'UNSUPPORTED_FILE_TYPE'],
+      ['note.md', { content: 'x'.repeat(2 * 1024 * 1024 + 1), expectedRevision: revisionOf('original') }, 413, 'VAULT_FILE_TOO_LARGE'],
+    ]
+    for (const [filePath, payload, status, code] of cases) {
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/vaults/personal/content?path=${encodeURIComponent(filePath)}`,
+        headers: { cookie },
+        payload,
+      })
+      assert.equal(response.statusCode, status)
+      assert.equal(response.headers['cache-control'], 'no-store')
+      assert.deepEqual(response.json(), { error: code })
+      assert.equal(response.body.includes(vaultsRoot), false)
+    }
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('PUT body limit allows JSON overhead but rejects oversized JSON before filesystem access', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-content-put-body-limit-'))
+  const vaultDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(vaultDir)
+  const note = path.join(vaultDir, 'note.md')
+  fs.writeFileSync(note, 'original')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=note.md',
+      headers: { cookie },
+      payload: { content: '\0'.repeat(2 * 1024 * 1024 + 200), expectedRevision: revisionOf('original') },
+    })
+    assert.equal(response.statusCode, 413)
+    assert.equal(response.headers['cache-control'], 'no-store')
+    assert.deepEqual(response.json(), { error: 'VAULT_FILE_TOO_LARGE' })
+    assert.equal(fs.readFileSync(note, 'utf8'), 'original')
+    assert.equal(fs.existsSync(path.join(vaultDir, '.note.md.ayame.lock')), false)
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('PUT reports uncertain post-replacement errors with a distinct code and no-store', async (t) => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-content-put-unknown-'))
+  const vaultDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(vaultDir)
+  const note = path.join(vaultDir, 'note.md')
+  fs.writeFileSync(note, 'original')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+  t.after(async () => {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  })
+
+  const originalRename = fs.renameSync
+  const originalRead = fs.readSync
+  let renamed = false
+  t.mock.method(fs, 'renameSync', (...args) => {
+    const result = originalRename(...args)
+    renamed = true
+    return result
+  })
+  t.mock.method(fs, 'readSync', (...args) => {
+    if (renamed) {
+      const error = new Error('injected readback failure')
+      error.code = 'EIO'
+      throw error
+    }
+    return originalRead(...args)
+  })
+
+  const response = await app.inject({
+    method: 'PUT',
+    url: '/vaults/personal/content?path=note.md',
+    headers: { cookie },
+    payload: { content: 'committed', expectedRevision: revisionOf('original') },
+  })
+  assert.equal(response.statusCode, 500)
+  assert.equal(response.headers['cache-control'], 'no-store')
+  assert.deepEqual(response.json(), { error: 'VAULT_SAVE_RESULT_UNKNOWN' })
+  assert.equal(fs.readFileSync(note, 'utf8'), 'committed')
 })
 
 test('GET /vaults/:directory/content maps error conditions to expected HTTP status codes with Cache-Control: no-store', async () => {

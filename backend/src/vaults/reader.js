@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { resolveVaultRoot, resolveExistingVaultPath } from './filesystem.js'
 
@@ -92,17 +93,30 @@ const sameSnapshot = (expected, actual) =>
   expected.length === actual.length &&
   expected.every((stat, index) => fileIdentity(stat) === fileIdentity(actual[index]))
 
-/**
- * Reads a Markdown file from a vault in read-only mode with strict boundary,
- * size, and encoding checks.
- *
- * Node does not expose openat/openat2 or Windows handle-relative opens. The
- * reader therefore checks every path component before and after opening and
- * compares the opened handle's device/inode identity. This rejects observed
- * substitutions, but cannot make ancestor traversal atomic against an active
- * local process that can replace and restore directories during the checks.
- */
-export const readVaultMarkdown = (vaultsRoot, directory, rawPath) => {
+const snapshotVaultParent = (vaultRoot, relativePath) => {
+  const paths = [vaultRoot]
+  for (const segment of relativePath.split('/').slice(0, -1)) {
+    paths.push(path.join(paths[paths.length - 1], segment))
+  }
+  return paths.map((target) => {
+    let stat
+    try {
+      stat = fs.lstatSync(target, { bigint: true })
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+        failVault('INVALID_VAULT_PATH', 'Vault directory changed during the operation')
+      }
+      throw err
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      failVault('INVALID_VAULT_PATH', 'Vault directory changed during the operation')
+    }
+    fileIdentity(stat)
+    return stat
+  })
+}
+
+export const resolveVaultMarkdownPath = (vaultsRoot, directory, rawPath) => {
   const relativePath = validateMarkdownRelativePath(rawPath)
   const vaultRoot = resolveVaultRoot(vaultsRoot, directory)
   const initialSnapshot = snapshotVaultPath(vaultRoot, relativePath)
@@ -116,6 +130,84 @@ export const readVaultMarkdown = (vaultsRoot, directory, rawPath) => {
     failVault('INVALID_VAULT_PATH', 'Vault path changed while it was being validated')
   }
 
+  return {
+    directory,
+    path: relativePath,
+    vaultRoot,
+    absolutePath: resolved.absolutePath,
+    snapshot: beforeOpenSnapshot,
+  }
+}
+
+export const verifyVaultMarkdownParent = (target) => {
+  const expected = target.snapshot.slice(0, -1)
+  const current = snapshotVaultParent(target.vaultRoot, target.path)
+  if (!sameSnapshot(expected, current)) {
+    failVault('INVALID_VAULT_PATH', 'Vault directory changed during the operation')
+  }
+  const canonicalParent = fs.realpathSync.native(path.dirname(target.absolutePath))
+  if (!isWithin(target.vaultRoot, canonicalParent)) {
+    failVault('INVALID_VAULT_PATH', 'Vault directory is outside the vault')
+  }
+}
+
+export const verifyVaultMarkdownFile = (file) => {
+  const currentSnapshot = snapshotVaultPath(file.vaultRoot, file.path)
+  if (!sameSnapshot(file.snapshot, currentSnapshot)) {
+    failVault('INVALID_VAULT_PATH', 'Vault path changed during the operation')
+  }
+
+  const stat = fs.lstatSync(file.absolutePath, { bigint: true })
+  if (stat.isSymbolicLink() || !stat.isFile() || fileIdentity(stat) !== file.identity) {
+    failVault('INVALID_VAULT_PATH', 'Vault file identity changed during the operation')
+  }
+
+  let canonical
+  try {
+    canonical = fs.realpathSync.native(file.absolutePath)
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+      failVault('INVALID_VAULT_PATH', 'Vault path changed during the operation')
+    }
+    throw err
+  }
+  if (!isWithin(file.vaultRoot, canonical)) {
+    failVault('INVALID_VAULT_PATH', 'Vault file is outside the vault')
+  }
+
+  const opened = fs.fstatSync(file.fd, { bigint: true })
+  if (!opened.isFile() || fileIdentity(opened) !== file.identity) {
+    failVault('INVALID_VAULT_PATH', 'Opened file identity changed during the operation')
+  }
+}
+
+export const readVaultMarkdownBytes = (file) => {
+  const stat = fs.fstatSync(file.fd, { bigint: true })
+  if (!stat.isFile() || fileIdentity(stat) !== file.identity) {
+    failVault('INVALID_VAULT_PATH', 'Opened file identity changed during the operation')
+  }
+  if (stat.size > BigInt(MAX_MARKDOWN_BYTES)) {
+    failVault('VAULT_FILE_TOO_LARGE', `File size (${stat.size} bytes) exceeds maximum limit of ${MAX_MARKDOWN_BYTES} bytes`)
+  }
+
+  const buffer = Buffer.alloc(MAX_MARKDOWN_BYTES + 1)
+  let totalBytesRead = 0
+  let chunk = 0
+  while ((chunk = fs.readSync(file.fd, buffer, totalBytesRead, buffer.length - totalBytesRead, totalBytesRead)) > 0) {
+    totalBytesRead += chunk
+    if (totalBytesRead > MAX_MARKDOWN_BYTES) {
+      failVault('VAULT_FILE_TOO_LARGE', `File size exceeded maximum limit of ${MAX_MARKDOWN_BYTES} bytes during read`)
+    }
+  }
+  return buffer.subarray(0, totalBytesRead)
+}
+
+/**
+ * Node lacks portable handle-relative opens. This shared scope binds the file
+ * read or write operation to the validated handle and always closes it.
+ */
+export const withVaultMarkdownFile = (vaultsRoot, directory, rawPath, operation) => {
+  const resolved = resolveVaultMarkdownPath(vaultsRoot, directory, rawPath)
   // Windows lacks O_NOFOLLOW; component snapshots and opened-handle identity checks still apply.
   const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
   let fd
@@ -131,6 +223,7 @@ export const readVaultMarkdown = (vaultsRoot, directory, rawPath) => {
     throw err
   }
 
+  let descriptorOpen = true
   try {
     const stat = fs.fstatSync(fd, { bigint: true })
     if (!stat.isFile()) {
@@ -138,37 +231,34 @@ export const readVaultMarkdown = (vaultsRoot, directory, rawPath) => {
     }
 
     const openedIdentity = fileIdentity(stat)
-    if (openedIdentity !== fileIdentity(initialSnapshot.at(-1))) {
+    if (openedIdentity !== fileIdentity(resolved.snapshot.at(-1))) {
       failVault('INVALID_VAULT_PATH', 'Opened file does not match the validated vault entry')
     }
 
-    const afterOpenSnapshot = snapshotVaultPath(vaultRoot, relativePath)
-    if (!sameSnapshot(initialSnapshot, afterOpenSnapshot)) {
-      failVault('INVALID_VAULT_PATH', 'Vault path changed while it was being opened')
+    const opened = {
+      ...resolved,
+      fd,
+      identity: openedIdentity,
+      close() {
+        if (!descriptorOpen) return
+        fs.closeSync(fd)
+        descriptorOpen = false
+      },
     }
+    verifyVaultMarkdownFile(opened)
+    return operation(opened)
+  } finally {
+    if (descriptorOpen) fs.closeSync(fd)
+  }
+}
 
-    const canonicalAfterOpen = fs.realpathSync.native(resolved.absolutePath)
-    if (!isWithin(vaultRoot, canonicalAfterOpen)) {
-      failVault('INVALID_VAULT_PATH', 'Opened file is outside the vault')
-    }
-
-    if (stat.size > BigInt(MAX_MARKDOWN_BYTES)) {
-      failVault('VAULT_FILE_TOO_LARGE', `File size (${stat.size} bytes) exceeds maximum limit of ${MAX_MARKDOWN_BYTES} bytes`)
-    }
-
-    // Read up to MAX_MARKDOWN_BYTES + 1 to detect file growth beyond the limit during read.
-    const buffer = Buffer.alloc(MAX_MARKDOWN_BYTES + 1)
-    let totalBytesRead = 0
-    let chunk = 0
-
-    while ((chunk = fs.readSync(fd, buffer, totalBytesRead, buffer.length - totalBytesRead, null)) > 0) {
-      totalBytesRead += chunk
-      if (totalBytesRead > MAX_MARKDOWN_BYTES) {
-        failVault('VAULT_FILE_TOO_LARGE', `File size exceeded maximum limit of ${MAX_MARKDOWN_BYTES} bytes during read`)
-      }
-    }
-
-    const fileBytes = buffer.subarray(0, totalBytesRead)
+/**
+ * Reads a Markdown file from a vault in read-only mode with strict boundary,
+ * size, and encoding checks.
+ */
+export const readVaultMarkdown = (vaultsRoot, directory, rawPath) =>
+  withVaultMarkdownFile(vaultsRoot, directory, rawPath, (file) => {
+    const fileBytes = readVaultMarkdownBytes(file)
     let content
     try {
       const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -178,11 +268,9 @@ export const readVaultMarkdown = (vaultsRoot, directory, rawPath) => {
     }
 
     return {
-      directory,
-      path: relativePath,
+      directory: file.directory,
+      path: file.path,
       content,
+      revision: crypto.createHash('sha256').update(fileBytes).digest('hex'),
     }
-  } finally {
-    fs.closeSync(fd)
-  }
-}
+  })

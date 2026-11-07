@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { readVaultMarkdown, MAX_MARKDOWN_BYTES } from './reader.js'
@@ -23,6 +24,7 @@ test('1. reads .md file at root of vault', (t) => {
     directory: 'personal',
     path: 'README.md',
     content: noteContent,
+    revision: sha256(Buffer.from(noteContent, 'utf8')),
   })
 })
 
@@ -38,6 +40,7 @@ test('2. reads .md file in nested subdirectory', (t) => {
     directory: 'personal',
     path: 'projects/ayame/spec.md',
     content: noteContent,
+    revision: sha256(Buffer.from(noteContent, 'utf8')),
   })
 })
 
@@ -51,6 +54,7 @@ test('3. reads .markdown file', (t) => {
     directory: 'personal',
     path: 'document.markdown',
     content: noteContent,
+    revision: sha256(Buffer.from(noteContent, 'utf8')),
   })
 })
 
@@ -75,6 +79,7 @@ test('5. reads empty file successfully', (t) => {
     directory: 'personal',
     path: 'empty.md',
     content: '',
+    revision: sha256(Buffer.alloc(0)),
   })
 })
 
@@ -462,4 +467,48 @@ test('rejects a different regular file substituted after validation', (t) => {
   for (const fd of opened) {
     assert.throws(() => fs.fstatSync(fd), (err) => err.code === 'EBADF')
   }
+})
+
+const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex')
+
+test('reader revision is SHA-256 of the exact bytes read', (t) => {
+  const { vaultsRoot, directory, vaultDir } = makeTempVault(t)
+  const bytes = Buffer.from('line 1\r\nAcentuação 🌸\n', 'utf8')
+  fs.writeFileSync(path.join(vaultDir, 'revision.md'), bytes)
+
+  const result = readVaultMarkdown(vaultsRoot, directory, 'revision.md')
+  assert.equal(result.revision, sha256(bytes))
+  assert.match(result.revision, /^[a-f0-9]{64}$/)
+  assert.equal(result.content, bytes.toString('utf8'))
+  assert.equal(sha256(Buffer.from(result.content, 'utf8')), result.revision)
+})
+
+test('reader revisions are stable for identical bytes and change when bytes change', (t) => {
+  const { vaultsRoot, directory, vaultDir } = makeTempVault(t)
+  const notePath = path.join(vaultDir, 'revision.md')
+  fs.writeFileSync(notePath, 'same bytes')
+
+  const first = readVaultMarkdown(vaultsRoot, directory, 'revision.md').revision
+  const second = readVaultMarkdown(vaultsRoot, directory, 'revision.md').revision
+  fs.writeFileSync(notePath, 'different bytes')
+  const third = readVaultMarkdown(vaultsRoot, directory, 'revision.md').revision
+
+  assert.equal(first, second)
+  assert.notEqual(first, third)
+})
+
+test('reader returns a valid revision for empty files and distinguishes CRLF from LF', (t) => {
+  const { vaultsRoot, directory, vaultDir } = makeTempVault(t)
+  fs.writeFileSync(path.join(vaultDir, 'empty.md'), '')
+  fs.writeFileSync(path.join(vaultDir, 'crlf.md'), 'a\r\nb\r\n')
+  fs.writeFileSync(path.join(vaultDir, 'lf.md'), 'a\nb\n')
+
+  const empty = readVaultMarkdown(vaultsRoot, directory, 'empty.md')
+  const crlf = readVaultMarkdown(vaultsRoot, directory, 'crlf.md')
+  const lf = readVaultMarkdown(vaultsRoot, directory, 'lf.md')
+
+  assert.equal(empty.revision, sha256(Buffer.alloc(0)))
+  assert.equal(crlf.revision, sha256(Buffer.from('a\r\nb\r\n')))
+  assert.equal(lf.revision, sha256(Buffer.from('a\nb\n')))
+  assert.notEqual(crlf.revision, lf.revision)
 })

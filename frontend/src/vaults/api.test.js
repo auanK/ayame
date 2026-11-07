@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getVaults, registerVault, unregisterVault, getVaultEntries, getVaultMarkdown } from './api.js'
+import { getVaults, registerVault, unregisterVault, getVaultEntries, getVaultMarkdown, saveVaultMarkdown } from './api.js'
 
 const originalFetch = globalThis.fetch
 const detected = { id: null, name: 'personal', directory: 'Personal Dir', registered: false }
 const customized = { id: 'vault-1', name: 'Personal Notes', directory: 'personal', registered: true }
+const revision = 'a'.repeat(64)
 
 const response = (status, body, rejectsJson = false) => ({
   status,
@@ -238,6 +239,7 @@ describe('vault API', () => {
         directory: 'personal notes',
         path: 'projects/spec 01.md',
         content: '# Spec Content\n',
+        revision,
       }))
 
       const result = await getVaultMarkdown('personal notes', 'projects/spec 01.md')
@@ -245,6 +247,7 @@ describe('vault API', () => {
         directory: 'personal notes',
         path: 'projects/spec 01.md',
         content: '# Spec Content\n',
+        revision,
       })
       expect(globalThis.fetch).toHaveBeenCalledWith(
         '/vaults/personal%20notes/content?path=projects%2Fspec%2001.md',
@@ -260,21 +263,24 @@ describe('vault API', () => {
         directory: 'personal',
         path: 'empty.md',
         content: '',
+        revision,
       }))
 
       await expect(getVaultMarkdown('personal', 'empty.md')).resolves.toEqual({
         directory: 'personal',
         path: 'empty.md',
         content: '',
+        revision,
       })
     })
 
     it.each([
       ['non-object response', null],
-      ['non-string content', { directory: 'personal', path: 'doc.md', content: 123 }],
-      ['missing content', { directory: 'personal', path: 'doc.md' }],
-      ['mismatched directory in response', { directory: 'other', path: 'doc.md', content: 'text' }],
-      ['mismatched path in response', { directory: 'personal', path: 'other.md', content: 'text' }],
+      ['non-string content', { directory: 'personal', path: 'doc.md', content: 123, revision }],
+      ['missing content', { directory: 'personal', path: 'doc.md', revision }],
+      ['invalid revision', { directory: 'personal', path: 'doc.md', content: 'text', revision: 'bad' }],
+      ['mismatched directory in response', { directory: 'other', path: 'doc.md', content: 'text', revision }],
+      ['mismatched path in response', { directory: 'personal', path: 'other.md', content: 'text', revision }],
       ['invalid json', null, true],
     ])('rejects %s with INVALID_VAULT_RESPONSE', async (_desc, body, rejectsJson) => {
       globalThis.fetch = vi.fn().mockResolvedValue(response(200, body, rejectsJson))
@@ -307,6 +313,59 @@ describe('vault API', () => {
 
       globalThis.fetch = vi.fn().mockResolvedValueOnce(response(500, {}))
       await expectCode(getVaultMarkdown('personal', 'doc.md'), 'FAILED_TO_FETCH_MARKDOWN')
+    })
+  })
+
+  describe('saveVaultMarkdown', () => {
+    it('uses PUT, same-origin credentials, JSON body and encoded path, then validates the response', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, {
+        directory: 'personal notes',
+        path: 'projects/spec 01.md',
+        revision,
+      }))
+      const payload = { content: '# Updated 🌸\r\n', expectedRevision: 'b'.repeat(64) }
+
+      await expect(saveVaultMarkdown('personal notes', 'projects/spec 01.md', payload)).resolves.toEqual({
+        directory: 'personal notes',
+        path: 'projects/spec 01.md',
+        revision,
+      })
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/vaults/personal%20notes/content?path=projects%2Fspec%2001.md',
+        {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      )
+    })
+
+    it.each([
+      [401, 'UNAUTHORIZED', 'UNAUTHORIZED'],
+      [404, 'VAULT_PATH_NOT_FOUND', 'VAULT_PATH_NOT_FOUND'],
+      [400, 'INVALID_MARKDOWN_PAYLOAD', 'INVALID_MARKDOWN_PAYLOAD'],
+      [409, 'VAULT_FILE_CONFLICT', 'VAULT_FILE_CONFLICT'],
+      [413, 'VAULT_FILE_TOO_LARGE', 'VAULT_FILE_TOO_LARGE'],
+      [423, 'VAULT_FILE_LOCKED', 'VAULT_FILE_LOCKED'],
+      [415, 'UNSUPPORTED_FILE_TYPE', 'UNSUPPORTED_FILE_TYPE'],
+      [422, 'INVALID_MARKDOWN_CONTENT', 'INVALID_MARKDOWN_CONTENT'],
+      [500, 'VAULT_SAVE_RESULT_UNKNOWN', 'VAULT_SAVE_RESULT_UNKNOWN'],
+      [500, 'OTHER', 'FAILED_TO_SAVE_MARKDOWN'],
+    ])('maps HTTP %s %s', async (status, serverCode, expected) => {
+      globalThis.fetch = vi.fn().mockResolvedValue(response(status, { error: serverCode }))
+      await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), expected)
+    })
+
+    it('treats network loss and unconfirmable success responses as uncertain', async () => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('network fail'))
+      await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, null, true))
+      await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
+
+      globalThis.fetch = vi.fn().mockResolvedValue(response(200, { directory: 'other', path: 'note.md', revision }))
+      await expectCode(saveVaultMarkdown('personal', 'note.md', { content: 'x', expectedRevision: revision }), 'VAULT_SAVE_RESULT_UNKNOWN')
     })
   })
 })

@@ -26,6 +26,17 @@ export const createApp = ({
 
   const app = Fastify({ exposeHeadRoutes: false })
 
+  app.setErrorHandler((err, req, reply) => {
+    if (
+      err.code === 'FST_ERR_CTP_BODY_TOO_LARGE' &&
+      req.method === 'PUT' &&
+      req.routeOptions?.url === '/vaults/:directory/content'
+    ) {
+      return reply.code(413).send({ error: 'VAULT_FILE_TOO_LARGE' })
+    }
+    return reply.send(err)
+  })
+
   app.addHook('onClose', () => {
     closeDatabase(db)
   })

@@ -6,6 +6,8 @@ import * as api from './api.js'
 vi.mock('./api.js', () => ({
   getVaultEntries: vi.fn(),
   getVaultMarkdown: vi.fn(),
+  saveVaultMarkdown: vi.fn(),
+  MAX_MARKDOWN_BYTES: 2 * 1024 * 1024,
 }))
 
 const vault = {
@@ -300,6 +302,7 @@ describe('VaultBrowser', () => {
         directory: 'personal',
         path: 'README.md',
         content: '# Hello README',
+        revision: 'a'.repeat(64),
       })
     })
 
@@ -328,6 +331,7 @@ describe('VaultBrowser', () => {
         directory: 'personal',
         path: 'spec.markdown',
         content: '# Spec Content',
+        revision: 'a'.repeat(64),
       })
 
       await button.trigger('click')
@@ -377,6 +381,7 @@ describe('VaultBrowser', () => {
         directory: 'personal',
         path: 'note-a.md',
         content: '# Note A Content',
+        revision: 'a'.repeat(64),
       })
 
       const buttons = wrapper.findAll('button[data-testid="open-file-button"]')
@@ -404,6 +409,7 @@ describe('VaultBrowser', () => {
         directory: 'personal',
         path: 'note-b.md',
         content: '# Note B Content',
+        revision: 'b'.repeat(64),
       })
       await flushPromises()
       expect(wrapper.text()).toContain('Note B Content')
@@ -431,6 +437,36 @@ describe('VaultBrowser', () => {
       const vaultsBreadcrumb = wrapper.findAll('.btn-breadcrumb').find((b) => b.text() === 'Vaults')
       await vaultsBreadcrumb.trigger('click')
 
+      expect(wrapper.emitted('back')).toBeTruthy()
+    })
+
+    it('guards back navigation with explicit Keep editing and Discard changes actions', async () => {
+      const wrapper = await mountBrowser()
+      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+      await wrapper.find('[data-testid="markdown-editor"]').setValue('local draft')
+      expect(wrapper.emitted('state').at(-1)[0]).toEqual({ dirty: true, saving: false })
+
+      await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
+      expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
+      await wrapper.find('[data-testid="navigation-keep-editing"]').trigger('click')
+      expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('local draft')
+
+      await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
+      await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
+      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
+    })
+
+    it('guards the Vaults breadcrumb while dirty', async () => {
+      const wrapper = await mountBrowser()
+      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
+      await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
+      await wrapper.findAll('.btn-breadcrumb').find((button) => button.text() === 'Vaults').trigger('click')
+      expect(wrapper.emitted('back')).toBeUndefined()
+      await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
       expect(wrapper.emitted('back')).toBeTruthy()
     })
   })

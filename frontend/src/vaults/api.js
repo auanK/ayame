@@ -4,6 +4,8 @@ const apiError = (code) => {
   return error
 }
 
+export const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
+
 const request = async (url, options, failureCode) => {
   try {
     return await fetch(url, options)
@@ -222,6 +224,8 @@ export const getVaultMarkdown = async (directory, path) => {
     typeof data.directory !== 'string' ||
     typeof data.path !== 'string' ||
     typeof data.content !== 'string' ||
+    typeof data.revision !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(data.revision) ||
     data.directory !== directory ||
     data.path !== path
   ) {
@@ -232,5 +236,60 @@ export const getVaultMarkdown = async (directory, path) => {
     directory: data.directory,
     path: data.path,
     content: data.content,
+    revision: data.revision,
   }
+}
+
+export const saveVaultMarkdown = async (directory, path, { content, expectedRevision }) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/content?path=${encodeURIComponent(path ?? '')}`
+  const response = await request(url, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, expectedRevision }),
+  }, 'VAULT_SAVE_RESULT_UNKNOWN')
+
+  if (response.status === 401) throw apiError('UNAUTHORIZED')
+  if (response.status !== 200) {
+    let errorCode
+    try {
+      errorCode = (await response.json())?.error
+    } catch {}
+    if (response.status === 409 && errorCode === 'VAULT_FILE_CONFLICT') throw apiError(errorCode)
+    if (response.status === 404 && errorCode === 'VAULT_PATH_NOT_FOUND') throw apiError(errorCode)
+    if (response.status === 400 && errorCode === 'VAULT_PATH_NOT_FILE') throw apiError(errorCode)
+    if (response.status === 413 && errorCode === 'VAULT_FILE_TOO_LARGE') throw apiError(errorCode)
+    if (response.status === 423 && errorCode === 'VAULT_FILE_LOCKED') throw apiError(errorCode)
+    if (response.status === 415 && errorCode === 'UNSUPPORTED_FILE_TYPE') throw apiError(errorCode)
+    if (response.status === 400 && ['INVALID_VAULT_DIRECTORY', 'INVALID_VAULT_PATH', 'INVALID_MARKDOWN_PAYLOAD'].includes(errorCode)) {
+      throw apiError(errorCode)
+    }
+    if (response.status === 422 && ['INVALID_FILE_ENCODING', 'INVALID_MARKDOWN_CONTENT'].includes(errorCode)) {
+      throw apiError(errorCode)
+    }
+    if (response.status === 500 && errorCode === 'VAULT_SAVE_RESULT_UNKNOWN') throw apiError(errorCode)
+    throw apiError('FAILED_TO_SAVE_MARKDOWN')
+  }
+
+  let data
+  try {
+    data = await readJson(response)
+  } catch {
+    throw apiError('VAULT_SAVE_RESULT_UNKNOWN')
+  }
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    Array.isArray(data) ||
+    typeof data.directory !== 'string' ||
+    typeof data.path !== 'string' ||
+    typeof data.revision !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(data.revision) ||
+    data.directory !== directory ||
+    data.path !== path
+  ) {
+    throw apiError('VAULT_SAVE_RESULT_UNKNOWN')
+  }
+
+  return { directory: data.directory, path: data.path, revision: data.revision }
 }

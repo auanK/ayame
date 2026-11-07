@@ -48,3 +48,11 @@ Run the backend tests:
 ```sh
 npm test
 ```
+
+### Editing Markdown notes
+
+Ayame edits existing `.md` and `.markdown` files in place through a same-directory temporary file and replacement rename. Each read returns a SHA-256 revision of the exact file bytes; saves reject stale revisions and serialize Ayame writers with an adjacent lockfile such as `.note.md.ayame.lock`.
+
+Ayame never steals an existing lock automatically. If a process is terminated while holding one, stop every Ayame process that can access that vault, confirm no save is active, then remove only the abandoned lockfile and any matching `.note.md.ayame-<random>.tmp` files for the affected note. The replacement writes and synchronizes the temporary file before rename. Directory synchronization is attempted on Linux and skipped on Windows, so crash durability is not identical across platforms; the existing file mode bits are copied, while ownership and platform ACLs are not preserved by this first version.
+
+The lock assumes the underlying filesystem honors exclusive file creation; network filesystem behavior has not been verified. It coordinates Ayame processes only. External editors do not honor it, and Node's portable path APIs cannot atomically combine ancestor validation, revision comparison, and replacement. Ayame rechecks the path and revision immediately before replacement, but an external process can still race that final check.

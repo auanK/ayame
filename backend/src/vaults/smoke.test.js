@@ -3,10 +3,18 @@ import test from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import crypto from 'node:crypto'
 import { createApp } from '../app.js'
 import { openDatabase, closeDatabase } from '../database.js'
 import { createOwner, createSession } from '../auth/authentication.js'
 import { prepareVaultsRoot, resolveExistingVaultPath } from './filesystem.js'
+
+const revisionOf = (content) => crypto.createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex')
+
+const databaseSnapshot = (db) => Object.fromEntries(
+  db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()
+    .map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()])
+)
 
 test('backend manual smoke sequence (sections 22, 26, 53 & 54)', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-smoke-'))
@@ -395,6 +403,7 @@ test('read-only markdown viewer smoke sequence (section 25)', async (t) => {
       directory: 'personal',
       path: 'README.md',
       content: readmeContent,
+      revision: revisionOf(readmeContent),
     })
 
     // 6. Read projects/roadmap.md
@@ -408,6 +417,7 @@ test('read-only markdown viewer smoke sequence (section 25)', async (t) => {
       directory: 'personal',
       path: 'projects/roadmap.md',
       content: roadmapContent,
+      revision: revisionOf(roadmapContent),
     })
 
     // 7. Read projects/notes.markdown
@@ -421,6 +431,7 @@ test('read-only markdown viewer smoke sequence (section 25)', async (t) => {
       directory: 'personal',
       path: 'projects/notes.markdown',
       content: notesContent,
+      revision: revisionOf(notesContent),
     })
 
     // 8. Read empty.md
@@ -434,6 +445,7 @@ test('read-only markdown viewer smoke sequence (section 25)', async (t) => {
       directory: 'personal',
       path: 'empty.md',
       content: '',
+      revision: revisionOf(''),
     })
 
     // 9. Rejection of image.png (415 UNSUPPORTED_FILE_TYPE)
@@ -521,6 +533,124 @@ test('read-only markdown viewer smoke sequence (section 25)', async (t) => {
   } finally {
     await app.close()
     closeDatabase(db)
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('conflict-aware Markdown save smoke flow preserves files, reports uncertainty, and survives restart', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-editor-smoke-'))
+  const vaultsRoot = path.join(tempDir, 'vaults')
+  const dbPath = path.join(tempDir, 'ayame.sqlite')
+  const personalDir = path.join(vaultsRoot, 'personal')
+  const projectsDir = path.join(personalDir, 'projects')
+  fs.mkdirSync(projectsDir, { recursive: true })
+  const note = path.join(personalDir, 'note.md')
+  fs.writeFileSync(note, '# Original\r\n')
+  fs.writeFileSync(path.join(personalDir, 'empty.md'), '')
+  fs.writeFileSync(path.join(projectsDir, 'roadmap.md'), '# Roadmap')
+
+  const canonicalRoot = prepareVaultsRoot(vaultsRoot, { createIfMissing: false })
+  let db = openDatabase(dbPath)
+  await createOwner(db, { username: 'auank', password: 'password123' })
+  const session = createSession(db)
+  let app = createApp({ db, vaultsRoot: canonicalRoot })
+  const cookie = `ayame_session=${session.rawToken}`
+  const originalDatabase = databaseSnapshot(db)
+
+  try {
+    const initial = await app.inject({ method: 'GET', url: '/vaults/personal/content?path=note.md', headers: { cookie } })
+    assert.equal(initial.statusCode, 200)
+    assert.equal(initial.json().revision, revisionOf('# Original\r\n'))
+
+    const updatedContent = '# Edited 🌸\r\nSecond line\n'
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=note.md',
+      headers: { cookie },
+      payload: { content: updatedContent, expectedRevision: initial.json().revision },
+    })
+    assert.equal(saved.statusCode, 200)
+    assert.equal(saved.json().revision, revisionOf(updatedContent))
+    assert.equal(fs.readFileSync(note, 'utf8'), updatedContent)
+    const reopened = await app.inject({ method: 'GET', url: '/vaults/personal/content?path=note.md', headers: { cookie } })
+    assert.deepEqual(reopened.json(), {
+      directory: 'personal', path: 'note.md', content: updatedContent, revision: revisionOf(updatedContent),
+    })
+
+    fs.writeFileSync(note, '# External version')
+    const externalRevision = revisionOf('# External version')
+    const conflict = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=note.md',
+      headers: { cookie },
+      payload: { content: 'local draft preserved by frontend', expectedRevision: saved.json().revision },
+    })
+    assert.equal(conflict.statusCode, 409)
+    assert.deepEqual(conflict.json(), { error: 'VAULT_FILE_CONFLICT' })
+    assert.equal(fs.readFileSync(note, 'utf8'), '# External version')
+
+    const originalWrite = fs.writeSync
+    let partialWrite = false
+    t.mock.method(fs, 'writeSync', (fd, buffer, offset, length, position) => {
+      if (partialWrite) {
+        const error = new Error('injected temporary write failure')
+        error.code = 'EIO'
+        throw error
+      }
+      partialWrite = true
+      return originalWrite(fd, buffer, offset, Math.min(2, length), position)
+    })
+    const interrupted = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=note.md',
+      headers: { cookie },
+      payload: { content: 'interrupted local draft', expectedRevision: externalRevision },
+    })
+    assert.equal(interrupted.statusCode, 500)
+    assert.deepEqual(interrupted.json(), { error: 'VAULT_SAVE_FAILED' })
+    assert.equal(fs.readFileSync(note, 'utf8'), '# External version')
+    assert.equal(fs.readdirSync(personalDir).some((name) => name.endsWith('.tmp')), false)
+    t.mock.restoreAll()
+
+    const originalRename = fs.renameSync
+    const originalRead = fs.readSync
+    let renamed = false
+    t.mock.method(fs, 'renameSync', (...args) => {
+      const result = originalRename(...args)
+      renamed = true
+      return result
+    })
+    t.mock.method(fs, 'readSync', (...args) => {
+      if (renamed) {
+        const error = new Error('injected post-replacement confirmation failure')
+        error.code = 'EIO'
+        throw error
+      }
+      return originalRead(...args)
+    })
+    const uncertainContent = '# Committed, confirmation lost'
+    const uncertain = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=note.md',
+      headers: { cookie },
+      payload: { content: uncertainContent, expectedRevision: externalRevision },
+    })
+    assert.equal(uncertain.statusCode, 500)
+    assert.deepEqual(uncertain.json(), { error: 'VAULT_SAVE_RESULT_UNKNOWN' })
+    assert.equal(fs.readFileSync(note, 'utf8'), uncertainContent)
+    t.mock.restoreAll()
+
+    assert.deepEqual(databaseSnapshot(db), originalDatabase)
+    await app.close()
+    db = openDatabase(dbPath)
+    app = createApp({ db, vaultsRoot: canonicalRoot })
+    const afterRestart = await app.inject({ method: 'GET', url: '/vaults/personal/content?path=note.md', headers: { cookie } })
+    assert.equal(afterRestart.statusCode, 200)
+    assert.equal(afterRestart.json().content, uncertainContent)
+    assert.equal(afterRestart.json().revision, revisionOf(uncertainContent))
+    assert.deepEqual(databaseSnapshot(db), originalDatabase)
+  } finally {
+    await app.close()
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
 })
