@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import VaultBrowser from './VaultBrowser.vue'
+import MarkdownViewer from '../markdown/MarkdownViewer.vue'
 import MarkdownEditor from '../markdown/MarkdownEditor.vue'
 import * as api from './api.js'
 
@@ -10,6 +11,13 @@ vi.mock('./api.js', () => ({
   saveVaultMarkdown: vi.fn(),
   createVaultFolder: vi.fn(),
   createVaultNote: vi.fn(),
+  getVaultIndex: vi.fn(),
+  relocateVaultEntry: vi.fn(),
+  trashVaultEntry: vi.fn(),
+  getVaultTrash: vi.fn(),
+  restoreVaultTrashEntry: vi.fn(),
+  deleteVaultTrashItem: vi.fn(),
+  deleteVaultEntryPermanently: vi.fn(),
   MAX_MARKDOWN_BYTES: 2 * 1024 * 1024,
 }))
 
@@ -48,6 +56,7 @@ const mountBrowser = async (props = { vault }, initialEntries = rootEntries) => 
 
 beforeEach(() => {
   vi.resetAllMocks()
+  localStorage.clear()
 })
 
 afterEach(() => {
@@ -65,7 +74,9 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(wrapper.find('[data-testid="workspace-empty-state"]').exists()).toBe(true)
     expect(explorer.text()).toContain('projects')
     expect(explorer.text()).toContain('journal')
-    expect(explorer.text()).toContain('README.md')
+    expect(explorer.text()).toContain('README')
+    expect(explorer.text()).not.toContain('README.md')
+    expect(wrapper.find('button[data-file-path="README.md"]').exists()).toBe(true)
   })
 
   it('2. keeps the explorer tree mounted when opening a note and when switching between notes, highlighting the active file', async () => {
@@ -417,4 +428,635 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     await flushPromises()
     expect(wrapper.emitted('unauthorized')).toBeTruthy()
   })
+
+  it('12. creates a pending note from a missing link (including intermediate folders) and opens it immediately', async () => {
+    const wrapper = await mountBrowser()
+
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: 'Consulte [[Conhecimento/Filosofia/Ontologia]].',
+      revision: 'a'.repeat(64),
+    })
+    api.getVaultEntries.mockResolvedValue({
+      directory: 'personal',
+      path: '',
+      entries: rootEntries,
+    })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('.cm-live-wikilink').trigger('click', { ctrlKey: true })
+    await flushPromises()
+
+    const createBtn = wrapper.find('[data-testid="create-missing-link-button"]')
+    expect(createBtn.exists()).toBe(true)
+
+    api.createVaultNote.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'Conhecimento/Filosofia/Ontologia.md',
+      revision: 'e'.repeat(64),
+    })
+
+    await createBtn.trigger('click')
+    await flushPromises()
+
+    expect(api.createVaultNote).toHaveBeenCalledWith('personal', {
+      parentPath: 'Conhecimento/Filosofia',
+      name: 'Ontologia.md',
+      createParents: true,
+    })
+    expect(wrapper.find('[data-testid="markdown-filename"]').text()).toBe('Ontologia.md')
+  })
+
+  it('13. supports renaming and moving notes from the context menu and note title, updating open tabs and active note path', async () => {
+    const wrapper = await mountBrowser()
+
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: '---\ntitle: Guia\n---\n# Guia',
+      revision: 'a'.repeat(64),
+    })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    // Rename via explorer context menu
+    const ctxBtn = wrapper.find('button[data-testid="entry-context-button"][data-entry-path="README.md"]')
+    await ctxBtn.trigger('click')
+    await wrapper.find('[data-testid="ctx-rename"]').trigger('click')
+
+    api.relocateVaultEntry.mockResolvedValueOnce({
+      directory: 'personal',
+      oldPath: 'README.md',
+      newPath: 'Inicio.md',
+      updatedFiles: ['Indice.md'],
+      failedFiles: [],
+    })
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal',
+      path: '',
+      entries: [{ name: 'Inicio.md', path: 'Inicio.md', type: 'file' }],
+    })
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'Inicio.md',
+      content: '---\ntitle: Guia\n---\n# Guia',
+      revision: 'a'.repeat(64),
+    })
+
+    await wrapper.find('[data-testid="relocate-input"]').setValue('Inicio.md')
+    await wrapper.find('[data-testid="relocate-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledWith(
+      'personal',
+      expect.objectContaining({
+        sourcePath: 'README.md',
+        targetPath: 'Inicio.md',
+        updateLinks: true,
+      })
+    )
+    expect(wrapper.find('[data-testid="workspace-tab"][data-tab-path="Inicio.md"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="workspace-notice"]').text()).toContain('Updated links in 1 note(s)')
+  })
+
+  it('14. moves deleted entries to .trash, lists trash, handles 409 restore conflicts with alternate destination, and permanently deletes', async () => {
+    const wrapper = await mountBrowser()
+
+    // Open context menu on README.md -> Delete -> Move to Trash
+    await wrapper.find('button[data-testid="entry-context-button"][data-entry-path="README.md"]').trigger('click')
+    await wrapper.find('[data-testid="ctx-delete"]').trigger('click')
+
+    api.trashVaultEntry.mockResolvedValueOnce({
+      directory: 'personal',
+      id: 'trash-1',
+      originalPath: 'README.md',
+      name: 'README.md',
+      type: 'file',
+    })
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal',
+      path: '',
+      entries: [],
+    })
+
+    await wrapper.find('[data-testid="confirm-trash-button"]').trigger('click')
+    await flushPromises()
+
+    expect(api.trashVaultEntry).toHaveBeenCalledWith('personal', { path: 'README.md' })
+
+    // Open Trash modal
+    api.getVaultTrash.mockResolvedValueOnce({
+      directory: 'personal',
+      items: [
+        { id: 'trash-1', originalPath: 'README.md', name: 'README.md', type: 'file', deletedAt: '2026-01-01T00:00:00Z' },
+      ],
+    })
+    await wrapper.find('[data-testid="open-trash-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="trash-item"]').length).toBe(1)
+
+    // First restore attempt hits 409 VAULT_ENTRY_EXISTS -> shows conflict prompt
+    api.restoreVaultTrashEntry.mockRejectedValueOnce(codedError('VAULT_ENTRY_EXISTS'))
+    await wrapper.find('[data-testid="restore-trash-button"]').trigger('click')
+    await flushPromises()
+
+    const conflictBox = wrapper.find('[data-testid="trash-restore-conflict"]')
+    expect(conflictBox.exists()).toBe(true)
+
+    // Restore to alternate path succeeds
+    api.restoreVaultTrashEntry.mockResolvedValueOnce({
+      directory: 'personal',
+      id: 'trash-1',
+      path: 'README (Restored).md',
+      type: 'file',
+    })
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal',
+      path: '',
+      entries: [{ name: 'README (Restored).md', path: 'README (Restored).md', type: 'file' }],
+    })
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README (Restored).md',
+      content: '# Restored',
+      revision: 'f'.repeat(64),
+    })
+
+    await wrapper.find('[data-testid="trash-restore-alternate-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.restoreVaultTrashEntry).toHaveBeenLastCalledWith('personal', {
+      id: 'trash-1',
+      targetPath: 'README (Restored).md',
+    })
+  })
+
+  it('15. displays Backlinks, Outgoing Links, Outline, Tags navigation, Search, Tabs, Back/Forward history, Quick Switcher, and Command Palette', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal',
+      complete: true,
+      folders: ['projects'],
+      files: ['README.md', 'projects/Design.md'],
+      notes: [
+        {
+          path: 'README.md',
+          name: 'README.md',
+          revision: 'a'.repeat(64),
+          content: '---\ntitle: Início\ntags:\n  - conhecimento/arquitetura\n---\n# Introdução\n\nVeja [[projects/Design]] e [[Nota Futura]].\n',
+        },
+        {
+          path: 'projects/Design.md',
+          name: 'Design.md',
+          revision: 'b'.repeat(64),
+          content: '---\ntitle: Design\ntags:\n  - conhecimento/design\n---\n# Visão Geral\n\nReferência de volta para [[README]].\n',
+        },
+      ],
+    })
+
+    const wrapper = await mountBrowser()
+
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'README.md',
+        content: '---\ntitle: Início\ntags:\n  - conhecimento/arquitetura\n---\n# Introdução\n\nVeja [[projects/Design]] e [[Nota Futura]].\n',
+        revision: 'a'.repeat(64),
+      })
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'projects/Design.md',
+        content: '---\ntitle: Design\ntags:\n  - conhecimento/design\n---\n# Visão Geral\n\nReferência de volta para [[README]].\n',
+        revision: 'b'.repeat(64),
+      })
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'README.md',
+        content: '---\ntitle: Início\ntags:\n  - conhecimento/arquitetura\n---\n# Introdução\n\nVeja [[projects/Design]] e [[Nota Futura]].\n',
+        revision: 'a'.repeat(64),
+      })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    // Backlinks panel shows Design.md linking to README.md
+    expect(wrapper.find('[data-testid="backlink-item"][data-source-path="projects/Design.md"]').exists()).toBe(true)
+
+    // Switch to Outgoing Links tab -> shows resolved Design.md and unresolved Nota Futura
+    await wrapper.find('[data-testid="panel-tab-outgoing"]').trigger('click')
+    expect(wrapper.find('[data-testid="outgoing-resolved-item"][data-target-path="projects/Design.md"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="outgoing-unresolved-item"][data-raw-target="Nota Futura"]').exists()).toBe(true)
+
+    // Switch to Outline tab -> shows H1 Introdução
+    await wrapper.find('[data-testid="panel-tab-outline"]').trigger('click')
+    expect(wrapper.find('[data-testid="outline-heading-item"]').text()).toContain('Introdução')
+
+    // Show Properties (hidden by default) and click tag chip -> opens Tags tab filtered by that tag
+    wrapper.findComponent(MarkdownViewer).vm.setPropertiesMode('visible')
+    await flushPromises()
+    await wrapper.find('[data-testid="property-tag-chip"]').trigger('click')
+    expect(wrapper.find('[data-testid="tags-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="tag-result-item"][data-note-path="README.md"]').exists()).toBe(true)
+
+    // Verify Quick Switcher and Back/Forward buttons are NOT permanent topbar buttons
+    expect(wrapper.find('[data-testid="quick-switcher-button"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="nav-back-button"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="nav-forward-button"]').exists()).toBe(false)
+
+    // Normal click on Design.md reuses active tab
+    await wrapper.vm.selectNote('projects/Design.md')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="workspace-tab"]').length).toBe(1)
+    expect(wrapper.find('[data-testid="markdown-filename"]').text()).toBe('Design.md')
+
+    // Explicitly opening README.md in new tab adds a 2nd tab
+    await wrapper.vm.openFileInNewTab('README.md')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="workspace-tab"]').length).toBe(2)
+    expect(wrapper.find('[data-testid="markdown-filename"]').text()).toBe('README.md')
+
+    // Navigate Back in history to Design.md
+    await wrapper.vm.navigateHistoryBack()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-filename"]').text()).toBe('Design.md')
+
+    // Open Command Palette
+    await wrapper.find('[data-testid="command-palette-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="command-palette-modal"]').exists()).toBe(true)
+  })
+
+  it('16. warns about unsaved drafts on delete/rename and passes expectedRevision to backend', async () => {
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: 'base content',
+      revision: 'a'.repeat(64),
+    })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    // Modify editor text to make it dirty
+    wrapper.findComponent(MarkdownEditor).vm.setText('unsaved draft')
+    await wrapper.vm.$nextTick()
+
+    // Request delete on the open note
+    await wrapper.vm.requestDeleteEntry({ path: 'README.md', name: 'README.md', type: 'file' })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="delete-draft-warning"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="delete-draft-warning"]').text()).toContain('unsaved changes')
+
+    api.trashVaultEntry.mockResolvedValueOnce({ id: 'trash-1', directory: 'personal' })
+    api.getVaultEntries.mockResolvedValueOnce({ directory: 'personal', path: '', entries: [] })
+
+    await wrapper.find('[data-testid="confirm-trash-button"]').trigger('click')
+    await flushPromises()
+
+    expect(api.trashVaultEntry).toHaveBeenCalledWith(
+      'personal',
+      expect.objectContaining({
+        path: 'README.md',
+        expectedRevision: 'a'.repeat(64),
+      })
+    )
+  })
+
+  it('17. presents unverified link message when index is partial and target cannot be verified', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal',
+      complete: false,
+      failures: [{ path: 'Quebrada.md', reason: 'VAULT_FILE_TOO_LARGE' }],
+      folders: [],
+      files: ['README.md'],
+      notes: [{ path: 'README.md', name: 'README.md', content: 'Link para [[Inexistente]].' }],
+    })
+
+    const wrapper = await mountBrowser()
+    await flushPromises()
+
+    // Incomplete index indicator
+    expect(wrapper.find('[data-testid="index-partial-warning"]').exists()).toBe(true)
+
+    // Open unverified link
+    await wrapper.vm.handleOpenLink({
+      rawTarget: 'Inexistente',
+      kind: 'wikilink',
+      type: 'unverified',
+    })
+    await wrapper.vm.$nextTick()
+
+    const notice = wrapper.find('[data-testid="workspace-link-notice"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('Vault indexing is incomplete')
+    // Must NOT offer to create note when unverified
+    expect(wrapper.find('[data-testid="create-missing-link-button"]').exists()).toBe(false)
+  })
+
+  it('18. displays failedFiles in workspace notice when rename/move has partial link update failures', async () => {
+    const wrapper = await mountBrowser()
+    api.relocateVaultEntry.mockResolvedValueOnce({
+      oldPath: 'README.md',
+      newPath: 'Documentacao.md',
+      updatedFiles: ['Indice.md'],
+      failedFiles: ['Notas/Travada.md'],
+    })
+    api.getVaultEntries.mockResolvedValueOnce({ directory: 'personal', path: '', entries: [] })
+
+    await wrapper.vm.executeRelocate('README.md', 'Documentacao.md')
+    await flushPromises()
+
+    const notice = wrapper.find('[data-testid="workspace-notice"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('Notas/Travada.md')
+  })
+
+  it('19. preserves dirty draft in editor when delete operation fails', async () => {
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: 'base content',
+      revision: 'a'.repeat(64),
+    })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    // Modify editor text to make it dirty
+    wrapper.findComponent(MarkdownEditor).vm.setText('unsaved draft to preserve')
+    await wrapper.vm.$nextTick()
+
+    // Request delete on the open note
+    await wrapper.vm.requestDeleteEntry({ path: 'README.md', name: 'README.md', type: 'file' })
+    await wrapper.vm.$nextTick()
+
+    // Simulate backend failure (e.g. conflict 409 or network failure)
+    api.trashVaultEntry.mockRejectedValueOnce(codedError('VAULT_FILE_CONFLICT'))
+
+    await wrapper.find('[data-testid="confirm-trash-button"]').trigger('click')
+    await flushPromises()
+
+    // Deletion failed: the editor must STILL hold the unsaved text!
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('unsaved draft to preserve')
+    expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+  })
+
+  it('20. preserves dirty draft in editor when rename or move operation fails', async () => {
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: 'base content',
+      revision: 'a'.repeat(64),
+    })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    // Modify editor text to make it dirty
+    wrapper.findComponent(MarkdownEditor).vm.setText('unsaved rename draft')
+    await wrapper.vm.$nextTick()
+
+    // Simulate relocate failure
+    api.relocateVaultEntry.mockRejectedValueOnce(codedError('VAULT_ENTRY_EXISTS'))
+
+    await expect(wrapper.vm.executeRelocate('README.md', 'Ocupado.md')).rejects.toMatchObject({
+      code: 'VAULT_ENTRY_EXISTS',
+    })
+    await flushPromises()
+
+    // Relocate failed: editor must still have unsaved draft!
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('unsaved rename draft')
+    expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+  })
+
+  it('21. resizes explorer panel with mouse pointer drag and persists to localStorage', async () => {
+    const wrapper = await mountBrowser()
+    const splitter = wrapper.find('[data-testid="resize-handle-explorer"]')
+    expect(splitter.exists()).toBe(true)
+    expect(splitter.attributes('role')).toBe('separator')
+    expect(splitter.attributes('aria-orientation')).toBe('vertical')
+    expect(Number(splitter.attributes('aria-valuenow'))).toBe(260)
+
+    // Simulate pointerdown on splitter
+    splitter.element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 260 }))
+
+    // Simulate pointermove to 320px
+    window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 320 }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.getLayout().explorerWidth).toBe(320)
+
+    // Release pointerup
+    window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    // Verified persisted to localStorage
+    const saved = JSON.parse(localStorage.getItem('ayame:layout:personal'))
+    expect(saved.explorerWidth).toBe(320)
+  })
+
+  it('22. supports keyboard resizing and clamping on explorer splitter', async () => {
+    const wrapper = await mountBrowser()
+    const splitter = wrapper.find('[data-testid="resize-handle-explorer"]')
+
+    // ArrowRight increases width by 10px
+    await splitter.trigger('keydown', { key: 'ArrowRight' })
+    expect(wrapper.vm.getLayout().explorerWidth).toBe(270)
+
+    // Shift+ArrowRight increases by 50px
+    await splitter.trigger('keydown', { key: 'ArrowRight', shiftKey: true })
+    expect(wrapper.vm.getLayout().explorerWidth).toBe(320)
+
+    // Home sets to min (180px)
+    await splitter.trigger('keydown', { key: 'Home' })
+    expect(wrapper.vm.getLayout().explorerWidth).toBe(180)
+
+    // ArrowLeft at min does not go below 180px
+    await splitter.trigger('keydown', { key: 'ArrowLeft' })
+    expect(wrapper.vm.getLayout().explorerWidth).toBe(180)
+
+    // End sets to max (clamped by window width or 480)
+    window.innerWidth = 1440
+    await splitter.trigger('keydown', { key: 'End' })
+    expect(wrapper.vm.getLayout().explorerWidth).toBe(480)
+  })
+
+  it('23. supports context panel splitter resizing and keyboard navigation when panel is open', async () => {
+    window.innerWidth = 1440
+    const wrapper = await mountBrowser()
+    expect(wrapper.find('[data-testid="resize-handle-context"]').exists()).toBe(false)
+
+    // Open context panel
+    await wrapper.find('[data-testid="toggle-right-panel-button"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const rightSplitter = wrapper.find('[data-testid="resize-handle-context"]')
+    expect(rightSplitter.exists()).toBe(true)
+    expect(Number(rightSplitter.attributes('aria-valuenow'))).toBe(280)
+
+    // ArrowLeft expands context panel
+    await rightSplitter.trigger('keydown', { key: 'ArrowLeft' })
+    expect(wrapper.vm.getLayout().contextWidth).toBe(290)
+
+    // Home sets to min (200px)
+    await rightSplitter.trigger('keydown', { key: 'Home' })
+    expect(wrapper.vm.getLayout().contextWidth).toBe(200)
+
+    // End sets to max (480px)
+    await rightSplitter.trigger('keydown', { key: 'End' })
+    expect(wrapper.vm.getLayout().contextWidth).toBe(480)
+  })
+
+  it('24. restores persisted layout from localStorage on initial mount', async () => {
+    localStorage.setItem(
+      'ayame:layout:personal',
+      JSON.stringify({
+        explorerWidth: 340,
+        explorerOpen: true,
+        contextWidth: 310,
+        contextOpen: true,
+      })
+    )
+
+    const wrapper = await mountBrowser()
+    expect(wrapper.vm.getLayout().explorerWidth).toBe(340)
+    expect(wrapper.vm.getLayout().contextWidth).toBe(310)
+    expect(wrapper.vm.getLayout().contextOpen).toBe(true)
+    expect(wrapper.find('[data-testid="resize-handle-context"]').exists()).toBe(true)
+  })
+
+  it('25. cleans up window pointer listeners on unmount even while dragging', async () => {
+    const removeSpy = vi.spyOn(window, 'removeEventListener')
+    const wrapper = await mountBrowser()
+    const splitter = wrapper.find('[data-testid="resize-handle-explorer"]')
+
+    splitter.element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 260 }))
+    wrapper.unmount()
+
+    expect(removeSpy).toHaveBeenCalledWith('pointermove', expect.any(Function))
+    expect(removeSpy).toHaveBeenCalledWith('pointerup', expect.any(Function))
+    removeSpy.mockRestore()
+  })
+
+  it('shows Markdown and folders by default, and reveals only safe unsupported entries on request', async () => {
+    const entries = [
+      { name: '.obsidian', path: '.obsidian', type: 'directory' },
+      { name: '.trash', path: '.trash', type: 'directory' },
+      { name: 'Cosmologia', path: 'Cosmologia', type: 'directory' },
+      { name: 'Cosmologia.md', path: 'Cosmologia.md', type: 'file' },
+      { name: 'README', path: 'README', type: 'file' },
+      { name: 'repomix-output.xml', path: 'repomix-output.xml', type: 'file' },
+      { name: 'image.png', path: 'image.png', type: 'file' },
+      { name: '.ayame.lock', path: '.ayame.lock', type: 'file' },
+      { name: '.note.ayame-a1b2.tmp', path: '.note.ayame-a1b2.tmp', type: 'file' },
+      { name: 'unaddressable.md', path: null, type: 'file' },
+    ]
+    const wrapper = await mountBrowser({ vault }, entries)
+    const explorer = wrapper.find('[data-testid="vault-explorer"]')
+
+    expect(wrapper.find('button[data-folder-path="Cosmologia"]').exists()).toBe(true)
+    expect(wrapper.find('button[data-file-path="Cosmologia.md"]').text()).toBe('Cosmologia')
+    for (const hidden of ['.obsidian', '.trash', 'README', 'repomix-output.xml', 'image.png', '.ayame.lock', '.note.ayame-a1b2.tmp', 'unaddressable']) {
+      expect(explorer.text()).not.toContain(hidden)
+    }
+
+    await wrapper.find('[data-testid="vault-name-trigger"]').trigger('click')
+    await wrapper.find('[data-testid="vault-settings-button"]').trigger('click')
+    const toggle = wrapper.find('[data-testid="setting-show-unsupported-files"]')
+    expect(toggle.element.checked).toBe(false)
+    await toggle.setValue(true)
+
+    for (const shown of ['.obsidian', 'README', 'repomix-output.xml', 'image.png']) {
+      expect(explorer.text()).toContain(shown)
+    }
+    for (const hidden of ['.trash', '.ayame.lock', '.note.ayame-a1b2.tmp', 'unaddressable']) {
+      expect(explorer.text()).not.toContain(hidden)
+    }
+    expect(wrapper.findAll('.entry-badge')).toHaveLength(0)
+    const unsupported = wrapper.findAll('.tree-file--unsupported').find((row) => row.text().includes('repomix-output.xml'))
+    expect(unsupported.element.tagName).toBe('DIV')
+    await unsupported.trigger('click')
+    expect(api.getVaultMarkdown).not.toHaveBeenCalled()
+
+    await toggle.setValue(false)
+    expect(explorer.text()).not.toContain('repomix-output.xml')
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    expect(api.createVaultNote).not.toHaveBeenCalled()
+    expect(api.createVaultFolder).not.toHaveBeenCalled()
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    expect(api.trashVaultEntry).not.toHaveBeenCalled()
+  })
+
+  it('keeps names repeated in separate folders and ignores stale same-folder responses', async () => {
+    const wrapper = await mountBrowser({ vault }, [
+      { name: 'A', path: 'A', type: 'directory' },
+      { name: 'B', path: 'B', type: 'directory' },
+    ])
+    let resolveOld
+    api.getVaultEntries
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+      .mockResolvedValueOnce({ directory: 'personal', path: 'B', entries: [
+        { name: 'Fresh.md', path: 'B/Fresh.md', type: 'file' },
+      ] })
+
+    await wrapper.find('button[data-folder-path="A"]').trigger('click')
+    await wrapper.find('button[data-folder-path="B"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('button[data-file-path="B/Fresh.md"]').exists()).toBe(true)
+
+    let resolveFresh
+    api.getVaultEntries
+      .mockResolvedValueOnce({ directory: 'personal', path: '', entries: [
+        { name: 'A', path: 'A', type: 'directory' },
+        { name: 'B', path: 'B', type: 'directory' },
+      ] })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFresh = resolve }))
+      .mockResolvedValueOnce({ directory: 'personal', path: 'B', entries: [
+        { name: 'Fresh.md', path: 'B/Fresh.md', type: 'file' },
+      ] })
+
+    // Force a refresh to issue a newer request for expanded folder A.
+    await wrapper.find('[data-testid="vault-name-trigger"]').trigger('click')
+    await wrapper.find('[data-testid="refresh-browser-button"]').trigger('click')
+    await flushPromises()
+    resolveFresh({ directory: 'personal', path: 'A', entries: [
+      { name: 'Fresh.md', path: 'A/Fresh.md', type: 'file' },
+    ] })
+    await flushPromises()
+    resolveOld({ directory: 'personal', path: 'A', entries: [
+      { name: 'Stale.md', path: 'A/Stale.md', type: 'file' },
+    ] })
+    await flushPromises()
+
+    expect(wrapper.find('button[data-file-path="A/Fresh.md"]').exists()).toBe(true)
+    expect(wrapper.find('button[data-file-path="B/Fresh.md"]').exists()).toBe(true)
+    expect(wrapper.find('button[data-file-path="A/Stale.md"]').exists()).toBe(false)
+  })
+
+  it('uses English throughout explorer menus, trash, and vault settings', async () => {
+    const wrapper = await mountBrowser()
+    expect(wrapper.find('.explorer-title').text()).toBe('Files')
+
+    await wrapper.find('[data-testid="vault-name-trigger"]').trigger('click')
+    const menu = wrapper.find('[data-testid="vault-dropdown-menu"]')
+    expect(menu.text()).toContain('Vault settings')
+    expect(menu.text()).toContain('Trash')
+    expect(menu.text()).toContain('Daily note')
+    await wrapper.find('[data-testid="open-trash-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="trash-panel"] .trash-modal-title').text()).toBe('Trash')
+
+    await wrapper.find('[data-testid="vault-name-trigger"]').trigger('click')
+    await wrapper.find('[data-testid="vault-settings-button"]').trigger('click')
+    const settings = wrapper.find('[data-testid="vault-settings-modal"]')
+    expect(settings.text()).toContain('Show unsupported files')
+    expect(settings.text()).toContain('Automatically update internal links on rename/move')
+    expect(settings.text()).toContain('Default deletion behavior')
+  })
+
 })

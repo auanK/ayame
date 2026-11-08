@@ -1048,12 +1048,22 @@ const handleRawYamlInput = (event) => {
 .property-link-pill {
   flex-shrink: 0;
   padding: 0.15rem 0.45rem;
-  background-color: rgba(169, 154, 202, 0.14);
-  color: var(--ayame-primary);
-  border: 1px solid rgba(169, 154, 202, 0.3);
+  background-color: rgba(140, 207, 240, 0.1);
+  color: var(--ayame-link, #8ccff0);
+  border: 1px solid rgba(140, 207, 240, 0.3);
   border-radius: 999px;
   font-size: 0.75rem;
   cursor: pointer;
+}
+
+.property-link-pill:hover {
+  color: var(--ayame-link-hover, #b5e2f8);
+}
+
+.property-link-pill:focus-visible,
+.chip-label-btn--link:focus-visible {
+  outline: 2px solid var(--ayame-link, #8ccff0);
+  outline-offset: 2px;
 }
 
 .property-chips-container {
@@ -1088,7 +1098,11 @@ const handleRawYamlInput = (event) => {
 
 .chip-label-btn--link {
   text-decoration: underline;
-  color: var(--ayame-primary);
+  color: var(--ayame-link, #8ccff0);
+}
+
+.chip-label-btn--link:hover {
+  color: var(--ayame-link-hover, #b5e2f8);
 }
 
 .chip-remove-btn {

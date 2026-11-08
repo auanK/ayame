@@ -49,6 +49,15 @@
   box-sizing: border-box;
 }
 
+::selection {
+  background: rgba(169, 154, 202, 0.42);
+  color: var(--ayame-text, #eeeaf3);
+}
+
+.markdown-editor-surface .cm-editor .cm-selectionLayer .cm-selectionBackground {
+  background: rgba(169, 154, 202, 0.42);
+}
+
 body {
   min-width: 320px;
   min-height: 100vh;

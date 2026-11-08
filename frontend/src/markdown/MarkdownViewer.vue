@@ -54,6 +54,7 @@ const props = defineProps({
   knownPropertyTypes: { type: Object, default: () => ({}) },
   anchor: { type: String, default: null },
   initialDocument: { type: Object, default: null },
+  relocating: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -161,6 +162,8 @@ let isMounted = true
 let unloadHandler = null
 let autosaveTimer = null
 let activeSavePromise = null
+let preservedRelocationPath = null
+let propertyTransferPending = false
 
 function clearAutosaveTimer() {
   if (autosaveTimer !== null) {
@@ -171,7 +174,7 @@ function clearAutosaveTimer() {
 
 function scheduleAutosave() {
   clearAutosaveTimer()
-  if (conflict.value || saveResultUnknown.value || reloading.value || loading.value) return
+  if (props.relocating || conflict.value || saveResultUnknown.value || reloading.value || loading.value) return
   if (!dirty.value) return
   autosaveTimer = setTimeout(() => {
     autosaveTimer = null
@@ -305,6 +308,7 @@ const publishState = () => {
 }
 
 const handlePropertyDraftState = (pending) => {
+  if (!pending && propertyTransferPending) return
   propertyEditPending.value = Boolean(pending)
   publishState()
 }
@@ -444,7 +448,7 @@ const load = async (isRefresh = false) => {
 
 const save = async () => {
   clearAutosaveTimer()
-  if (saving.value || reloading.value || !dirty.value || conflict.value || saveResultUnknown.value) return
+  if (props.relocating || saving.value || reloading.value || !dirty.value || conflict.value || saveResultUnknown.value) return
   if (!hasConfirmedContent.value || !revisionReady.value) {
     saveState.value = 'error'
     saveError.value = 'Reload this note to confirm its current revision before saving.'
@@ -684,6 +688,89 @@ const copyDraft = async () => {
   }
 }
 
+const preserveDraftForRelocatedPath = (path) => {
+  const propertySnapshot = propertiesPanelRef.value?.getPendingEditSnapshot?.()
+  const hasPropertyDraft = Object.keys(propertySnapshot?.numberDrafts ?? {}).length > 0
+  if (dirty.value || conflict.value || saveResultUnknown.value || hasPropertyDraft) {
+    preservedRelocationPath = {
+      directory: props.directory,
+      sourcePath: props.path,
+      destinationPath: path,
+      propertySnapshot: hasPropertyDraft ? propertySnapshot : null,
+    }
+    propertyTransferPending = hasPropertyDraft
+  }
+}
+
+const reconcileRelocatedDraft = async (transfer) => {
+  clearAutosaveTimer()
+  const requestId = ++activeRequestId
+  recoveryRequestId++
+  const isCurrent = () =>
+    isMounted &&
+    requestId === activeRequestId &&
+    preservedRelocationPath === transfer &&
+    props.directory === transfer.directory &&
+    props.path === transfer.destinationPath
+
+  reloading.value = true
+  publishState()
+  try {
+    const remote = await getVaultMarkdown(transfer.directory, transfer.destinationPath)
+    if (!isCurrent()) return
+    if (remote?.directory !== transfer.directory || remote.path !== transfer.destinationPath || typeof remote.content !== 'string') {
+      throw new Error('The moved note response did not match its destination.')
+    }
+
+    const previousBase = baseContent.value
+    const hadMarkdownDraft = dirty.value
+    const hadConflict = conflict.value
+    if (!hadMarkdownDraft) draft.value = remote.content
+    baseContent.value = remote.content
+    revision.value = remote.revision || null
+    hasConfirmedContent.value = true
+    stale.value = false
+    const changedDuringMove = hadMarkdownDraft && remote.content !== previousBase && draft.value !== remote.content
+    conflict.value = hadConflict || changedDuringMove
+    saveState.value = conflict.value ? 'conflict' : saveResultUnknown.value ? 'unknown' : dirty.value ? 'dirty' : 'saved'
+    if (changedDuringMove) saveError.value = 'The moved note changed during reconciliation. Your draft is preserved.'
+    error.value = null
+    errorCode.value = null
+  } catch (err) {
+    if (!isCurrent()) return
+    if (err.code === 'UNAUTHORIZED') {
+      preservedRelocationPath = null
+      propertyTransferPending = false
+      propertiesPanelRef.value?.discardPendingNumberEdits?.()
+      clearProtectedContent()
+      emit('unauthorized')
+      return
+    }
+    conflict.value = true
+    saveState.value = 'conflict'
+    saveError.value = 'Could not confirm the moved note contents. Your draft is preserved; refresh the server copy to continue.'
+    stale.value = true
+  } finally {
+    if (isCurrent()) {
+      await nextTick()
+      if (!isCurrent()) return
+      const restored = !transfer.propertySnapshot ||
+        propertiesPanelRef.value?.restorePendingEditSnapshot?.(transfer.propertySnapshot)
+      if (restored) {
+        propertyTransferPending = false
+        preservedRelocationPath = null
+      } else {
+        conflict.value = true
+        saveState.value = 'conflict'
+        saveError.value = 'Could not restore the pending Properties edits. The snapshot is retained in this editor.'
+      }
+      reloading.value = false
+      publishState()
+      if (restored && !conflict.value && dirty.value) scheduleAutosave()
+    }
+  }
+}
+
 const handleOpenLink = (linkPayload) => {
   if (
     linkPayload.type === 'resolved' &&
@@ -700,9 +787,27 @@ watch(hasUnconfirmedChanges, publishState)
 
 watch(saving, publishState, { flush: 'sync' })
 watch(reloading, publishState, { flush: 'sync' })
+watch(() => props.relocating, (relocating) => {
+  if (relocating) clearAutosaveTimer()
+  else if (saveState.value === 'dirty') scheduleAutosave()
+})
 watch(
   () => [props.directory, props.path],
-  () => load()
+  ([directory, path], [previousDirectory, previousPath]) => {
+    const transfer = preservedRelocationPath
+    if (
+      transfer?.directory === directory &&
+      transfer.directory === previousDirectory &&
+      transfer.sourcePath === previousPath &&
+      transfer.destinationPath === path
+    ) {
+      void reconcileRelocatedDraft(transfer)
+      return
+    }
+    preservedRelocationPath = null
+    propertyTransferPending = false
+    load()
+  }
 )
 watch(
   () => props.anchor,
@@ -743,6 +848,7 @@ onUnmounted(() => {
 defineExpose({
   flushPendingSave,
   discardChanges,
+  preserveDraftForRelocatedPath,
   revision,
   saveState,
   documentVersion,
@@ -915,7 +1021,7 @@ defineExpose({
               class="note-heading-title"
               data-testid="note-heading-title"
               :value="noteStem"
-              :disabled="reloading || loading"
+              :disabled="relocating || reloading || loading"
               aria-label="Note file title"
               @change="handleTitleRename($event.target.value)"
               @keydown.enter.prevent="$event.target.blur()"
@@ -927,7 +1033,8 @@ defineExpose({
             ref="propertiesPanelRef"
             :key="JSON.stringify([directory, path])"
             :markdown="draft"
-            :disabled="reloading || loading"
+            :confirmed-markdown="baseContent"
+            :disabled="relocating || reloading || loading"
             :known-property-names="knownPropertyNames"
             :known-property-types="knownPropertyTypes"
             @update:markdown="updateDraft"
@@ -939,7 +1046,7 @@ defineExpose({
           <MarkdownEditor
             ref="editorRef"
             :model-value="editorText"
-            :disabled="reloading || loading"
+            :disabled="relocating || reloading || loading"
             :source-path="path"
             :known-files="knownFiles"
             :aliases-by-file="aliasesByFile"

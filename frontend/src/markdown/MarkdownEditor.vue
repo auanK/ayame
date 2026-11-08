@@ -532,7 +532,7 @@ defineExpose({
   color: var(--ayame-link-hover, #b5e2f8);
 }
 
-:deep(.cm-live-link:focus-visible) {
+:deep(.cm-editor.cm-focused .cm-live-link[data-editing="true"]) {
   outline: 2px solid var(--ayame-link, #8ccff0);
   outline-offset: 2px;
 }
