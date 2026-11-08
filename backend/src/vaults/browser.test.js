@@ -30,6 +30,57 @@ test('1. lists root of vault', () => {
   }
 })
 
+test('reports physical file and directory types without synthesizing duplicate rows', () => {
+  const root = makeTempDir()
+  try {
+    const vaultDir = path.join(root, 'personal')
+    fs.mkdirSync(path.join(vaultDir, '.obsidian'), { recursive: true })
+    fs.mkdirSync(path.join(vaultDir, 'Cosmologia'))
+    fs.mkdirSync(path.join(vaultDir, 'História'))
+    fs.mkdirSync(path.join(vaultDir, '.trash'))
+    fs.writeFileSync(path.join(vaultDir, '.obsidian', 'app.json'), '{"app":true}')
+    fs.writeFileSync(path.join(vaultDir, 'Cosmologia', 'A Gênese.md'), '# A Gênese')
+    fs.writeFileSync(path.join(vaultDir, 'Cosmologia.md'), '# Cosmologia')
+    fs.writeFileSync(path.join(vaultDir, 'História', 'Evento.md'), '# Evento')
+    fs.writeFileSync(path.join(vaultDir, 'README'), 'unsupported file')
+    fs.writeFileSync(path.join(vaultDir, 'repomix-output.xml'), '<document />')
+    fs.writeFileSync(path.join(vaultDir, 'image.png'), 'not a note')
+    fs.writeFileSync(path.join(vaultDir, '.note.md.ayame.lock'), '')
+    fs.writeFileSync(path.join(vaultDir, '.note.md.ayame-a1b2c3.tmp'), '')
+
+    const physicalEntries = fs.readdirSync(vaultDir, { withFileTypes: true })
+    const result = listVaultEntries(root, 'personal')
+    const physicalType = new Map(physicalEntries.map((entry) => [
+      entry.name,
+      entry.isDirectory() ? 'directory' : 'file',
+    ]))
+
+    assert.equal(new Set(result.entries.map((entry) => entry.path)).size, result.entries.length)
+    for (const entry of result.entries) {
+      assert.equal(entry.type, physicalType.get(entry.name))
+    }
+    assert.deepEqual(result.entries.find((entry) => entry.path === 'Cosmologia'), {
+      name: 'Cosmologia', path: 'Cosmologia', type: 'directory',
+    })
+    assert.deepEqual(result.entries.find((entry) => entry.path === 'Cosmologia.md'), {
+      name: 'Cosmologia.md', path: 'Cosmologia.md', type: 'file',
+    })
+    for (const name of ['.obsidian', 'README', 'repomix-output.xml', 'image.png']) {
+      assert.equal(result.entries.some((entry) => entry.name === name), true)
+    }
+    for (const name of ['.trash', '.note.md.ayame.lock', '.note.md.ayame-a1b2c3.tmp']) {
+      assert.equal(result.entries.some((entry) => entry.name === name), false)
+    }
+
+    const nested = listVaultEntries(root, 'personal', 'Cosmologia')
+    assert.deepEqual(nested.entries, [
+      { name: 'A Gênese.md', path: 'Cosmologia/A Gênese.md', type: 'file' },
+    ])
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('2. lists subdirectory', () => {
   const root = makeTempDir()
   try {

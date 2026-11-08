@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import MarkdownViewer, { AUTOSAVE_DELAY_MS } from './MarkdownViewer.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import PropertiesPanel from './PropertiesPanel.vue'
+import { parseNoteDocument } from './properties.js'
 import * as api from '../vaults/api.js'
 
 vi.mock('../vaults/api.js', () => ({
@@ -91,6 +92,19 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
     expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(true)
   })
 
+  it('keeps the inline title when a matching H1 follows a paragraph, without changing the Markdown', async () => {
+    const content = 'Introduction.\n\n# Ayame\n\nBody'
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'Ayame.md', content, revision,
+    })
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Ayame.md' } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(true)
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe(content)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
   it('keeps the inline title for notes without H1 and compares Unicode filenames canonically after navigation', async () => {
     api.getVaultMarkdown
       .mockResolvedValueOnce({ directory: 'personal', path: 'Plain.md', content: 'Body only', revision })
@@ -123,6 +137,115 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
 
     expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="autosave-status"]').text()).toContain('Saved')
+  })
+
+  it('pauses autosave and preserves the draft while the parent reconciles a relocated note', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: '# Note', revision })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'moved/note.md', content: '# Note', revision })
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'note.md' },
+    })
+    await flushPromises()
+    await editNote(wrapper, 'draft across move')
+    await wrapper.setProps({ relocating: true })
+
+    vi.advanceTimersByTime(AUTOSAVE_DELAY_MS * 2)
+    await flushPromises()
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="markdown-editor"]').attributes('aria-disabled')).toBe('true')
+
+    wrapper.vm.preserveDraftForRelocatedPath('moved/note.md')
+    await wrapper.setProps({ path: 'moved/note.md' })
+    await flushPromises()
+    expect(wrapper.vm.getText()).toBe('draft across move')
+    expect(api.getVaultMarkdown).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not apply a pending relocation snapshot after the vault changes while the destination is loading', async () => {
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+    let finishMovedRead
+    const movedRead = new Promise((resolve) => { finishMovedRead = resolve })
+    api.getVaultMarkdown.mockImplementation(async (directory, path) => {
+      if (directory === 'personal' && path === 'note.md') {
+        return { directory, path, content: '---\nchapter: 42\n---\nBody', revision }
+      }
+      if (directory === 'personal' && path === 'moved/note.md') return movedRead
+      return { directory, path, content: '---\nchapter: 7\n---\nOther vault', revision: 'b'.repeat(64) }
+    })
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'note.md' },
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="property-number-input"]').setValue('-15')
+    await wrapper.setProps({ relocating: true })
+    wrapper.vm.preserveDraftForRelocatedPath('moved/note.md')
+    await wrapper.setProps({ path: 'moved/note.md' })
+    await wrapper.setProps({ directory: 'other', path: 'Other.md', relocating: false })
+    await flushPromises()
+
+    expect(wrapper.vm.getText()).toContain('Other vault')
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('7')
+    finishMovedRead({
+      directory: 'personal', path: 'moved/note.md',
+      content: '---\nchapter: 100\n---\nMoved note', revision: 'c'.repeat(64),
+    })
+    await flushPromises()
+
+    expect(wrapper.vm.getText()).toContain('Other vault')
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('7')
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a pending relocation snapshot after the editor unmounts', async () => {
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+    let finishMovedRead
+    const movedRead = new Promise((resolve) => { finishMovedRead = resolve })
+    api.getVaultMarkdown.mockImplementation(async (directory, path) => path === 'note.md'
+      ? { directory, path, content: '---\nchapter: 42\n---\nBody', revision }
+      : movedRead)
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'note.md' },
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="property-number-input"]').setValue('-15')
+    await wrapper.setProps({ relocating: true })
+    wrapper.vm.preserveDraftForRelocatedPath('moved/note.md')
+    await wrapper.setProps({ path: 'moved/note.md' })
+    wrapper.unmount()
+    const stateCount = wrapper.emitted('state')?.length ?? 0
+
+    finishMovedRead({
+      directory: 'personal', path: 'moved/note.md',
+      content: '---\nchapter: 100\n---\nMoved note', revision: 'c'.repeat(64),
+    })
+    await flushPromises()
+
+    expect(wrapper.emitted('state')?.length ?? 0).toBe(stateCount)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Number snapshot recoverable and blocks saving when the moved note cannot be verified', async () => {
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'note.md', content: '---\nchapter: 42\n---\nBody', revision })
+      .mockRejectedValueOnce(new Error('offline'))
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'note.md' },
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="property-number-input"]').setValue('-15')
+    await wrapper.setProps({ relocating: true })
+    wrapper.vm.preserveDraftForRelocatedPath('moved/note.md')
+    await wrapper.setProps({ path: 'moved/note.md' })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-15')
+    expect(wrapper.find('[data-testid="markdown-save-error"]').text()).toContain('Your draft is preserved')
+    expect(wrapper.find('[data-testid="markdown-conflict"]').exists()).toBe(true)
+    expect(wrapper.vm.getText()).toBe('---\nchapter: 42\n---\nBody')
+    await wrapper.vm.save()
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
   })
 
   it('3. debounces rapid keystrokes into a single consolidated PUT after 700ms of inactivity and preserves CRLF/LF line endings', async () => {
@@ -549,6 +672,278 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
   })
 
   describe('Properties display modes and editor preferences', () => {
+    it('does not alter the draft or autosave empty and intermediate numeric input', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      const content = '---\nchapter: 42\n---\n\nBody'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal', path: 'Chapter.md', content, revision,
+      })
+      const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Chapter.md' } })
+      await flushPromises()
+      const input = wrapper.find('[data-testid="property-number-input"]')
+
+      await input.setValue('')
+      expect(wrapper.vm.getText()).toBe(content)
+      await input.setValue('-')
+      expect(wrapper.vm.getText()).toBe(content)
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(AUTOSAVE_DELAY_MS * 2)
+      await flushPromises()
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+      expect(wrapper.vm.getText()).toBe(content)
+    })
+
+    it.each(['1e-9999', '9007199254740993', '0.123456789012345678901'])(
+      'does not alter or autosave unsafe Number input %s',
+      async (value) => {
+        localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+        const content = '---\nchapter: 42\n---\nBody'
+        api.getVaultMarkdown.mockResolvedValueOnce({
+          directory: 'personal', path: 'Chapter.md', content, revision,
+        })
+        const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Chapter.md' } })
+        await flushPromises()
+        const input = wrapper.find('[data-testid="property-number-input"]')
+
+        await input.setValue(value)
+        await input.trigger('keydown.enter')
+        vi.advanceTimersByTime(AUTOSAVE_DELAY_MS * 2)
+        await flushPromises()
+
+        expect(wrapper.vm.getText()).toBe(content)
+        expect(wrapper.vm.revision).toBe(revision)
+        expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+      }
+    )
+
+    it('autosaves a valid numeric value only after confirmation', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      const content = '---\nchapter: 42\n---\n\nBody'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal', path: 'Chapter.md', content, revision,
+      })
+      api.saveVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal', path: 'Chapter.md', revision: 'b'.repeat(64),
+      })
+      const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Chapter.md' } })
+      await flushPromises()
+      const input = wrapper.find('[data-testid="property-number-input"]')
+
+      await input.setValue('-15')
+      expect(wrapper.vm.getText()).toBe(content)
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+      await input.trigger('keydown.enter')
+      await wrapper.vm.$nextTick()
+
+      expect(parseNoteDocument(wrapper.vm.getText()).properties[0].value).toBe(-15)
+      const confirmed = wrapper.vm.getText()
+      vi.advanceTimersByTime(AUTOSAVE_DELAY_MS)
+      await flushPromises()
+
+      expect(api.saveVaultMarkdown).toHaveBeenCalledTimes(1)
+      expect(api.saveVaultMarkdown).toHaveBeenCalledWith('personal', 'Chapter.md', {
+        content: confirmed,
+        expectedRevision: revision,
+      })
+    })
+
+    it('does not update or autosave a rejected case-insensitive property rename', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      const content = '---\nChapter: 3\nstatus: draft\n---\nBody'
+      api.getVaultMarkdown
+        .mockResolvedValueOnce({ directory: 'personal', path: 'First.md', content, revision })
+        .mockResolvedValueOnce({
+          directory: 'personal', path: 'Second.md', content: '# Second', revision: 'b'.repeat(64),
+        })
+      const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'First.md' } })
+      await flushPromises()
+
+      const keyInput = wrapper.find('[data-property-key="status"] [data-testid="property-key-input"]')
+      await keyInput.setValue('chapter')
+      await keyInput.trigger('keydown.enter')
+      expect(wrapper.find('[data-testid="property-key-error"]').text()).toContain('already exists')
+      expect(wrapper.vm.getText()).toBe(content)
+
+      vi.advanceTimersByTime(AUTOSAVE_DELAY_MS * 2)
+      await flushPromises()
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+
+      await wrapper.setProps({ path: 'Second.md' })
+      await flushPromises()
+      expect(wrapper.vm.getText()).toBe('# Second')
+      expect(wrapper.find('[data-testid="property-key-error"]').exists()).toBe(false)
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    })
+
+    it('reports a local Number draft as unconfirmed and clears it only on cancel or explicit discard', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal', path: 'Chapter.md', content: '---\nchapter: 42\n---\nBody', revision,
+      })
+      const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Chapter.md' } })
+      await flushPromises()
+      const input = wrapper.find('[data-testid="property-number-input"]')
+
+      await input.setValue('-15')
+      expect(wrapper.emitted('state').at(-1)[0].dirty).toBe(true)
+      wrapper.vm.setPropertiesMode('hidden')
+      expect(wrapper.vm.getPreferences().propertiesInDocument).toBe('visible')
+      expect(wrapper.find('[data-testid="property-number-input"]').exists()).toBe(true)
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+
+      await wrapper.find('[data-testid="property-number-input"]').trigger('keydown.esc')
+      expect(wrapper.emitted('state').at(-1)[0].dirty).toBe(false)
+
+      await wrapper.find('[data-testid="property-number-input"]').setValue('-20')
+      wrapper.vm.discardChanges()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('42')
+      expect(wrapper.emitted('state').at(-1)[0].dirty).toBe(false)
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    })
+
+    it('keeps unsafe YAML number text exact while displaying it and autosaving an unrelated edit', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      const content = '---\nlarge_id: 9007199254740993\nsmall: 1e-9999\nprecise: 0.123456789012345678901\nstatus: draft\n---\nBody'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal', path: 'Numbers.md', content, revision,
+      })
+      api.saveVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal', path: 'Numbers.md', revision: 'b'.repeat(64),
+      })
+      const wrapper = mount(MarkdownViewer, {
+        props: {
+          directory: 'personal',
+          path: 'Numbers.md',
+          knownPropertyTypes: { large_id: 'number', small: 'number', precise: 'number' },
+        },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('[data-property-key="large_id"] [data-testid="property-text-input"]').element.value).toBe('9007199254740993')
+      expect(wrapper.find('[data-property-key="small"] [data-testid="property-text-input"]').element.value).toBe('1e-9999')
+      expect(wrapper.vm.getText()).toBe(content)
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+
+      await wrapper.find('[data-property-key="status"] [data-testid="property-text-input"]').setValue('reviewed')
+      vi.advanceTimersByTime(AUTOSAVE_DELAY_MS)
+      await flushPromises()
+
+      expect(api.saveVaultMarkdown).toHaveBeenCalledTimes(1)
+      const saved = api.saveVaultMarkdown.mock.calls[0][2].content
+      expect(saved).toContain('large_id: 9007199254740993')
+      expect(saved).toContain('small: 1e-9999')
+      expect(saved).toContain('precise: 0.123456789012345678901')
+      expect(saved).toContain('status: reviewed')
+    })
+
+    it('does not autosave invalid or duplicate Add property submissions', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      const content = '---\n# Keep this comment\nchapter: 42\ncustom:\n  nested: value\n---\n\nBody'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal', path: 'Chapter.md', content, revision,
+      })
+      const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Chapter.md' } })
+      await flushPromises()
+      await wrapper.find('[data-testid="add-property-button"]').trigger('click')
+      await wrapper.find('[data-testid="new-property-key-input"]').setValue('rating')
+      await wrapper.find('[data-testid="new-property-type-select"]').setValue('number')
+      await wrapper.find('[data-testid="new-property-value-input"]').setValue('many')
+      await wrapper.find('[data-testid="new-property-submit"]').trigger('click')
+      expect(wrapper.vm.getText()).toBe(content)
+
+      await wrapper.find('[data-testid="new-property-value-input"]').setValue('9007199254740993')
+      await wrapper.find('[data-testid="new-property-submit"]').trigger('click')
+      expect(wrapper.vm.getText()).toBe(content)
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+
+      await wrapper.find('[data-testid="new-property-key-input"]').setValue('chapter')
+      await wrapper.find('[data-testid="new-property-type-select"]').setValue('number')
+      await wrapper.find('[data-testid="new-property-value-input"]').setValue('100')
+      await wrapper.find('[data-testid="new-property-submit"]').trigger('click')
+      expect(wrapper.find('[data-testid="property-add-error"]').text()).toContain('already exists')
+      expect(wrapper.vm.getText()).toBe(content)
+
+      vi.advanceTimersByTime(AUTOSAVE_DELAY_MS * 2)
+      await flushPromises()
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+      expect(wrapper.vm.getText()).toBe(content)
+    })
+
+    it('resets property overrides and add-form state when the note changes', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      const first = '---\nchapter: "3"\n---\n\nFirst'
+      const second = '---\nchapter: many\n---\n\nSecond'
+      api.getVaultMarkdown
+        .mockResolvedValueOnce({ directory: 'personal', path: 'Same.md', content: first, revision: 'a'.repeat(64) })
+        .mockResolvedValueOnce({ directory: 'research', path: 'Same.md', content: second, revision: 'b'.repeat(64) })
+
+      const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Same.md' } })
+      await flushPromises()
+
+      await wrapper.find('[data-testid="property-type-select"]').setValue('number')
+      await wrapper.find('[data-testid="add-property-button"]').trigger('click')
+      await wrapper.find('[data-testid="new-property-key-input"]').setValue('status')
+      expect(wrapper.find('[data-testid="property-number-input"]').exists()).toBe(true)
+      await wrapper.find('[data-testid="property-number-input"]').setValue('-')
+
+      await wrapper.setProps({ directory: 'research' })
+      await flushPromises()
+
+      const chapter = wrapper.find('[data-property-key="chapter"]')
+      expect(chapter.find('[data-testid="property-number-input"]').exists()).toBe(false)
+      expect(chapter.find('[data-testid="property-text-input"]').element.value).toBe('many')
+      expect(wrapper.find('[data-testid="new-property-key-input"]').exists()).toBe(false)
+      expect(wrapper.vm.getText()).toBe(second)
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    })
+
+    it('clears property errors and raw YAML mode when the note changes', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      api.getVaultMarkdown
+        .mockResolvedValueOnce({ directory: 'personal', path: 'First.md', content: '---\nchapter: many\n---\n', revision: 'a'.repeat(64) })
+        .mockResolvedValueOnce({ directory: 'personal', path: 'Second.md', content: '---\nchapter: 4\n---\n', revision: 'b'.repeat(64) })
+
+      const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'First.md' } })
+      await flushPromises()
+      await wrapper.find('[data-testid="property-type-select"]').setValue('number')
+      expect(wrapper.find('[data-testid="property-type-error"]').exists()).toBe(true)
+      await wrapper.find('[data-testid="toggle-yaml-source-button"]').trigger('click')
+      expect(wrapper.find('[data-testid="raw-yaml-textarea"]').exists()).toBe(true)
+
+      await wrapper.setProps({ path: 'Second.md' })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="property-type-error"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="raw-yaml-textarea"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('4')
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    })
+
+    it('does not autosave a compatible type suggestion for a numeric YAML string', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      const content = '---\nchapter: "3"\n---\n\nBody'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal', path: 'Chapter.md', content, revision: 'a'.repeat(64),
+      })
+      const wrapper = mount(MarkdownViewer, {
+        props: {
+          directory: 'personal',
+          path: 'Chapter.md',
+          knownPropertyTypes: { chapter: 'number' },
+        },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('3')
+      expect(wrapper.vm.getText()).toBe(content)
+      vi.advanceTimersByTime(AUTOSAVE_DELAY_MS * 2)
+      await flushPromises()
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+      expect(wrapper.vm.getText()).toBe(content)
+    })
+
     it('14. opens note with YAML properties hidden by default without reserving DOM space', async () => {
       const revision = 'a'.repeat(64)
       const yamlContent = '---\ntitle: Cosmologia\ntags:\n  - ciencia\n---\n# Início da nota\n'

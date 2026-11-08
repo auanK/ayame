@@ -43,6 +43,16 @@ const projectsEntries = [
 
 const codedError = (code) => Object.assign(new Error(code), { code })
 
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 const mountBrowser = async (props = { vault }, initialEntries = rootEntries) => {
   api.getVaultEntries.mockResolvedValueOnce({
     directory: props.vault.directory,
@@ -50,6 +60,51 @@ const mountBrowser = async (props = { vault }, initialEntries = rootEntries) => 
     entries: initialEntries,
   })
   const wrapper = mount(VaultBrowser, { props })
+  await flushPromises()
+  return wrapper
+}
+
+const reconcileMoveWithNumberDrafts = async ({
+  sourceContent = '---\nchapter: 42\nstatus: draft\n---\n\n# Document',
+  destinationContent = sourceContent,
+  drafts = { chapter: '-15' },
+  markdownDraft = null,
+  refreshedFiles = ['projects/README.md'],
+} = {}) => {
+  localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+  api.getVaultIndex.mockResolvedValueOnce({
+    directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+  })
+  api.getVaultMarkdown.mockImplementation(async (directory, path) => ({
+    directory,
+    path,
+    content: path === 'projects/README.md' ? destinationContent : sourceContent,
+    revision: 'a'.repeat(64),
+  }))
+  const wrapper = await mountBrowser()
+  await wrapper.find('[data-file-path="README.md"]').trigger('click')
+  await flushPromises()
+
+  for (const [key, value] of Object.entries(drafts)) {
+    await wrapper.find(`[data-property-key="${key}"] [data-testid="property-number-input"]`).setValue(value)
+  }
+  if (markdownDraft !== null) {
+    wrapper.findComponent(MarkdownEditor).vm.setText(markdownDraft)
+    await wrapper.vm.$nextTick()
+  }
+  await wrapper.vm.executeRelocate('README.md', 'projects/README.md')
+  api.relocateVaultEntry.mockRejectedValueOnce(codedError('FAILED_TO_RELOCATE_ENTRY'))
+  await wrapper.find('[data-testid="relocate-confirm"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.find('[data-testid="relocate-uncertain"]').exists()).toBe(true)
+
+  api.getVaultEntries.mockResolvedValueOnce({
+    directory: 'personal', path: '', entries: [{ name: 'projects', path: 'projects', type: 'directory' }],
+  })
+  api.getVaultIndex.mockResolvedValueOnce({
+    directory: 'personal', complete: true, folders: ['projects'], files: refreshedFiles, notes: [],
+  })
+  await wrapper.find('[data-testid="relocate-refresh"]').trigger('click')
   await flushPromises()
   return wrapper
 }
@@ -212,6 +267,42 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('# Second')
   })
 
+  it('protects a pending Number draft during note navigation and discards it only after confirmation', async () => {
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+    const entries = [
+      { name: 'README.md', path: 'README.md', type: 'file' },
+      { name: 'Second.md', path: 'Second.md', type: 'file' },
+    ]
+    const wrapper = await mountBrowser({ vault }, entries)
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({
+        directory: 'personal', path: 'README.md', content: '---\nchapter: 42\n---\nBody', revision: 'a'.repeat(64),
+      })
+      .mockResolvedValueOnce({
+        directory: 'personal', path: 'Second.md', content: '# Second', revision: 'b'.repeat(64),
+      })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="property-number-input"]').setValue('-15')
+
+    await wrapper.find('button[data-file-path="Second.md"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-15')
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-testid="navigation-keep-editing"]').trigger('click')
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-15')
+    await wrapper.find('button[data-file-path="Second.md"]').trigger('click')
+    await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('button[data-file-path="Second.md"]').classes()).toContain('tree-file--active')
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('# Second')
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
   it('6. navigates internal links (wikilinks and relative markdown links), resolves unexpanded folders, expands tree ancestors, and highlights the target note', async () => {
     const wrapper = await mountBrowser()
 
@@ -322,6 +413,7 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     })
 
     await wrapper.find('[data-testid="new-folder-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="new-entry-form"] [data-testid="tree-folder-create-icon"]').exists()).toBe(true)
     await wrapper.find('[data-testid="new-entry-input"]').setValue('Architecture')
     await wrapper.find('[data-testid="new-entry-submit"]').trigger('click')
     await flushPromises()
@@ -331,6 +423,752 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
       name: 'Architecture',
     })
     expect(wrapper.find('button[data-folder-path="Architecture"]').exists()).toBe(true)
+  })
+
+  it('shows the dragged row and valid/invalid folder targets, then confirms a valid move', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    const fileRow = wrapper.find('[data-entry-path="README.md"]')
+    const folderRow = wrapper.find('[data-entry-path="projects"]')
+
+    api.getVaultMarkdown.mockResolvedValue({
+      directory: 'personal',
+      path: 'README.md',
+      content: '# README',
+      revision: 'a'.repeat(64),
+    })
+    const moveResult = deferred()
+    api.relocateVaultEntry.mockReturnValueOnce(moveResult.promise)
+    api.getVaultEntries.mockResolvedValue({
+      directory: 'personal',
+      path: '',
+      entries: [rootEntries[0], rootEntries[1]],
+    })
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal',
+      complete: true,
+      folders: ['projects'],
+      files: ['projects/README.md'],
+      notes: [],
+    })
+
+    await fileRow.trigger('dragstart', { dataTransfer })
+    expect(fileRow.classes()).toContain('tree-row-wrapper--dragging')
+    expect(dataTransfer.effectAllowed).toBe('move')
+    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'README.md')
+
+    await fileRow.trigger('dragover', { dataTransfer })
+    expect(fileRow.classes()).toContain('tree-row-wrapper--drop-invalid')
+    expect(dataTransfer.dropEffect).toBe('none')
+    expect(wrapper.find('[data-testid="workspace-tree"]').classes()).not.toContain('workspace-tree--drop-valid')
+
+    await folderRow.trigger('dragover', { dataTransfer })
+    expect(folderRow.classes()).toContain('tree-row-wrapper--drop-valid')
+    expect(dataTransfer.dropEffect).toBe('move')
+    await folderRow.trigger('drop', { dataTransfer })
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledWith('personal', expect.objectContaining({
+      sourcePath: 'README.md',
+      targetPath: 'projects/README.md',
+    }))
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Move entry to path:')
+    expect(wrapper.findAll('button').filter((button) => button.text() === 'Apply')).toHaveLength(0)
+    await wrapper.vm.executeRelocate('README.md', 'projects/README.md')
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+
+    moveResult.resolve({
+      directory: 'personal', oldPath: 'README.md', newPath: 'projects/README.md', updatedFiles: [], failedFiles: [],
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-entry-path="README.md"]').exists()).toBe(false)
+
+    const projectFolder = wrapper.find('[data-entry-path="projects"]')
+    await projectFolder.trigger('dragstart', { dataTransfer })
+    await projectFolder.trigger('dragover', { dataTransfer })
+    expect(projectFolder.classes()).toContain('tree-row-wrapper--drop-invalid')
+    expect(dataTransfer.dropEffect).toBe('none')
+    await projectFolder.trigger('drop', { dataTransfer })
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="workspace-notice"]').text()).toContain('Cannot move a folder into itself')
+    expect(wrapper.find('[data-entry-path="projects"]').classes()).not.toContain('tree-row-wrapper--drop-invalid')
+  })
+
+  it('does not show the destination form while Drag & Drop is verifying the source revision', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    const pendingRevision = deferred()
+    api.getVaultMarkdown.mockReturnValueOnce(pendingRevision.promise)
+    api.relocateVaultEntry.mockResolvedValueOnce({
+      directory: 'personal', oldPath: 'README.md', newPath: 'projects/README.md', updatedFiles: [], failedFiles: [],
+    })
+    api.getVaultEntries.mockResolvedValue({
+      directory: 'personal', path: '', entries: [{ name: 'projects', path: 'projects', type: 'directory' }],
+    })
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['projects/README.md'], notes: [],
+    })
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+    await flushPromises()
+
+    expect(api.getVaultMarkdown).toHaveBeenCalledWith('personal', 'README.md')
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+
+    pendingRevision.resolve({ directory: 'personal', path: 'README.md', revision: 'a'.repeat(64), content: '# README' })
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+  })
+
+  it('requires explicit draft discard confirmation before moving a dirty note', async () => {
+    api.getVaultIndex.mockResolvedValue({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValue({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    const editor = wrapper.findComponent(MarkdownEditor)
+    const discard = vi.spyOn(wrapper.findComponent(MarkdownViewer).vm, 'discardChanges')
+    editor.vm.setText('# README\n\nImportant unsaved content.')
+    await wrapper.vm.$nextTick()
+
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('dragover', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+    await flushPromises()
+
+    const confirmation = wrapper.find('[data-testid="relocate-confirmation"]')
+    expect(confirmation.exists()).toBe(true)
+    expect(confirmation.text()).toContain('Source: README.md')
+    expect(confirmation.text()).toContain('Destination: projects/README.md')
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('# README\n\nImportant unsaved content.')
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    expect(discard).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft and navigation unchanged when the user cancels a pending drag move', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    wrapper.findComponent(MarkdownEditor).vm.setText('keep this draft')
+    await wrapper.vm.$nextTick()
+
+    const tabsBefore = wrapper.findAll('[data-testid="workspace-tab"]').map((tab) => tab.attributes('data-tab-path'))
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+    await wrapper.find('[data-testid="relocate-keep-editing"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('keep this draft')
+    expect(wrapper.find('[data-testid="workspace-tab"]').attributes('data-tab-path')).toBe(tabsBefore[0])
+    expect(wrapper.find('[data-file-path="README.md"]').classes()).toContain('tree-file--active')
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+  })
+
+  it('discards only after an explicitly confirmed move succeeds', async () => {
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    const content = '---\nchapter: 42\n---\n\n# README'
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'README.md', content, revision: 'a'.repeat(64) })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'projects/README.md', content, revision: 'b'.repeat(64) })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="property-number-input"]').setValue('-15')
+    const editor = wrapper.findComponent(MarkdownEditor)
+    editor.vm.setText('authorized draft')
+    await wrapper.vm.$nextTick()
+
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    expect(editor.vm.getText()).toBe('authorized draft')
+
+    const moveResult = deferred()
+    api.relocateVaultEntry.mockReturnValueOnce(moveResult.promise)
+    api.getVaultEntries.mockImplementation(async (_directory, path = '') => ({
+      directory: 'personal',
+      path,
+      entries: path ? [] : [{ name: 'projects', path: 'projects', type: 'directory' }],
+    }))
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['projects/README.md'], notes: [],
+    })
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'projects/README.md', content: '# README', revision: 'b'.repeat(64),
+    })
+    await wrapper.find('[data-testid="relocate-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+    expect(editor.vm.getText()).toBe('authorized draft')
+    expect(wrapper.find('[data-testid="workspace-tab"]').attributes('data-tab-path')).toBe('README.md')
+
+    moveResult.resolve({
+      directory: 'personal', oldPath: 'README.md', newPath: 'projects/README.md', updatedFiles: [], failedFiles: [],
+    })
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledWith('personal', expect.objectContaining({
+      sourcePath: 'README.md', targetPath: 'projects/README.md', expectedRevision: 'a'.repeat(64),
+    }))
+    expect(wrapper.find('[data-testid="workspace-tab"]').attributes('data-tab-path')).toBe('projects/README.md')
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('42')
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('preserves a dirty draft and reports a collision without reopening the form after Drag & Drop', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    const editor = wrapper.findComponent(MarkdownEditor)
+    const discard = vi.spyOn(wrapper.findComponent(MarkdownViewer).vm, 'discardChanges')
+    editor.vm.setText('draft after collision')
+    await wrapper.vm.$nextTick()
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').exists()).toBe(true)
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    api.relocateVaultEntry.mockRejectedValueOnce(codedError('VAULT_ENTRY_EXISTS'))
+    await wrapper.find('[data-testid="relocate-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+    expect(discard).not.toHaveBeenCalled()
+    expect(editor.vm.getText()).toBe('draft after collision')
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="workspace-notice"]').text()).toContain('already exists')
+    expect(wrapper.find('[data-testid="workspace-tab"]').attributes('data-tab-path')).toBe('README.md')
+  })
+
+  it.each(['saving', 'reloading', 'conflict', 'unknown'])('blocks relocation while the note is %s', async (state) => {
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    const editor = wrapper.findComponent(MarkdownEditor)
+    const viewer = wrapper.findComponent(MarkdownViewer)
+    const pending = deferred()
+    if (state === 'reloading') {
+      api.getVaultMarkdown.mockReturnValueOnce(pending.promise)
+      viewer.vm.reloadServerCopy()
+      await wrapper.vm.$nextTick()
+    } else {
+      vi.useFakeTimers()
+      editor.vm.setText('preserve me')
+      await wrapper.vm.$nextTick()
+    }
+    if (state === 'saving') {
+      api.saveVaultMarkdown.mockReturnValueOnce(pending.promise)
+      await vi.advanceTimersByTimeAsync(700)
+      await flushPromises()
+    } else if (state === 'conflict' || state === 'unknown') {
+      api.saveVaultMarkdown.mockRejectedValueOnce(codedError(
+        state === 'conflict' ? 'VAULT_FILE_CONFLICT' : 'VAULT_SAVE_RESULT_UNKNOWN'
+      ))
+      await vi.advanceTimersByTimeAsync(700)
+      await flushPromises()
+    }
+
+    await wrapper.vm.executeRelocate('README.md', 'Moved.md')
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    if (state === 'saving') {
+      pending.resolve({ directory: 'personal', path: 'README.md', revision: 'b'.repeat(64) })
+      await flushPromises()
+      expect(editor.vm.getText()).toBe('preserve me')
+    }
+    expect(wrapper.find('[data-testid="workspace-notice"]').text()).toMatch(/Wait|Resolve|Verify/)
+  })
+
+  it('rechecks a draft changed while the revision lookup is pending', async () => {
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    const editor = wrapper.findComponent(MarkdownEditor)
+    wrapper.findComponent(MarkdownViewer).vm.revision = null
+    const pendingRevision = deferred()
+    api.getVaultMarkdown.mockReturnValueOnce(pendingRevision.promise)
+
+    const move = wrapper.vm.executeRelocate('README.md', 'Moved.md')
+    expect(api.getVaultMarkdown).toHaveBeenCalledWith('personal', 'README.md')
+    editor.vm.setText('typed during revision lookup')
+    pendingRevision.resolve({ directory: 'personal', path: 'README.md', revision: 'b'.repeat(64), content: '# README' })
+    await move
+    await wrapper.vm.$nextTick()
+
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    expect(editor.vm.getText()).toBe('typed during revision lookup')
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').text()).toContain('Review and confirm')
+  })
+
+  it('requires a new confirmation if the draft changes after the first authorization', async () => {
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    const editor = wrapper.findComponent(MarkdownEditor)
+    editor.vm.setText('first authorized draft')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.executeRelocate('README.md', 'Moved.md')
+
+    editor.vm.setText('newer draft')
+    await wrapper.vm.$nextTick()
+    api.relocateVaultEntry.mockResolvedValueOnce({
+      directory: 'personal', oldPath: 'README.md', newPath: 'Moved.md', updatedFiles: [], failedFiles: [],
+    })
+    await wrapper.find('[data-testid="relocate-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').text()).toContain('Review and confirm')
+    expect(editor.vm.getText()).toBe('newer draft')
+
+    await wrapper.find('[data-testid="relocate-confirm"]').trigger('click')
+    await flushPromises()
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+  })
+
+  it('protects a dirty note inside a moved folder but allows moving an unrelated folder', async () => {
+    const entries = [
+        { name: 'projects', path: 'projects', type: 'directory' },
+        { name: 'assets', path: 'assets', type: 'directory' },
+        { name: 'archive', path: 'archive', type: 'directory' },
+    ]
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true,
+      folders: ['projects', 'assets', 'archive'], files: ['projects/README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser({ vault }, entries)
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal', path: 'projects',
+      entries: [{ name: 'README.md', path: 'projects/README.md', type: 'file' }],
+    })
+    await wrapper.find('[data-folder-path="projects"]').trigger('click')
+    await flushPromises()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'projects/README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="projects/README.md"]').trigger('click')
+    await flushPromises()
+    wrapper.findComponent(MarkdownEditor).vm.setText('folder draft')
+    await wrapper.vm.$nextTick()
+
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    await wrapper.find('[data-entry-path="projects"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="archive"]').trigger('drop', { dataTransfer })
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').text()).toContain('Source: projects')
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').text()).toContain('Destination: archive/projects')
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+    await wrapper.find('[data-testid="relocate-keep-editing"]').trigger('click')
+
+    const folderMove = deferred()
+    api.relocateVaultEntry.mockReturnValueOnce(folderMove.promise)
+    await wrapper.find('[data-entry-path="assets"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="archive"]').trigger('drop', { dataTransfer })
+    await flushPromises()
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+    folderMove.resolve({
+      directory: 'personal', oldPath: 'assets', newPath: 'archive/assets', updatedFiles: [], failedFiles: [],
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').exists()).toBe(false)
+  })
+
+  it('reconciles an uncertain successful move while keeping the open draft at its new path', async () => {
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+    const content = '---\nchapter: 42\n---\n\n# Document'
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockImplementation(async (directory, path) => ({
+      directory, path, content, revision: 'a'.repeat(64),
+    }))
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="property-number-input"]').setValue('-15')
+    const editor = wrapper.findComponent(MarkdownEditor)
+    editor.vm.setText('preserve after uncertain move')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.executeRelocate('README.md', 'projects/README.md')
+    api.relocateVaultEntry.mockRejectedValueOnce(codedError('FAILED_TO_RELOCATE_ENTRY'))
+    await wrapper.find('[data-testid="relocate-confirm"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="relocate-uncertain"]').exists()).toBe(true)
+
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal', path: '', entries: [{ name: 'projects', path: 'projects', type: 'directory' }],
+    })
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['projects/README.md'], notes: [],
+    })
+    await wrapper.find('[data-testid="relocate-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="relocate-uncertain"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="workspace-tab"]').attributes('data-tab-path')).toBe('projects/README.md')
+    expect(editor.vm.getText()).toBe('preserve after uncertain move')
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-15')
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="workspace-notice"]').text()).toContain('Your draft remains open')
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves a pending Number draft when an uncertain move is confirmed by refresh', async () => {
+    const content = '---\nchapter: 42\nrating: 5\nstatus: draft\n---\n\n# Document'
+    const wrapper = await reconcileMoveWithNumberDrafts({
+      sourceContent: content,
+      drafts: { chapter: '-15', rating: '3.5' },
+    })
+    expect(wrapper.find('[data-testid="workspace-tab"]').attributes('data-tab-path')).toBe('projects/README.md')
+    expect(wrapper.find('[data-property-key="chapter"] [data-testid="property-number-input"]').element.value).toBe('-15')
+    expect(wrapper.find('[data-property-key="rating"] [data-testid="property-number-input"]').element.value).toBe('3.5')
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe(content)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves invalid Number text without writing it during relocation reconciliation', async () => {
+    const content = '---\nchapter: 42\n---\n\n# Document'
+    const wrapper = await reconcileMoveWithNumberDrafts({ sourceContent: content, drafts: { chapter: '-' } })
+
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-')
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe(content)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['still at the source', ['README.md'], 'README.md', false],
+    ['still ambiguous', ['README.md', 'projects/README.md'], 'README.md', true],
+  ])('keeps a Number draft at the source when refresh is %s', async (_case, refreshedFiles, path, remainsUncertain) => {
+    const wrapper = await reconcileMoveWithNumberDrafts({ refreshedFiles })
+
+    expect(wrapper.find('[data-testid="workspace-tab"]').attributes('data-tab-path')).toBe(path)
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-15')
+    expect(wrapper.find('[data-testid="relocate-uncertain"]').exists()).toBe(remainsUncertain)
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['value', '---\nchapter: 100\n---\n\n# Document', 'property-number-error', 'changed while you were editing'],
+    ['removed', '---\nstatus: draft\n---\n\n# Document', 'pending-number-conflict', 'removed or renamed'],
+    ['type', '---\nchapter: forty-two\n---\n\n# Document', 'pending-number-conflict', 'changed type'],
+  ])('restores Number drafts as conflicts when the moved property changed by %s', async (_change, destinationContent, conflictTestId, message) => {
+    const sourceContent = '---\nchapter: 42\n---\n\n# Document'
+    const wrapper = await reconcileMoveWithNumberDrafts({ sourceContent, destinationContent })
+
+    if (conflictTestId === 'property-number-error') {
+      expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-15')
+    }
+    expect(wrapper.find(`[data-testid="${conflictTestId}"]`).text()).toContain(message)
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe(destinationContent)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('preserves both Markdown and Number drafts when the destination changed during the move', async () => {
+    const sourceContent = '---\nchapter: 42\n---\n\n# Document'
+    const destinationContent = '---\nchapter: 100\n---\n\n# Document'
+    const wrapper = await reconcileMoveWithNumberDrafts({
+      sourceContent,
+      destinationContent,
+      markdownDraft: 'Local body draft',
+    })
+
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toContain('Local body draft')
+    expect(wrapper.find('[data-testid="markdown-conflict"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-15')
+    expect(wrapper.find('[data-testid="property-number-error"]').text()).toContain('changed while you were editing')
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('transfers a Number draft when reconciliation remaps a note inside a moved folder', async () => {
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+    const entries = [
+      { name: 'projects', path: 'projects', type: 'directory' },
+      { name: 'archive', path: 'archive', type: 'directory' },
+    ]
+    const content = '---\nchapter: 42\n---\n\n# Document'
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true,
+      folders: ['projects', 'archive'], files: ['projects/README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser({ vault }, entries)
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal', path: 'projects',
+      entries: [{ name: 'README.md', path: 'projects/README.md', type: 'file' }],
+    })
+    await wrapper.find('[data-folder-path="projects"]').trigger('click')
+    await flushPromises()
+    api.getVaultMarkdown.mockImplementation(async (directory, path) => ({ directory, path, content, revision: 'a'.repeat(64) }))
+    await wrapper.find('[data-file-path="projects/README.md"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="property-number-input"]').setValue('-15')
+
+    await wrapper.vm.executeRelocate('projects', 'archive/projects', {
+      entry: { name: 'projects', path: 'projects', type: 'directory' },
+      mode: 'move',
+      origin: 'drag',
+    })
+    api.relocateVaultEntry.mockRejectedValueOnce(codedError('FAILED_TO_RELOCATE_ENTRY'))
+    await wrapper.find('[data-testid="relocate-confirm"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="relocate-uncertain"]').exists()).toBe(true)
+
+    api.getVaultEntries.mockImplementation(async (directory, path = '') => ({
+      directory,
+      path,
+      entries: path === ''
+        ? [{ name: 'archive', path: 'archive', type: 'directory' }]
+        : path === 'archive'
+          ? [{ name: 'projects', path: 'archive/projects', type: 'directory' }]
+          : path === 'archive/projects'
+            ? [{ name: 'README.md', path: 'archive/projects/README.md', type: 'file' }]
+            : [],
+    }))
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true,
+      folders: ['archive', 'archive/projects'], files: ['archive/projects/README.md'], notes: [],
+    })
+    await wrapper.find('[data-testid="relocate-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="workspace-tab"]').attributes('data-tab-path')).toBe('archive/projects/README.md')
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('-15')
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe(content)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('keeps the manual Move destination form available and applies the chosen path', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValue({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    api.relocateVaultEntry.mockResolvedValueOnce({
+      directory: 'personal', oldPath: 'README.md', newPath: 'projects/README.md', updatedFiles: [], failedFiles: [],
+    })
+    api.getVaultEntries.mockResolvedValue({
+      directory: 'personal', path: '', entries: [{ name: 'projects', path: 'projects', type: 'directory' }],
+    })
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['projects/README.md'], notes: [],
+    })
+
+    await wrapper.find('[data-testid="entry-context-button"][data-entry-path="README.md"]').trigger('click')
+    await wrapper.find('[data-testid="ctx-move"]').trigger('click')
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="relocate-form"]').text()).toContain('Move entry to path:')
+    await wrapper.find('[data-testid="relocate-input"]').setValue('projects/README.md')
+    await wrapper.find('[data-testid="relocate-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledWith('personal', expect.objectContaining({
+      sourcePath: 'README.md', targetPath: 'projects/README.md',
+    }))
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+  })
+
+  it('does not mistake a folder at the intended file path for a reconciled move', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: [], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.relocateVaultEntry.mockRejectedValueOnce(codedError('FAILED_TO_RELOCATE_ENTRY'))
+    await wrapper.vm.executeRelocate('README.md', 'projects/README.md', {
+      entry: rootEntries[2], origin: 'drag', requireKnownDrop: true,
+    })
+    expect(wrapper.find('[data-testid="relocate-uncertain"]').exists()).toBe(true)
+
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal', path: '', entries: [{ name: 'projects', path: 'projects', type: 'directory' }],
+    })
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects/README.md'], files: [], notes: [],
+    })
+    await wrapper.find('[data-testid="relocate-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="relocate-uncertain"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="relocate-error"]').text()).toContain('could not confirm')
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+  })
+
+  it('invalidates a pending confirmation when the vault changes', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    wrapper.findComponent(MarkdownEditor).vm.setText('draft in A')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.executeRelocate('README.md', 'projects/README.md')
+
+    await wrapper.setProps({ vault: { ...vault, id: 'vault-2', directory: 'other' } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').exists()).toBe(false)
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+  })
+
+  it('ignores duplicate confirmation and a late move result after switching vaults', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    wrapper.findComponent(MarkdownEditor).vm.setText('authorized draft')
+    await wrapper.vm.$nextTick()
+    api.getVaultMarkdown.mockResolvedValue({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').exists()).toBe(true)
+
+    const moveResult = deferred()
+    api.relocateVaultEntry.mockReturnValueOnce(moveResult.promise)
+    const confirm = wrapper.find('[data-testid="relocate-confirm"]').element
+    confirm.click()
+    confirm.click()
+    await flushPromises()
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="relocate-confirmation"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="close-tab-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="workspace-tab"]').exists()).toBe(true)
+
+    await wrapper.setProps({ vault: { ...vault, id: 'vault-2', directory: 'other' } })
+    await flushPromises()
+    moveResult.resolve({ directory: 'personal', oldPath: 'README.md', newPath: 'Moved.md', updatedFiles: [], failedFiles: [] })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="workspace-empty-state"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="workspace-tab"]').exists()).toBe(false)
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects known collisions and incomplete destinations during drag-over', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md', 'projects/README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'move' }
+    await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('dragover', { dataTransfer })
+    expect(dataTransfer.dropEffect).toBe('none')
+    expect(wrapper.find('[data-entry-path="projects"]').classes()).toContain('tree-row-wrapper--drop-invalid')
+    await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+    expect(api.relocateVaultEntry).not.toHaveBeenCalled()
+
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: false, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    api.getVaultEntries.mockResolvedValueOnce({ directory: 'personal', path: '', entries: rootEntries })
+    const incomplete = await mountBrowser()
+    const unknownTarget = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'move' }
+    await incomplete.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer: unknownTarget })
+    await incomplete.find('[data-entry-path="projects"]').trigger('dragover', { dataTransfer: unknownTarget })
+    expect(unknownTarget.dropEffect).toBe('none')
+  })
+
+  it('keeps uncertain relocation visible and does not retry automatically after a network error', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.relocateVaultEntry.mockRejectedValueOnce(codedError('FAILED_TO_RELOCATE_ENTRY'))
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+    await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+    await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+    await flushPromises()
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="relocate-uncertain"]').text()).toContain('uncertain')
+    expect(wrapper.find('[data-testid="relocate-refresh"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="workspace-tab"]').exists()).toBe(false)
+  })
+
+  it('reports a known Drag & Drop failure without reopening a destination form or blocking retry', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'], files: ['README.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValue({
+      directory: 'personal', path: 'README.md', content: '# README', revision: 'a'.repeat(64),
+    })
+    api.relocateVaultEntry
+      .mockRejectedValueOnce(codedError('VAULT_ENTRY_EXISTS'))
+      .mockRejectedValueOnce(codedError('VAULT_ENTRY_EXISTS'))
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all', dropEffect: 'none' }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await wrapper.find('[data-entry-path="README.md"]').trigger('dragstart', { dataTransfer })
+      await wrapper.find('[data-entry-path="projects"]').trigger('drop', { dataTransfer })
+      await flushPromises()
+      expect(wrapper.find('[data-testid="relocate-form"]').exists()).toBe(false)
+      expect(wrapper.find('[data-entry-path="README.md"]').exists()).toBe(true)
+    }
+
+    expect(api.relocateVaultEntry).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-testid="workspace-notice"]').text()).toContain('already exists')
   })
 
   it('8. creates a new note in a folder, updates the tree, selects the note, and opens it directly in the Live Editor ready for immediate typing', async () => {
@@ -487,6 +1325,7 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     const ctxBtn = wrapper.find('button[data-testid="entry-context-button"][data-entry-path="README.md"]')
     await ctxBtn.trigger('click')
     await wrapper.find('[data-testid="ctx-rename"]').trigger('click')
+    expect(wrapper.find('[data-testid="relocate-form"]').text()).toContain('Rename entry:')
 
     api.relocateVaultEntry.mockResolvedValueOnce({
       directory: 'personal',
@@ -758,6 +1597,123 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(wrapper.find('[data-testid="create-missing-link-button"]').exists()).toBe(false)
   })
 
+  it('ignores an older index response after a newer partial index has been applied', async () => {
+    const oldIndex = deferred()
+    const newIndex = deferred()
+    api.getVaultIndex.mockReturnValueOnce(oldIndex.promise).mockReturnValueOnce(newIndex.promise)
+    const wrapper = await mountBrowser()
+
+    api.getVaultEntries.mockResolvedValueOnce({ directory: 'personal', path: '', entries: rootEntries })
+    await wrapper.find('[data-testid="vault-name-trigger"]').trigger('click')
+    await wrapper.find('[data-testid="refresh-browser-button"]').trigger('click')
+    await flushPromises()
+    expect(api.getVaultIndex).toHaveBeenCalledTimes(2)
+
+    newIndex.resolve({
+      directory: 'personal', complete: false,
+      failures: [{ path: 'Unreadable.md', reason: 'INVALID_FILE_ENCODING' }],
+      folders: [], files: [], notes: [],
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="index-partial-warning"]').exists()).toBe(true)
+
+    oldIndex.resolve({ directory: 'personal', complete: true, folders: [], files: [], notes: [] })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="index-partial-warning"]').exists()).toBe(true)
+  })
+
+  it('keeps a created note in the local index when an older snapshot returns', async () => {
+    const oldIndex = deferred()
+    const refreshedIndex = deferred()
+    api.getVaultIndex.mockReturnValueOnce(oldIndex.promise).mockReturnValueOnce(refreshedIndex.promise)
+    const wrapper = await mountBrowser()
+
+    api.createVaultNote.mockResolvedValueOnce({
+      directory: 'personal', path: 'NewNote.md', revision: 'a'.repeat(64),
+    })
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal',
+      path: '',
+      entries: [...rootEntries, { name: 'NewNote.md', path: 'NewNote.md', type: 'file' }],
+    })
+    await wrapper.find('[data-testid="new-note-button"]').trigger('click')
+    await wrapper.find('[data-testid="new-entry-input"]').setValue('NewNote')
+    await wrapper.find('[data-testid="new-entry-submit"]').trigger('click')
+    await flushPromises()
+
+    wrapper.vm.layout.contextOpen = true
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-testid="panel-tab-search"]').trigger('click')
+    await wrapper.find('[data-testid="vault-search-input"]').setValue('NewNote')
+    expect(wrapper.find('[data-testid="search-result-item"]').exists()).toBe(true)
+
+    oldIndex.resolve({ directory: 'personal', complete: true, folders: [], files: [], notes: [] })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="search-result-item"]').exists()).toBe(true)
+  })
+
+  it('ignores an unauthorized index response from the previous vault', async () => {
+    const oldIndex = deferred()
+    const newIndex = deferred()
+    api.getVaultIndex.mockReturnValueOnce(oldIndex.promise).mockReturnValueOnce(newIndex.promise)
+    api.getVaultEntries.mockResolvedValue({ directory: 'research', path: '', entries: [] })
+    const wrapper = await mountBrowser()
+
+    await wrapper.setProps({ vault: { ...vault, id: 'vault-2', directory: 'research' } })
+    await flushPromises()
+    newIndex.resolve({ directory: 'research', complete: true, folders: [], files: [], notes: [] })
+    await flushPromises()
+    oldIndex.reject(codedError('UNAUTHORIZED'))
+    await flushPromises()
+
+    expect(wrapper.emitted('unauthorized')).toBeUndefined()
+  })
+
+  it('does not apply notes or partial status from an earlier vault after switching', async () => {
+    const oldIndex = deferred()
+    const newIndex = deferred()
+    api.getVaultIndex.mockReturnValueOnce(oldIndex.promise).mockReturnValueOnce(newIndex.promise)
+    api.getVaultEntries.mockResolvedValue({ directory: 'research', path: '', entries: [] })
+    const wrapper = await mountBrowser()
+
+    await wrapper.setProps({ vault: { ...vault, id: 'vault-2', directory: 'research' } })
+    await flushPromises()
+    newIndex.resolve({ directory: 'research', complete: true, folders: [], files: [], notes: [] })
+    await flushPromises()
+    oldIndex.resolve({
+      directory: 'personal',
+      complete: false,
+      failures: [{ path: 'Private.md', reason: 'INVALID_FILE_ENCODING' }],
+      folders: [],
+      files: ['Private.md'],
+      notes: [{ path: 'Private.md', name: 'Private.md', content: 'Old vault only.' }],
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="index-partial-warning"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="panel-tab-search"]').trigger('click')
+    await wrapper.find('[data-testid="vault-search-input"]').setValue('Private')
+    expect(wrapper.find('[data-testid="search-result-item"]').exists()).toBe(false)
+  })
+
+  it('ignores an index response that settles after the browser unmounts', async () => {
+    const request = deferred()
+    api.getVaultIndex.mockReturnValueOnce(request.promise)
+    api.getVaultEntries.mockResolvedValueOnce({ directory: 'personal', path: '', entries: rootEntries })
+    const unauthorized = vi.fn()
+    const wrapper = mount(VaultBrowser, {
+      props: { vault },
+      attrs: { onUnauthorized: unauthorized },
+    })
+    await flushPromises()
+
+    wrapper.unmount()
+    request.reject(codedError('UNAUTHORIZED'))
+    await flushPromises()
+
+    expect(unauthorized).not.toHaveBeenCalled()
+  })
+
   it('18. displays failedFiles in workspace notice when rename/move has partial link update failures', async () => {
     const wrapper = await mountBrowser()
     api.relocateVaultEntry.mockResolvedValueOnce({
@@ -823,17 +1779,16 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     wrapper.findComponent(MarkdownEditor).vm.setText('unsaved rename draft')
     await wrapper.vm.$nextTick()
 
-    // Simulate relocate failure
+    // Simulate a backend collision after explicit authorization.
+    await wrapper.vm.executeRelocate('README.md', 'Ocupado.md', { origin: 'manual' })
     api.relocateVaultEntry.mockRejectedValueOnce(codedError('VAULT_ENTRY_EXISTS'))
-
-    await expect(wrapper.vm.executeRelocate('README.md', 'Ocupado.md')).rejects.toMatchObject({
-      code: 'VAULT_ENTRY_EXISTS',
-    })
+    await wrapper.find('[data-testid="relocate-confirm"]').trigger('click')
     await flushPromises()
 
     // Relocate failed: editor must still have unsaved draft!
     expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('unsaved rename draft')
     expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="relocate-error"]').text()).toContain('already exists')
   })
 
   it('21. resizes explorer panel with mouse pointer drag and persists to localStorage', async () => {
@@ -1047,7 +2002,7 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     const menu = wrapper.find('[data-testid="vault-dropdown-menu"]')
     expect(menu.text()).toContain('Vault settings')
     expect(menu.text()).toContain('Trash')
-    expect(menu.text()).toContain('Daily note')
+    expect(menu.text()).not.toContain('Daily note')
     await wrapper.find('[data-testid="open-trash-button"]').trigger('click')
     expect(wrapper.find('[data-testid="trash-panel"] .trash-modal-title').text()).toBe('Trash')
 
@@ -1057,6 +2012,168 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(settings.text()).toContain('Show unsupported files')
     expect(settings.text()).toContain('Automatically update internal links on rename/move')
     expect(settings.text()).toContain('Default deletion behavior')
+    expect(settings.text()).not.toContain('daily notes')
+
+    await settings.find('.modal-close-btn').trigger('click')
+    await wrapper.find('[data-testid="command-palette-button"]').trigger('click')
+    const palette = wrapper.find('[data-testid="command-palette-modal"]')
+    expect(palette.find('h3').text()).toBe('Command palette')
+    await palette.find('[data-testid="command-palette-input"]').setValue('daily')
+    expect(palette.findAll('button.panel-list-item')).toHaveLength(0)
   })
 
+  it('26. context menu anchors to element when opened via ⋯ button and to pointer when right-clicked', async () => {
+    const wrapper = await mountBrowser()
+    const ctxBtn = wrapper.find('button[data-testid="entry-context-button"][data-entry-path="README.md"]')
+
+    await ctxBtn.trigger('click')
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(true)
+
+    // Close menu
+    await wrapper.vm.closeContextMenu()
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(false)
+
+    // Right click on file row
+    const fileRow = wrapper.find('button[data-file-path="README.md"]')
+    await fileRow.trigger('contextmenu', { clientX: 250, clientY: 180 })
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ctx-open-new-tab"]').exists()).toBe(true)
+  })
+
+  it('27. context menu closes on Escape key and outside click', async () => {
+    const wrapper = await mountBrowser()
+    await wrapper.vm.openEmptyAreaContextMenu({ clientX: 100, clientY: 100, preventDefault: () => {}, stopPropagation: () => {} })
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(true)
+
+    // Press Escape
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(false)
+
+    // Open again, then click outside
+    await wrapper.vm.openEmptyAreaContextMenu({ clientX: 100, clientY: 100, preventDefault: () => {}, stopPropagation: () => {} })
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(true)
+
+    document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(false)
+  })
+
+  it('28. right-click on empty area in explorer presents creation options at root', async () => {
+    const wrapper = await mountBrowser()
+    const explorer = wrapper.find('[data-testid="vault-explorer"]')
+
+    await explorer.trigger('contextmenu', { clientX: 80, clientY: 200 })
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ctx-new-note"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ctx-new-folder"]').exists()).toBe(true)
+  })
+
+  it('29. right-click on folder sets creation target inside that folder', async () => {
+    const wrapper = await mountBrowser()
+    const folderRow = wrapper.find('button[data-folder-path="projects"]')
+
+    await folderRow.trigger('contextmenu', { clientX: 120, clientY: 150 })
+    expect(wrapper.find('[data-testid="explorer-context-menu"]').exists()).toBe(true)
+
+    api.createVaultNote.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'projects/Inside.md',
+      revision: 'c'.repeat(64),
+    })
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'projects',
+      entries: [{ name: 'Inside.md', path: 'projects/Inside.md', type: 'file' }],
+    })
+
+    await wrapper.find('[data-testid="ctx-new-note"]').trigger('click')
+    expect(wrapper.find('[data-testid="new-entry-input"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="new-entry-input"]').setValue('Inside')
+    await wrapper.find('[data-testid="new-entry-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.createVaultNote).toHaveBeenCalledWith('personal', expect.objectContaining({
+      parentPath: 'projects',
+      name: 'Inside',
+    }))
+  })
+
+  it('30. inline creation does not call create API until confirmed and cancels cleanly', async () => {
+    const wrapper = await mountBrowser()
+    await wrapper.find('[data-testid="new-note-button"]').trigger('click')
+
+    const input = wrapper.find('[data-testid="new-entry-input"]')
+    expect(input.exists()).toBe(true)
+    await input.setValue('Draft Note')
+
+    // Cancel creation
+    await wrapper.find('[data-testid="new-entry-cancel"]').trigger('click')
+    expect(api.createVaultNote).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="new-entry-input"]').exists()).toBe(false)
+  })
+
+  it('31. successful copy produces toast without layout shift', async () => {
+    const writeTextSpy = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText: writeTextSpy },
+    })
+
+    const wrapper = await mountBrowser()
+    await wrapper.vm.copyRelativePath({ path: 'projects/Design.md', type: 'file' })
+    await wrapper.vm.$nextTick()
+
+    expect(writeTextSpy).toHaveBeenCalledWith('projects/Design.md')
+    expect(wrapper.find('[data-testid="workspace-toast"]').text()).toContain('Path copied')
+  })
+
+  it('32. clipboard failure shows error toast without stating success', async () => {
+    const writeTextSpy = vi.fn().mockRejectedValue(new Error('Permission denied'))
+    Object.assign(navigator, {
+      clipboard: { writeText: writeTextSpy },
+    })
+
+    const wrapper = await mountBrowser()
+    await wrapper.vm.copyRelativePath({ path: 'projects/Design.md', type: 'file' })
+    await wrapper.vm.$nextTick()
+
+    expect(writeTextSpy).toHaveBeenCalledWith('projects/Design.md')
+    const toast = wrapper.find('[data-testid="workspace-toast"]')
+    expect(toast.text()).toContain('Could not copy path')
+    expect(toast.text()).not.toContain('Path copied')
+  })
+
+  it('33. vault dropdown menu contains all primary vault actions', async () => {
+    const wrapper = await mountBrowser()
+    await wrapper.find('[data-testid="vault-name-trigger"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="vault-dropdown-menu"]').isVisible()).toBe(true)
+    expect(wrapper.find('[data-testid="back-to-vaults-button"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="vault-settings-button"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="open-trash-button"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="refresh-browser-button"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="daily-note-button"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="logout-button"]').exists()).toBe(true)
+  })
+
+  it('34. trash modal presents clean note titles and original paths', async () => {
+    api.getVaultTrash.mockResolvedValueOnce({
+      items: [
+        { id: 'item-1', name: 'Documento.md', originalPath: 'pasta/Documento.md', type: 'file' },
+      ],
+    })
+
+    const wrapper = await mountBrowser()
+    await wrapper.vm.openTrashModal()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="trash-panel"]').exists()).toBe(true)
+    const item = wrapper.find('[data-testid="trash-item"]')
+    expect(item.exists()).toBe(true)
+    expect(item.find('.trash-item-name').text()).toBe('Documento')
+    expect(item.find('.trash-item-path').text()).toContain('Deleted from /pasta/Documento.md')
+    expect(item.find('[data-testid="restore-trash-button"]').exists()).toBe(true)
+    expect(item.find('[data-testid="delete-trash-permanently-button"]').exists()).toBe(true)
+  })
 })

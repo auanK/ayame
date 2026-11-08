@@ -793,3 +793,198 @@ test('Obsidian-style Markdown workspace smoke flow (section 10)', async () => {
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('Obsidian vault functional parity smoke flow (section 25)', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-smoke-obsidian-parity-'))
+  const vaultsRoot = path.join(tempDir, 'vaults')
+  const personalDir = path.join(vaultsRoot, 'personal')
+  const dbPath = path.join(tempDir, 'ayame.sqlite')
+  fs.mkdirSync(personalDir, { recursive: true })
+
+  const canonicalRoot = prepareVaultsRoot(vaultsRoot, { createIfMissing: false })
+  let db = openDatabase(dbPath)
+  await createOwner(db, { username: 'auank', password: 'password123' })
+  const session = createSession(db)
+  let app = createApp({ db, vaultsRoot: canonicalRoot })
+  const cookie = `ayame_session=${session.rawToken}`
+  const baselineDatabase = databaseSnapshot(db)
+
+  try {
+    // 1. Create folder 'Conhecimento'
+    const folderRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/folders',
+      headers: { cookie },
+      payload: { parentPath: '', name: 'Conhecimento' },
+    })
+    assert.equal(folderRes.statusCode, 201)
+
+    // 2. Create note 'Conhecimento/Cosmologia.md' with initial frontmatter
+    const initialCosmo = '---\ntitle: Cosmologia\ntags: []\n---\n\n'
+    const cosmoCreate = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      headers: { cookie },
+      payload: {
+        parentPath: 'Conhecimento',
+        name: 'Cosmologia',
+        content: initialCosmo,
+      },
+    })
+    assert.equal(cosmoCreate.statusCode, 201)
+    assert.equal(cosmoCreate.json().revision, revisionOf(initialCosmo))
+
+    // 3. Save Properties (title, type, tags, aliases, custom property) + body with headings, block ID, inline tags, and pending link
+    const updatedCosmo = [
+      '---',
+      'title: Estudo do Cosmos',
+      'type: nota-permanente',
+      'tags:',
+      '  - filosofia',
+      '  - ciencia/cosmologia',
+      'aliases:',
+      '  - Universo',
+      'status: rascunho',
+      '---',
+      '# Origem',
+      '',
+      'Definição essencial ^bloco-1',
+      '',
+      'Veja [[Subpasta/Nota Pendente]] e #estudo/ativo.',
+      '',
+    ].join('\n')
+
+    const cosmoSave = await app.inject({
+      method: 'PUT',
+      url: '/vaults/personal/content?path=Conhecimento%2FCosmologia.md',
+      headers: { cookie },
+      payload: {
+        content: updatedCosmo,
+        expectedRevision: revisionOf(initialCosmo),
+      },
+    })
+    assert.equal(cosmoSave.statusCode, 200)
+
+    // 4. Create 'Indice.md' referencing Cosmologia via wikilink, section anchor + alias, Markdown link, and frontmatter link
+    const indiceContent = [
+      '---',
+      'title: Índice Geral',
+      'related:',
+      '  - "[[Cosmologia]]"',
+      '---',
+      '# Índice',
+      '',
+      'Links: [[Cosmologia]], [[Cosmologia#Origem|Origem do Cosmos]] e [Bloco](./Conhecimento/Cosmologia.md#^bloco-1).',
+      '',
+    ].join('\n')
+    const indiceCreate = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      headers: { cookie },
+      payload: {
+        parentPath: '',
+        name: 'Indice',
+        content: indiceContent,
+      },
+    })
+    assert.equal(indiceCreate.statusCode, 201)
+
+    // 5. Create note from pending link 'Subpasta/Nota Pendente' with createParents: true
+    const pendingCreate = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/notes',
+      headers: { cookie },
+      payload: {
+        parentPath: 'Subpasta',
+        name: 'Nota Pendente',
+        content: '---\ntitle: Nota Pendente\ntags: []\n---\n\nCriada por link pendente.\n',
+        createParents: true,
+      },
+    })
+    assert.equal(pendingCreate.statusCode, 201)
+    assert.equal(pendingCreate.json().path, 'Subpasta/Nota Pendente.md')
+
+    // 6. Rename 'Conhecimento/Cosmologia.md' -> 'Conhecimento/Cosmologia Moderna.md' and verify link updates
+    const renameRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/relocate',
+      headers: { cookie },
+      payload: {
+        sourcePath: 'Conhecimento/Cosmologia.md',
+        targetPath: 'Conhecimento/Cosmologia Moderna.md',
+        updateLinks: true,
+        expectedRevision: revisionOf(updatedCosmo),
+      },
+    })
+    assert.equal(renameRes.statusCode, 200)
+    assert.deepEqual(renameRes.json().updatedFiles, ['Indice.md'])
+
+    // 7. Move 'Conhecimento/Cosmologia Moderna.md' -> 'Arquivo/Cosmologia Moderna.md'
+    const moveRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/relocate',
+      headers: { cookie },
+      payload: {
+        sourcePath: 'Conhecimento/Cosmologia Moderna.md',
+        targetPath: 'Arquivo/Cosmologia Moderna.md',
+        updateLinks: true,
+        expectedRevision: revisionOf(updatedCosmo),
+      },
+    })
+    assert.equal(moveRes.statusCode, 200)
+    const indiceOnDisk = fs.readFileSync(path.join(personalDir, 'Indice.md'), 'utf8')
+    assert.equal(indiceOnDisk.includes('[[Cosmologia Moderna]]'), true)
+    assert.equal(indiceOnDisk.includes('[[Cosmologia Moderna#Origem|Origem do Cosmos]]'), true)
+    assert.equal(indiceOnDisk.includes('./Arquivo/Cosmologia%20Moderna.md#^bloco-1'), true)
+
+    // 8. Move 'Arquivo' folder to .trash, verify .trash is hidden from entries, and restore it
+    const trashRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/trash',
+      headers: { cookie },
+      payload: { path: 'Arquivo' },
+    })
+    assert.equal(trashRes.statusCode, 200)
+    const trashId = trashRes.json().id
+
+    const entriesRes = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/entries',
+      headers: { cookie },
+    })
+    assert.equal(entriesRes.json().entries.some((e) => e.name === '.trash'), false)
+
+    const restoreRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/trash/restore',
+      headers: { cookie },
+      payload: { id: trashId },
+    })
+    assert.equal(restoreRes.statusCode, 200)
+    assert.equal(fs.existsSync(path.join(personalDir, 'Arquivo', 'Cosmologia Moderna.md')), true)
+
+    // 9. Restart backend and verify full persistence and untouched SQLite vault table
+    await app.close()
+    closeDatabase(db)
+
+    db = openDatabase(dbPath)
+    app = createApp({ db, vaultsRoot: canonicalRoot })
+
+    const indexAfterRestart = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/index',
+      headers: { cookie },
+    })
+    assert.equal(indexAfterRestart.statusCode, 200)
+    assert.deepEqual(indexAfterRestart.json().files, [
+      'Arquivo/Cosmologia Moderna.md',
+      'Indice.md',
+      'Subpasta/Nota Pendente.md',
+    ])
+    assert.deepEqual(databaseSnapshot(db), baselineDatabase)
+  } finally {
+    await app.close()
+    closeDatabase(db)
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+})

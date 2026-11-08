@@ -654,6 +654,31 @@ describe('Properties & YAML Frontmatter (Obsidian parity)', () => {
     expect(wrapper.emitted('update:markdown')).toBeUndefined()
   })
 
+  it('copies and restores Number drafts without Markdown updates, recalculating confirmed-value conflicts', async () => {
+    const content = '---\nchapter: 42\n---\nBody'
+    const source = mount(PropertiesPanel, { props: { markdown: content } })
+    const input = source.find('[data-testid="property-number-input"]')
+    await input.setValue('-')
+    await input.trigger('blur')
+
+    const snapshot = source.vm.getPendingEditSnapshot()
+    snapshot.numberDrafts.chapter.text = 'mutated copy'
+    expect(source.find('[data-testid="property-number-input"]').element.value).toBe('-')
+
+    const destination = mount(PropertiesPanel, {
+      props: { markdown: content, confirmedMarkdown: '---\nchapter: 100\n---\nBody' },
+    })
+    const restored = source.vm.getPendingEditSnapshot()
+    expect(restored.numberDrafts.chapter.text).toBe('-')
+    expect(destination.vm.restorePendingEditSnapshot(restored)).toBe(true)
+    await destination.vm.$nextTick()
+
+    expect(destination.find('[data-testid="property-number-input"]').element.value).toBe('-')
+    expect(destination.find('[data-testid="property-number-error"]').text()).toContain('changed while you were editing')
+    expect(destination.emitted('update:markdown')).toBeUndefined()
+    expect(destination.emitted('pending-change').at(-1)).toEqual([true])
+  })
+
   it('keeps a draft visible but refuses to overwrite a concurrently changed Number', async () => {
     const wrapper = mount(PropertiesPanel, { props: { markdown: '---\nchapter: 42\n---\nBody' } })
     await wrapper.find('[data-testid="property-number-input"]').setValue('-15')
