@@ -118,3 +118,15 @@ export const renderMarkdown = (source) => {
   const purifier = getPurifier()
   return purifier.sanitize(rawHtml, SANITIZE_CONFIG)
 }
+
+export const initialMarkdownH1 = (source) => {
+  if (typeof source !== 'string' || !source) return null
+  const tokens = md.parse(source, {})
+  const index = tokens.findIndex((token) => token.level === 0 && token.type !== 'inline')
+  if (index < 0 || tokens[index].type !== 'heading_open' || tokens[index].tag !== 'h1') return null
+  const inline = tokens[index + 1]
+  if (inline?.type !== 'inline') return null
+  return (inline.children || []).map((token) =>
+    token.type === 'softbreak' || token.type === 'hardbreak' ? ' ' : token.content
+  ).join('').trim()
+}

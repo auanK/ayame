@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import MarkdownViewer, { AUTOSAVE_DELAY_MS } from './MarkdownViewer.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
+import PropertiesPanel from './PropertiesPanel.vue'
 import * as api from '../vaults/api.js'
 
 vi.mock('../vaults/api.js', () => ({
@@ -28,11 +29,13 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.resetAllMocks()
+    localStorage.clear()
   })
 
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+    localStorage.clear()
   })
 
   it('1. exports AUTOSAVE_DELAY_MS = 700 and opens notes directly in the Live Preview editor without Edit or Save buttons', async () => {
@@ -55,6 +58,51 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
     expect(wrapper.find('[data-testid="markdown-save-button"]').exists()).toBe(false)
     expect(wrapper.find('.cm-live-h1').exists()).toBe(true)
     expect(wrapper.find('.cm-live-bold').text()).toBe('live')
+  })
+
+  it('does not duplicate an initial H1 that matches the filename, including after a visual preference toggle', async () => {
+    const content = '---\ntitle: Ayame\n---\n\n# Ayame\n\nBody'
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ inlineTitle: false }))
+    api.getVaultMarkdown.mockResolvedValue({
+      directory: 'personal', path: 'Ayame.md', content, revision,
+    })
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Ayame.md' } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(false)
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toContain('# Ayame')
+    wrapper.vm.toggleInlineTitle()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(false)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    expect(wrapper.vm.getText()).toBe(content)
+  })
+
+  it('keeps inline titles when the first H1 differs or a matching-looking heading is code', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'Ayame.md', content: '# A different title', revision })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'Ayame.md', content: '```md\n# Ayame\n```', revision })
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Ayame.md' } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(true)
+
+    await wrapper.vm.reload()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(true)
+  })
+
+  it('keeps the inline title for notes without H1 and compares Unicode filenames canonically after navigation', async () => {
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({ directory: 'personal', path: 'Plain.md', content: 'Body only', revision })
+      .mockResolvedValueOnce({ directory: 'personal', path: 'Cafe\u0301.md', content: '# Café', revision })
+    const wrapper = mount(MarkdownViewer, { props: { directory: 'personal', path: 'Plain.md' } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(true)
+
+    await wrapper.setProps({ path: 'Cafe\u0301.md' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(false)
+    expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
   })
 
   it('2. does not trigger any save during inactivity when no changes have been made', async () => {
@@ -439,5 +487,190 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
     const wrapper3 = mount(MarkdownViewer, { props: { directory: 'personal', path: 'corrupt.md' } })
     await flushPromises()
     expect(wrapper3.find('[data-testid="markdown-error"]').text()).toContain('invalid UTF-8 encoding')
+  })
+
+  it('13. coordinates Properties edits and body edits into a single versioned document without overwriting each other', async () => {
+    const initialMd = [
+      '---',
+      'title: Cosmologia - A Memória do Mundo',
+      'type: Rascunho',
+      'tags:',
+      '  - cosmologia',
+      '---',
+      '# Introdução',
+      '',
+      'Texto inicial.',
+    ].join('\n')
+
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'Cosmologia.md',
+      content: initialMd,
+      revision,
+    })
+    api.saveVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'Cosmologia.md',
+      revision: 'b'.repeat(64),
+    })
+
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory: 'personal', path: 'Cosmologia.md' },
+    })
+    await flushPromises()
+
+    // Heading title shows physical filename stem ('Cosmologia'), independent of YAML title
+    const headingInput = wrapper.find('[data-testid="note-heading-title"]')
+    expect(headingInput.exists()).toBe(true)
+    expect(headingInput.element.value).toBe('Cosmologia')
+
+    // Show Properties (hidden by default)
+    wrapper.vm.setPropertiesMode('visible')
+    await flushPromises()
+
+    // 1. Add a tag in PropertiesPanel
+    const addTagInput = wrapper.find('[data-testid="add-tag-input"]')
+    await addTagInput.setValue('leis-universais')
+    await addTagInput.trigger('keydown.enter')
+
+    // 2. Simultaneously edit the Markdown body before the 700ms debounce timer fires
+    await editNote(wrapper, '# Introdução\n\nTexto atualizado simultaneamente.')
+
+    vi.advanceTimersByTime(AUTOSAVE_DELAY_MS)
+    await flushPromises()
+
+    expect(api.saveVaultMarkdown).toHaveBeenCalledTimes(1)
+    const savedPayload = api.saveVaultMarkdown.mock.calls[0][2]
+    expect(savedPayload.expectedRevision).toBe(revision)
+    expect(savedPayload.content).toContain('title: Cosmologia - A Memória do Mundo')
+    expect(savedPayload.content).toContain('- cosmologia')
+    expect(savedPayload.content).toContain('- leis-universais')
+    expect(savedPayload.content).toContain('# Introdução\n\nTexto atualizado simultaneamente.')
+  })
+
+  describe('Properties display modes and editor preferences', () => {
+    it('14. opens note with YAML properties hidden by default without reserving DOM space', async () => {
+      const revision = 'a'.repeat(64)
+      const yamlContent = '---\ntitle: Cosmologia\ntags:\n  - ciencia\n---\n# Início da nota\n'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'Cosmologia.md',
+        content: yamlContent,
+        revision,
+      })
+
+      const wrapper = mount(MarkdownViewer, {
+        props: { directory: 'personal', path: 'Cosmologia.md' },
+      })
+      await flushPromises()
+
+      // PropertiesPanel is NOT rendered by default
+      expect(wrapper.findComponent(PropertiesPanel).exists()).toBe(false)
+      expect(wrapper.find('[data-testid="properties-panel"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="add-tag-input"]').exists()).toBe(false)
+
+      // Content starts immediately with heading and editor
+      expect(wrapper.find('[data-testid="note-heading-title"]').exists()).toBe(true)
+      expect(wrapper.findComponent(MarkdownEditor).exists()).toBe(true)
+      expect(wrapper.findComponent(MarkdownEditor).props('modelValue')).toContain('# Início da nota')
+
+      // File text on disk is untouched
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+      expect(wrapper.vm.getText()).toBe(yamlContent)
+    })
+
+    it('15. toggles to visible to show properties and back to hidden without dirtying or saving', async () => {
+      const revision = 'b'.repeat(64)
+      const yamlContent = '---\ntitle: Filosofia\ntags:\n  - pensar\n---\n# Corpo\n'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'Filosofia.md',
+        content: yamlContent,
+        revision,
+      })
+
+      const wrapper = mount(MarkdownViewer, {
+        props: { directory: 'personal', path: 'Filosofia.md' },
+      })
+      await flushPromises()
+
+      expect(wrapper.findComponent(PropertiesPanel).exists()).toBe(false)
+
+      // Toggle to visible
+      wrapper.vm.setPropertiesMode('visible')
+      await flushPromises()
+
+      expect(wrapper.findComponent(PropertiesPanel).exists()).toBe(true)
+      expect(wrapper.find('[data-testid="property-tag-chip"]').text()).toContain('pensar')
+
+      // Toggle to source
+      wrapper.vm.setPropertiesMode('source')
+      await flushPromises()
+
+      expect(wrapper.findComponent(PropertiesPanel).exists()).toBe(false)
+      expect(wrapper.findComponent(MarkdownEditor).props('modelValue')).toContain('title: Filosofia')
+
+      // Toggle back to hidden
+      wrapper.vm.setPropertiesMode('hidden')
+      await flushPromises()
+
+      expect(wrapper.findComponent(PropertiesPanel).exists()).toBe(false)
+      expect(wrapper.findComponent(MarkdownEditor).props('modelValue')).not.toContain('title: Filosofia')
+
+      // No autosave triggered and draft matches original byte for byte
+      vi.advanceTimersByTime(AUTOSAVE_DELAY_MS)
+      await flushPromises()
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+      expect(wrapper.vm.getText()).toBe(yamlContent)
+    })
+
+    it('16. persists preferences and falls back to hidden when preference is corrupted', async () => {
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'invalid-mode' }))
+
+      const revision = 'c'.repeat(64)
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'Nota.md',
+        content: '---\ntitle: Nota\n---\n# Conteúdo\n',
+        revision,
+      })
+
+      const wrapper = mount(MarkdownViewer, {
+        props: { directory: 'personal', path: 'Nota.md' },
+      })
+      await flushPromises()
+
+      // Defaults to hidden on invalid mode
+      expect(wrapper.findComponent(PropertiesPanel).exists()).toBe(false)
+      expect(wrapper.vm.getPreferences().propertiesInDocument).toBe('hidden')
+    })
+
+    it('17. supports readableLineLength toggle persisting to localStorage', async () => {
+      const revision = 'd'.repeat(64)
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'Longo.md',
+        content: '# Teste de linha legível\n',
+        revision,
+      })
+
+      const wrapper = mount(MarkdownViewer, {
+        props: { directory: 'personal', path: 'Longo.md' },
+      })
+      await flushPromises()
+
+      const docContainer = wrapper.find('.viewer-document-container')
+      expect(docContainer.exists()).toBe(true)
+      expect(docContainer.classes()).toContain('viewer-document-container--readable')
+
+      // Toggle off
+      wrapper.vm.toggleReadableLineLength()
+      await flushPromises()
+
+      expect(docContainer.classes()).not.toContain('viewer-document-container--readable')
+
+      const stored = JSON.parse(localStorage.getItem('ayame:editor-preferences'))
+      expect(stored.readableLineLength).toBe(false)
+    })
   })
 })

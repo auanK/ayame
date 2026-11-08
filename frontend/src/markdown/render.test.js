@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderMarkdown } from './render.js'
+import { initialMarkdownH1, renderMarkdown } from './render.js'
 
 const toDOM = (html) => {
   const container = document.createElement('div')
@@ -8,6 +8,35 @@ const toDOM = (html) => {
 }
 
 describe('renderMarkdown', () => {
+  it('finds an initial H1 and returns its visible inline text', () => {
+    expect(initialMarkdownH1('\n\n# **Ayame** and [notes](https://example.com)')).toBe('Ayame and notes')
+    expect(initialMarkdownH1('A paragraph without a heading')).toBeNull()
+  })
+
+  it('does not treat an H1 after another top-level block as the initial title', () => {
+    const laterHeadings = [
+      'Introduction.\n\n# Ayame',
+      '## Section\n\n# Ayame',
+      '- Item\n\n# Ayame',
+      '> Quote\n\n# Ayame',
+      '> # Ayame',
+      '```md\n# Code\n```\n\n# Ayame',
+      '    # Code\n\n# Ayame',
+      '---\n\n# Ayame',
+      '<div>HTML block</div>\n\n# Ayame',
+    ]
+
+    for (const markdown of laterHeadings) {
+      expect(initialMarkdownH1(markdown), markdown).toBeNull()
+    }
+  })
+
+  it('returns null for empty input and keeps formatting out of the visible heading text', () => {
+    expect(initialMarkdownH1('')).toBeNull()
+    expect(initialMarkdownH1(null)).toBeNull()
+    expect(initialMarkdownH1('# **Cosmology** and [notes](https://example.com)')).toBe('Cosmology and notes')
+  })
+
   describe('Standard Markdown syntax support', () => {
     it('renders headings H1 through H6', () => {
       const src = '# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6'
