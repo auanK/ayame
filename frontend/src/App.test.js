@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import App from './App.vue'
+import MarkdownEditor from './markdown/MarkdownEditor.vue'
+import { AUTOSAVE_DELAY_MS } from './markdown/MarkdownViewer.vue'
 import * as api from './auth/api.js'
 import * as vaultApi from './vaults/api.js'
 
@@ -19,6 +21,8 @@ vi.mock('./vaults/api.js', () => ({
   getVaultEntries: vi.fn(),
   getVaultMarkdown: vi.fn(),
   saveVaultMarkdown: vi.fn(),
+  createVaultFolder: vi.fn(),
+  createVaultNote: vi.fn(),
   MAX_MARKDOWN_BYTES: 2 * 1024 * 1024,
 }))
 
@@ -398,14 +402,14 @@ describe('App authentication flow', () => {
       await flushPromises()
       await wrapper.find('[data-testid="open-file-button"]').trigger('click')
       await flushPromises()
-      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
-      await wrapper.find('[data-testid="markdown-editor"]').setValue('local draft')
+      wrapper.findComponent(MarkdownEditor).vm.setText('local draft')
+      await wrapper.vm.$nextTick()
 
       await wrapper.find('[data-testid="logout-button"]').trigger('click')
       expect(api.logout).not.toHaveBeenCalled()
       expect(wrapper.find('[data-testid="logout-keep-editing"]').exists()).toBe(true)
       await wrapper.find('[data-testid="logout-keep-editing"]').trigger('click')
-      expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('local draft')
+      expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('local draft')
 
       await wrapper.find('[data-testid="logout-button"]').trigger('click')
       await wrapper.find('[data-testid="logout-discard-changes"]').trigger('click')
@@ -416,30 +420,35 @@ describe('App authentication flow', () => {
     })
 
     it('clears a dirty draft immediately when an edit request reports an expired session', async () => {
-      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
-      vaultApi.getVaults.mockResolvedValue({ vaults: [{ id: null, name: 'personal', directory: 'personal-dir', registered: false }] })
-      vaultApi.getVaultEntries.mockResolvedValue({
-        directory: 'personal-dir', path: '', entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
-      })
-      vaultApi.getVaultMarkdown.mockResolvedValue({
-        directory: 'personal-dir', path: 'README.md', content: 'base', revision: 'a'.repeat(64),
-      })
-      vaultApi.saveVaultMarkdown.mockRejectedValueOnce(Object.assign(new Error('expired'), { code: 'UNAUTHORIZED' }))
+      vi.useFakeTimers()
+      try {
+        api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+        vaultApi.getVaults.mockResolvedValue({ vaults: [{ id: null, name: 'personal', directory: 'personal-dir', registered: false }] })
+        vaultApi.getVaultEntries.mockResolvedValue({
+          directory: 'personal-dir', path: '', entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+        })
+        vaultApi.getVaultMarkdown.mockResolvedValue({
+          directory: 'personal-dir', path: 'README.md', content: 'base', revision: 'a'.repeat(64),
+        })
+        vaultApi.saveVaultMarkdown.mockRejectedValueOnce(Object.assign(new Error('expired'), { code: 'UNAUTHORIZED' }))
 
-      const wrapper = mount(App)
-      await flushPromises()
-      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
-      await wrapper.find('[data-testid="markdown-editor"]').setValue('protected draft')
-      await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
-      await flushPromises()
+        const wrapper = mount(App)
+        await flushPromises()
+        await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+        await flushPromises()
+        await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+        await flushPromises()
+        wrapper.findComponent(MarkdownEditor).vm.setText('protected draft')
+        await wrapper.vm.$nextTick()
+        vi.advanceTimersByTime(AUTOSAVE_DELAY_MS)
+        await flushPromises()
 
-      expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(false)
-      expect(wrapper.text()).not.toContain('protected draft')
+        expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
+        expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(false)
+        expect(wrapper.text()).not.toContain('protected draft')
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 
@@ -680,39 +689,44 @@ describe('App authentication flow', () => {
     })
 
     it('blocks logout while the Markdown viewer is loading the server copy', async () => {
-      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
-      api.logout.mockResolvedValue({ ok: true })
-      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
-      vaultApi.getVaultEntries.mockResolvedValue({
-        directory: 'personal-dir', path: '',
-        entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
-      })
-      let resolveReload
-      vaultApi.getVaultMarkdown
-        .mockResolvedValueOnce({ directory: 'personal-dir', path: 'README.md', content: 'base', revision: 'a'.repeat(64) })
-        .mockReturnValueOnce(new Promise((resolve) => { resolveReload = resolve }))
-      vaultApi.saveVaultMarkdown.mockRejectedValueOnce(Object.assign(new Error('conflict'), { code: 'VAULT_FILE_CONFLICT' }))
+      vi.useFakeTimers()
+      try {
+        api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+        api.logout.mockResolvedValue({ ok: true })
+        vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+        vaultApi.getVaultEntries.mockResolvedValue({
+          directory: 'personal-dir', path: '',
+          entries: [{ name: 'README.md', path: 'README.md', type: 'file' }],
+        })
+        let resolveReload
+        vaultApi.getVaultMarkdown
+          .mockResolvedValueOnce({ directory: 'personal-dir', path: 'README.md', content: 'base', revision: 'a'.repeat(64) })
+          .mockReturnValueOnce(new Promise((resolve) => { resolveReload = resolve }))
+        vaultApi.saveVaultMarkdown.mockRejectedValueOnce(Object.assign(new Error('conflict'), { code: 'VAULT_FILE_CONFLICT' }))
 
-      const wrapper = mount(App)
-      await flushPromises()
-      await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
-      await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
-      await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="markdown-reload-server"]').trigger('click')
-      await wrapper.find('[data-testid="markdown-confirm-reload"]').trigger('click')
+        const wrapper = mount(App)
+        await flushPromises()
+        await wrapper.find('[data-testid="open-vault-button"]').trigger('click')
+        await flushPromises()
+        await wrapper.find('[data-testid="open-file-button"]').trigger('click')
+        await flushPromises()
+        wrapper.findComponent(MarkdownEditor).vm.setText('draft')
+        await wrapper.vm.$nextTick()
+        vi.advanceTimersByTime(AUTOSAVE_DELAY_MS)
+        await flushPromises()
+        await wrapper.find('[data-testid="markdown-reload-server"]').trigger('click')
+        await wrapper.find('[data-testid="markdown-confirm-reload"]').trigger('click')
 
-      expect(wrapper.find('[data-testid="logout-button"]').attributes('disabled')).toBeDefined()
-      await wrapper.find('[data-testid="logout-button"]').trigger('click')
-      expect(api.logout).not.toHaveBeenCalled()
-      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+        expect(wrapper.find('[data-testid="logout-button"]').attributes('disabled')).toBeDefined()
+        await wrapper.find('[data-testid="logout-button"]').trigger('click')
+        expect(api.logout).not.toHaveBeenCalled()
+        expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
 
-      resolveReload({ directory: 'personal-dir', path: 'README.md', content: 'remote', revision: 'b'.repeat(64) })
-      await flushPromises()
+        resolveReload({ directory: 'personal-dir', path: 'README.md', content: 'remote', revision: 'b'.repeat(64) })
+        await flushPromises()
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('401 from viewer returns to login screen', async () => {

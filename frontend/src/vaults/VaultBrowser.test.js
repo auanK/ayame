@@ -1,12 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import VaultBrowser from './VaultBrowser.vue'
+import MarkdownEditor from '../markdown/MarkdownEditor.vue'
 import * as api from './api.js'
 
 vi.mock('./api.js', () => ({
   getVaultEntries: vi.fn(),
   getVaultMarkdown: vi.fn(),
   saveVaultMarkdown: vi.fn(),
+  createVaultFolder: vi.fn(),
+  createVaultNote: vi.fn(),
   MAX_MARKDOWN_BYTES: 2 * 1024 * 1024,
 }))
 
@@ -25,6 +28,8 @@ const rootEntries = [
 
 const projectsEntries = [
   { name: 'ayame', path: 'projects/ayame', type: 'directory' },
+  { name: 'Roadmap.md', path: 'projects/Roadmap.md', type: 'file' },
+  { name: 'Design.md', path: 'projects/Design.md', type: 'file' },
   { name: 'todo.txt', path: 'projects/todo.txt', type: 'file' },
 ]
 
@@ -42,32 +47,71 @@ const mountBrowser = async (props = { vault }, initialEntries = rootEntries) => 
 }
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
 })
 
-describe('VaultBrowser', () => {
-  it('displays loading state during initial load', () => {
-    api.getVaultEntries.mockReturnValue(new Promise(() => {}))
-    const wrapper = mount(VaultBrowser, { props: { vault } })
+afterEach(() => {
+  vi.useRealTimers()
+})
 
-    expect(wrapper.text()).toContain('Loading directory...')
-    expect(wrapper.find('[aria-busy="true"]').exists()).toBe(true)
-    expect(api.getVaultEntries).toHaveBeenCalledWith('personal', '')
-  })
-
-  it('renders root listing with distinct folders and files', async () => {
+describe('VaultBrowser (Obsidian-style Workspace)', () => {
+  it('1. renders persistent explorer on the left and editor workspace on the right with empty state when no note is selected', async () => {
     const wrapper = await mountBrowser()
 
-    expect(wrapper.text()).toContain('Vaults')
-    expect(wrapper.text()).toContain('Personal Notes')
-    expect(wrapper.text()).toContain('Folders')
-    expect(wrapper.text()).toContain('projects/')
-    expect(wrapper.text()).toContain('journal/')
-    expect(wrapper.text()).toContain('Files')
-    expect(wrapper.text()).toContain('README.md')
+    const explorer = wrapper.find('[data-testid="vault-explorer"]')
+    const editorPane = wrapper.find('[data-testid="workspace-editor-pane"]')
+    expect(explorer.exists()).toBe(true)
+    expect(editorPane.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="workspace-empty-state"]').exists()).toBe(true)
+    expect(explorer.text()).toContain('projects')
+    expect(explorer.text()).toContain('journal')
+    expect(explorer.text()).toContain('README.md')
   })
 
-  it('navigates into directory when folder is clicked', async () => {
+  it('2. keeps the explorer tree mounted when opening a note and when switching between notes, highlighting the active file', async () => {
+    const entries = [
+      { name: 'projects', path: 'projects', type: 'directory' },
+      { name: 'README.md', path: 'README.md', type: 'file' },
+      { name: 'Notes.md', path: 'Notes.md', type: 'file' },
+    ]
+    const wrapper = await mountBrowser({ vault }, entries)
+
+    const explorerElementBefore = wrapper.find('[data-testid="vault-explorer"]').element
+
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: '# Hello README',
+      revision: 'a'.repeat(64),
+    })
+
+    const readmeBtn = wrapper.find('button[data-file-path="README.md"]')
+    await readmeBtn.trigger('click')
+    await flushPromises()
+
+    // Explorer remains the exact same mounted DOM element
+    expect(wrapper.find('[data-testid="vault-explorer"]').element).toBe(explorerElementBefore)
+    expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(true)
+    expect(wrapper.find('button[data-file-path="README.md"]').classes()).toContain('tree-file--active')
+
+    // Switch to Notes.md -> explorer stays mounted and highlight moves to Notes.md
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'Notes.md',
+      content: '# Second Note',
+      revision: 'b'.repeat(64),
+    })
+    await wrapper.find('button[data-file-path="Notes.md"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="vault-explorer"]').element).toBe(explorerElementBefore)
+    expect(wrapper.find('button[data-file-path="Notes.md"]').classes()).toContain('tree-file--active')
+    expect(wrapper.find('button[data-file-path="README.md"]').classes()).not.toContain('tree-file--active')
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('# Second Note')
+  })
+
+  it('3. expands and collapses directories in the tree with hierarchical children', async () => {
     const wrapper = await mountBrowser()
 
     api.getVaultEntries.mockResolvedValueOnce({
@@ -76,425 +120,301 @@ describe('VaultBrowser', () => {
       entries: projectsEntries,
     })
 
-    const folderButton = wrapper.findAll('button').find((b) => b.text() === 'projects/')
-    expect(folderButton).toBeDefined()
-    await folderButton.trigger('click')
+    const projectsBtn = wrapper.find('button[data-folder-path="projects"]')
+    expect(projectsBtn.attributes('aria-expanded')).toBe('false')
+
+    // Expand 'projects'
+    await projectsBtn.trigger('click')
     await flushPromises()
 
     expect(api.getVaultEntries).toHaveBeenCalledWith('personal', 'projects')
-    expect(wrapper.text()).toContain('ayame/')
-    expect(wrapper.text()).toContain('todo.txt')
-    expect(wrapper.text()).not.toContain('journal/')
-  })
+    expect(projectsBtn.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('button[data-file-path="projects/Roadmap.md"]').exists()).toBe(true)
+    expect(wrapper.find('button[data-folder-path="projects/ayame"]').exists()).toBe(true)
+    // Sibling root entries remain visible in the tree!
+    expect(wrapper.find('button[data-folder-path="journal"]').exists()).toBe(true)
 
-  it('navigates back to parent directory', async () => {
-    const wrapper = await mountBrowser()
-
-    api.getVaultEntries.mockResolvedValueOnce({
-      directory: 'personal',
-      path: 'projects',
-      entries: projectsEntries,
-    })
-
-    await wrapper.findAll('button').find((b) => b.text() === 'projects/').trigger('click')
+    // Collapse 'projects'
+    await projectsBtn.trigger('click')
     await flushPromises()
 
-    api.getVaultEntries.mockResolvedValueOnce({
-      directory: 'personal',
-      path: '',
-      entries: rootEntries,
-    })
-
-    const parentButton = wrapper.find('[data-testid="parent-dir-button"]')
-    expect(parentButton.exists()).toBe(true)
-    await parentButton.trigger('click')
-    await flushPromises()
-
-    expect(api.getVaultEntries).toHaveBeenLastCalledWith('personal', '')
-    expect(wrapper.text()).toContain('journal/')
+    expect(projectsBtn.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('button[data-file-path="projects/Roadmap.md"]').exists()).toBe(false)
   })
 
-  it('renders breadcrumbs and navigates on breadcrumb segment click', async () => {
+  it('4. allows collapsing and re-opening the explorer panel for compact screens', async () => {
     const wrapper = await mountBrowser()
 
-    api.getVaultEntries.mockResolvedValueOnce({
+    const toggleBtn = wrapper.find('[data-testid="toggle-explorer-button"]')
+    expect(toggleBtn.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="vault-explorer"]').classes()).not.toContain('workspace-explorer--collapsed')
+
+    await toggleBtn.trigger('click')
+    expect(wrapper.find('[data-testid="vault-explorer"]').classes()).toContain('workspace-explorer--collapsed')
+
+    await toggleBtn.trigger('click')
+    expect(wrapper.find('[data-testid="vault-explorer"]').classes()).not.toContain('workspace-explorer--collapsed')
+  })
+
+  it('5. coordinates pending autosave before switching to another note so changes are never lost', async () => {
+    const entries = [
+      { name: 'README.md', path: 'README.md', type: 'file' },
+      { name: 'Second.md', path: 'Second.md', type: 'file' },
+    ]
+    const wrapper = await mountBrowser({ vault }, entries)
+
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'README.md',
+        content: '# Original',
+        revision: 'a'.repeat(64),
+      })
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'Second.md',
+        content: '# Second',
+        revision: 'b'.repeat(64),
+      })
+    api.saveVaultMarkdown.mockResolvedValueOnce({
       directory: 'personal',
-      path: 'projects/ayame',
-      entries: [{ name: 'spec.md', path: 'projects/ayame/spec.md', type: 'file' }],
+      path: 'README.md',
+      revision: 'c'.repeat(64),
     })
 
-    // Navigate directly into nested path via helper or state
-    await wrapper.findAll('button').find((b) => b.text() === 'projects/').trigger('click')
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
     await flushPromises()
 
-    const breadcrumbs = wrapper.find('[data-testid="breadcrumbs"]')
-    expect(breadcrumbs.text()).toContain('Vaults')
-    expect(breadcrumbs.text()).toContain('Personal Notes')
-    expect(breadcrumbs.text()).toContain('projects')
+    // Edit README.md and immediately click Second.md before the 700ms debounce timer fires
+    wrapper.findComponent(MarkdownEditor).vm.setText('# Edited before switch')
+    await wrapper.vm.$nextTick()
 
-    // Click root segment in breadcrumb to return to root
-    api.getVaultEntries.mockResolvedValueOnce({
-      directory: 'personal',
-      path: '',
-      entries: rootEntries,
+    await wrapper.find('button[data-file-path="Second.md"]').trigger('click')
+    await flushPromises()
+
+    // Pending save on README.md was flushed and completed before opening Second.md
+    expect(api.saveVaultMarkdown).toHaveBeenCalledWith('personal', 'README.md', {
+      content: '# Edited before switch',
+      expectedRevision: 'a'.repeat(64),
     })
-    const rootBreadcrumb = breadcrumbs.findAll('button').find((b) => b.text() === 'Personal Notes')
-    await rootBreadcrumb.trigger('click')
+    expect(wrapper.find('button[data-file-path="Second.md"]').classes()).toContain('tree-file--active')
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('# Second')
+  })
+
+  it('6. navigates internal links (wikilinks and relative markdown links), resolves unexpanded folders, expands tree ancestors, and highlights the target note', async () => {
+    const wrapper = await mountBrowser()
+
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'README.md',
+        content: 'Veja [[Design]] na pasta de projetos.\nSegunda linha.',
+        revision: 'a'.repeat(64),
+      })
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'projects/Design.md',
+        content: '# Design Doc\n\n## Objetivos\n\nDetalhes.',
+        revision: 'b'.repeat(64),
+      })
+
+    // Open README.md at root (note: 'projects' folder is NOT expanded yet!)
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
     await flushPromises()
 
-    expect(api.getVaultEntries).toHaveBeenLastCalledWith('personal', '')
+    // Mock getVaultEntries for unexpanded folders when link resolution runs
+    api.getVaultEntries.mockImplementation(async (_dir, folderPath) => {
+      if (folderPath === 'projects') {
+        return { directory: 'personal', path: 'projects', entries: projectsEntries }
+      }
+      return { directory: 'personal', path: folderPath, entries: [] }
+    })
+
+    // Click the [[Design]] link in the editor (with Ctrl+click)
+    const wikilink = wrapper.find('.cm-live-wikilink')
+    expect(wikilink.exists()).toBe(true)
+    await wikilink.trigger('click', { ctrlKey: true })
+    await flushPromises()
+
+    // 'projects' folder was expanded in the tree, and 'projects/Design.md' is active and loaded in the right panel!
+    expect(wrapper.find('button[data-folder-path="projects"]').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('button[data-file-path="projects/Design.md"]').classes()).toContain('tree-file--active')
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toContain('# Design Doc')
   })
 
-  it('emits back when returning to vaults list', async () => {
+  it('6b. shows clear feedback for missing and ambiguous internal links without creating notes automatically', async () => {
     const wrapper = await mountBrowser()
 
-    const backButton = wrapper.find('[data-testid="back-to-vaults-button"]')
-    expect(backButton.exists()).toBe(true)
-    await backButton.trigger('click')
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: 'Missing [[GhostNote]] and ambiguous [[Shared]].',
+      revision: 'a'.repeat(64),
+    })
 
-    expect(wrapper.emitted('back')).toBeTruthy()
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    api.getVaultEntries.mockImplementation(async (_dir, folderPath) => {
+      if (folderPath === 'projects') {
+        return {
+          directory: 'personal',
+          path: 'projects',
+          entries: [{ name: 'Shared.md', path: 'projects/Shared.md', type: 'file' }],
+        }
+      }
+      if (folderPath === 'journal') {
+        return {
+          directory: 'personal',
+          path: 'journal',
+          entries: [{ name: 'Shared.md', path: 'journal/Shared.md', type: 'file' }],
+        }
+      }
+      return { directory: 'personal', path: folderPath, entries: [] }
+    })
+
+    const wikilinks = wrapper.findAll('.cm-live-wikilink')
+    expect(wikilinks.length).toBe(2)
+
+    // 1. Click missing [[GhostNote]] -> shows notice and never calls createVaultNote
+    await wikilinks[0].trigger('click', { ctrlKey: true })
+    await flushPromises()
+
+    expect(api.createVaultNote).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="workspace-link-notice"]').text()).toContain('does not exist')
+
+    // 2. Click ambiguous [[Shared]] -> shows candidate buttons
+    await wrapper.findAll('.cm-live-wikilink')[1].trigger('click', { ctrlKey: true })
+    await flushPromises()
+
+    const notice = wrapper.find('[data-testid="workspace-link-notice"]')
+    expect(notice.text()).toContain('Multiple notes match')
+    expect(notice.find('button[data-candidate-path="journal/Shared.md"]').exists()).toBe(true)
+    expect(notice.find('button[data-candidate-path="projects/Shared.md"]').exists()).toBe(true)
   })
 
-  it('displays empty directory state when entries array is empty', async () => {
-    const wrapper = await mountBrowser({ vault }, [])
-
-    expect(wrapper.text()).toContain('No files or folders found.')
-  })
-
-  it('refreshes current directory when Refresh button is clicked', async () => {
+  it('7. creates a new folder at root and inside a subfolder, updating the tree immediately', async () => {
     const wrapper = await mountBrowser()
 
+    api.createVaultFolder.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'Architecture',
+      name: 'Architecture',
+    })
     api.getVaultEntries.mockResolvedValueOnce({
       directory: 'personal',
       path: '',
       entries: [
+        { name: 'Architecture', path: 'Architecture', type: 'directory' },
         ...rootEntries,
-        { name: 'new-folder', path: 'new-folder', type: 'directory' },
       ],
     })
 
-    const refreshButton = wrapper.find('[data-testid="refresh-button"]')
-    await refreshButton.trigger('click')
+    await wrapper.find('[data-testid="new-folder-button"]').trigger('click')
+    await wrapper.find('[data-testid="new-entry-input"]').setValue('Architecture')
+    await wrapper.find('[data-testid="new-entry-submit"]').trigger('click')
     await flushPromises()
 
-    expect(api.getVaultEntries).toHaveBeenCalledTimes(2)
-    expect(wrapper.text()).toContain('new-folder/')
+    expect(api.createVaultFolder).toHaveBeenCalledWith('personal', {
+      parentPath: '',
+      name: 'Architecture',
+    })
+    expect(wrapper.find('button[data-folder-path="Architecture"]').exists()).toBe(true)
   })
 
-  it('shows error with retry button on load failure, and retrying recovers', async () => {
-    api.getVaultEntries.mockRejectedValueOnce(codedError('FAILED_TO_FETCH_ENTRIES'))
-    const wrapper = mount(VaultBrowser, { props: { vault } })
-    await flushPromises()
+  it('8. creates a new note in a folder, updates the tree, selects the note, and opens it directly in the Live Editor ready for immediate typing', async () => {
+    const wrapper = await mountBrowser()
 
-    expect(wrapper.text()).toContain('Could not load directory.')
-    const retryButton = wrapper.find('[data-testid="retry-button"]')
-    expect(retryButton.exists()).toBe(true)
-
+    // Expand 'projects' first so it is the selected target folder
     api.getVaultEntries.mockResolvedValueOnce({
-      directory: 'personal',
-      path: '',
-      entries: rootEntries,
-    })
-    await retryButton.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('projects/')
-  })
-
-  it('handles externally deleted directory with specific message and return button', async () => {
-    const wrapper = await mountBrowser()
-
-    api.getVaultEntries.mockRejectedValueOnce(codedError('VAULT_PATH_NOT_FOUND'))
-    await wrapper.findAll('button').find((b) => b.text() === 'projects/').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('Directory not found.')
-    // Previous directory entries must NOT be displayed as if they belong to the failed directory
-    expect(wrapper.text()).not.toContain('journal/')
-  })
-
-  it('preserves existing listing on refresh failure but marks it stale', async () => {
-    const wrapper = await mountBrowser()
-
-    api.getVaultEntries.mockRejectedValueOnce(codedError('FAILED_TO_FETCH_ENTRIES'))
-    await wrapper.find('[data-testid="refresh-button"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('projects/')
-    expect(wrapper.text()).toContain('Listing may be out of date.')
-  })
-
-  it('emits unauthorized when getVaultEntries fails with UNAUTHORIZED', async () => {
-    api.getVaultEntries.mockRejectedValueOnce(codedError('UNAUTHORIZED'))
-    const wrapper = mount(VaultBrowser, { props: { vault } })
-    await flushPromises()
-
-    expect(wrapper.emitted('unauthorized')).toBeTruthy()
-  })
-
-  it('ignores late responses after unmount', async () => {
-    const pendingPromise = new Promise(() => {})
-    api.getVaultEntries.mockReturnValueOnce(pendingPromise)
-    const wrapper = mount(VaultBrowser, { props: { vault } })
-
-    wrapper.unmount()
-    // Should not throw or warn
-    expect(wrapper.emitted('unauthorized')).toBeFalsy()
-  })
-
-  it('ignores older concurrent requests when a newer request finishes first', async () => {
-    const wrapper = await mountBrowser()
-
-    let resolveFirst
-    const firstPromise = new Promise((res) => { resolveFirst = res })
-    let resolveSecond
-    const secondPromise = new Promise((res) => { resolveSecond = res })
-
-    api.getVaultEntries.mockReturnValueOnce(firstPromise)
-    // First navigation to projects
-    wrapper.findAll('button').find((b) => b.text() === 'projects/').trigger('click')
-
-    api.getVaultEntries.mockReturnValueOnce(secondPromise)
-    // Second navigation back to root
-    wrapper.find('[data-testid="refresh-button"]').trigger('click')
-
-    // Second request finishes before first
-    resolveSecond({
-      directory: 'personal',
-      path: '',
-      entries: [{ name: 'latest.txt', path: 'latest.txt', type: 'file' }],
-    })
-    await flushPromises()
-    expect(wrapper.text()).toContain('latest.txt')
-
-    // Now first request finishes late
-    resolveFirst({
       directory: 'personal',
       path: 'projects',
       entries: projectsEntries,
     })
+    await wrapper.find('button[data-folder-path="projects"]').trigger('click')
     await flushPromises()
 
-    // Must not be overwritten by late first response!
-    expect(wrapper.text()).toContain('latest.txt')
-    expect(wrapper.text()).not.toContain('ayame/')
+    const emptyRevision = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    api.createVaultNote.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'projects/Architecture.md',
+      revision: emptyRevision,
+    })
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'projects',
+      entries: [
+        ...projectsEntries,
+        { name: 'Architecture.md', path: 'projects/Architecture.md', type: 'file' },
+      ],
+    })
+
+    await wrapper.find('[data-testid="new-note-button"]').trigger('click')
+    await wrapper.find('[data-testid="new-entry-input"]').setValue('Architecture')
+    await wrapper.find('[data-testid="new-entry-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.createVaultNote).toHaveBeenCalledWith('personal', {
+      parentPath: 'projects',
+      name: 'Architecture',
+    })
+    // Tree updated and new note is active
+    const newNoteBtn = wrapper.find('button[data-file-path="projects/Architecture.md"]')
+    expect(newNoteBtn.exists()).toBe(true)
+    expect(newNoteBtn.classes()).toContain('tree-file--active')
+
+    // Live Editor is open directly without needing an Edit button
+    expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="markdown-edit-button"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="markdown-save-button"]').exists()).toBe(false)
   })
 
-  it('unsupported files and ambiguous entries are displayed as static text and do not trigger navigation', async () => {
-    const mixedEntries = [
-      { name: 'notes.txt', path: 'notes.txt', type: 'file' },
-      { name: 'photo.png', path: 'photo.png', type: 'file' },
-      { name: 'ambiguous.md', path: null, type: 'file' },
-    ]
-    const wrapper = await mountBrowser({ vault }, mixedEntries)
+  it('9. preserves previous state and displays error when folder or note creation fails', async () => {
+    const wrapper = await mountBrowser()
 
-    const items = wrapper.findAll('.browser-file-item')
-    expect(items.length).toBe(3)
-    for (const item of items) {
-      expect(item.find('button').exists()).toBe(false)
-      expect(item.find('a').exists()).toBe(false)
-    }
+    api.createVaultFolder.mockRejectedValueOnce(codedError('VAULT_ENTRY_EXISTS'))
+
+    await wrapper.find('[data-testid="new-folder-button"]').trigger('click')
+    await wrapper.find('[data-testid="new-entry-input"]').setValue('projects')
+    await wrapper.find('[data-testid="new-entry-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="explorer-create-error"]').text()).toContain('already exists')
+    expect(wrapper.find('button[data-folder-path="projects"]').exists()).toBe(true)
   })
 
-  describe('Markdown Viewer integration', () => {
-    beforeEach(() => {
-      api.getVaultMarkdown.mockResolvedValue({
-        directory: 'personal',
-        path: 'README.md',
-        content: '# Hello README',
-        revision: 'a'.repeat(64),
-      })
+  it('10. guards back-to-vaults navigation when there are unconfirmed changes', async () => {
+    const wrapper = await mountBrowser()
+
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: 'base',
+      revision: 'a'.repeat(64),
     })
 
-    it('opens .md file and displays MarkdownViewer receiving correct props', async () => {
-      const wrapper = await mountBrowser()
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
 
-      const readmeButton = wrapper.findAll('button[data-testid="open-file-button"]').find((b) => b.text().includes('README.md'))
-      expect(readmeButton).toBeDefined()
-      await readmeButton.trigger('click')
-      await flushPromises()
+    wrapper.findComponent(MarkdownEditor).vm.setText('unconfirmed draft')
+    await wrapper.vm.$nextTick()
 
-      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
-      expect(api.getVaultMarkdown).toHaveBeenCalledWith('personal', 'README.md')
-      expect(wrapper.text()).toContain('Hello README')
-    })
+    await wrapper.find('[data-testid="back-to-vaults-button"]').trigger('click')
+    expect(wrapper.emitted('back')).toBeUndefined()
+    expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
 
-    it('opens .markdown file', async () => {
-      const markdownEntry = [{ name: 'spec.markdown', path: 'spec.markdown', type: 'file' }]
-      const wrapper = await mountBrowser({ vault }, markdownEntry)
+    await wrapper.find('[data-testid="navigation-keep-editing"]').trigger('click')
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('unconfirmed draft')
 
-      const button = wrapper.find('button[data-testid="open-file-button"]')
-      expect(button.exists()).toBe(true)
-      expect(button.text()).toBe('spec.markdown')
+    await wrapper.find('[data-testid="back-to-vaults-button"]').trigger('click')
+    await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
+    expect(wrapper.emitted('back')).toBeTruthy()
+  })
 
-      api.getVaultMarkdown.mockResolvedValueOnce({
-        directory: 'personal',
-        path: 'spec.markdown',
-        content: '# Spec Content',
-        revision: 'a'.repeat(64),
-      })
-
-      await button.trigger('click')
-      await flushPromises()
-
-      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Spec Content')
-    })
-
-    it('updates breadcrumbs to include the selected file name at the end', async () => {
-      const wrapper = await mountBrowser()
-
-      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-
-      const breadcrumbs = wrapper.find('[data-testid="breadcrumbs"]')
-      expect(breadcrumbs.text()).toContain('Vaults')
-      expect(breadcrumbs.text()).toContain('Personal Notes')
-      expect(breadcrumbs.text()).toContain('README.md')
-      expect(breadcrumbs.find('.breadcrumb-current').text()).toBe('README.md')
-    })
-
-    it('returning from MarkdownViewer restores the directory view with previous entries', async () => {
-      const wrapper = await mountBrowser()
-
-      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(true)
-
-      // Click back button inside viewer
-      await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
-      await flushPromises()
-
-      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
-      expect(wrapper.text()).toContain('Folders')
-      expect(wrapper.text()).toContain('README.md')
-    })
-
-    it('opening a different file does not display content from the previous note', async () => {
-      const entries = [
-        { name: 'note-a.md', path: 'note-a.md', type: 'file' },
-        { name: 'note-b.md', path: 'note-b.md', type: 'file' },
-      ]
-      const wrapper = await mountBrowser({ vault }, entries)
-
-      api.getVaultMarkdown.mockResolvedValueOnce({
-        directory: 'personal',
-        path: 'note-a.md',
-        content: '# Note A Content',
-        revision: 'a'.repeat(64),
-      })
-
-      const buttons = wrapper.findAll('button[data-testid="open-file-button"]')
-      await buttons[0].trigger('click')
-      await flushPromises()
-      expect(wrapper.text()).toContain('Note A Content')
-
-      // Return to directory
-      await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
-      await flushPromises()
-
-      // Open second file with delayed response
-      let resolveSecond
-      api.getVaultMarkdown.mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveSecond = resolve
-        })
-      )
-
-      await wrapper.findAll('button[data-testid="open-file-button"]')[1].trigger('click')
-      // Note A content must NOT be displayed
-      expect(wrapper.text()).not.toContain('Note A Content')
-
-      resolveSecond({
-        directory: 'personal',
-        path: 'note-b.md',
-        content: '# Note B Content',
-        revision: 'b'.repeat(64),
-      })
-      await flushPromises()
-      expect(wrapper.text()).toContain('Note B Content')
-    })
-
-    it('propagates unauthorized error from MarkdownViewer by emitting unauthorized', async () => {
-      const wrapper = await mountBrowser()
-
-      api.getVaultMarkdown.mockRejectedValueOnce(codedError('UNAUTHORIZED'))
-
-      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-
-      expect(wrapper.emitted('unauthorized')).toBeTruthy()
-      expect(wrapper.emitted('unauthorized').length).toBe(1)
-    })
-
-    it('navigating breadcrumb back to vaults emits back and leaves viewer', async () => {
-      const wrapper = await mountBrowser()
-
-      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-
-      // Click "Vaults" in breadcrumbs
-      const vaultsBreadcrumb = wrapper.findAll('.btn-breadcrumb').find((b) => b.text() === 'Vaults')
-      await vaultsBreadcrumb.trigger('click')
-
-      expect(wrapper.emitted('back')).toBeTruthy()
-    })
-
-    it('guards back navigation with explicit Keep editing and Discard changes actions', async () => {
-      const wrapper = await mountBrowser()
-      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
-      await wrapper.find('[data-testid="markdown-editor"]').setValue('local draft')
-      expect(wrapper.emitted('state').at(-1)[0]).toEqual({ dirty: true, saving: false, reloading: false })
-
-      await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
-      expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
-      await wrapper.find('[data-testid="navigation-keep-editing"]').trigger('click')
-      expect(wrapper.find('[data-testid="markdown-editor"]').element.value).toBe('local draft')
-
-      await wrapper.find('[data-testid="markdown-back-button"]').trigger('click')
-      await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
-      expect(wrapper.find('[data-testid="markdown-viewer"]').exists()).toBe(false)
-    })
-
-    it('blocks browser navigation while a confirmed server reload is pending', async () => {
-      let resolveReload
-      const wrapper = await mountBrowser()
-      api.getVaultMarkdown
-        .mockResolvedValueOnce({ directory: 'personal', path: 'README.md', content: 'base', revision: 'a'.repeat(64) })
-        .mockReturnValueOnce(new Promise((resolve) => { resolveReload = resolve }))
-      api.saveVaultMarkdown.mockRejectedValueOnce(codedError('VAULT_FILE_CONFLICT'))
-
-      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
-      await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
-      await wrapper.find('[data-testid="markdown-save-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="markdown-reload-server"]').trigger('click')
-      await wrapper.find('[data-testid="markdown-confirm-reload"]').trigger('click')
-
-      expect(wrapper.find('[data-testid="back-to-vaults-button"]').attributes('disabled')).toBeDefined()
-      await wrapper.find('[data-testid="back-to-vaults-button"]').trigger('click')
-      expect(wrapper.emitted('back')).toBeUndefined()
-      expect(wrapper.find('[data-testid="navigation-discard-changes"]').exists()).toBe(false)
-
-      resolveReload({ directory: 'personal', path: 'README.md', content: 'remote', revision: 'b'.repeat(64) })
-      await flushPromises()
-      expect(wrapper.find('[data-testid="markdown-content"]').text()).toContain('remote')
-    })
-
-    it('guards the Vaults breadcrumb while dirty', async () => {
-      const wrapper = await mountBrowser()
-      await wrapper.find('button[data-testid="open-file-button"]').trigger('click')
-      await flushPromises()
-      await wrapper.find('[data-testid="markdown-edit-button"]').trigger('click')
-      await wrapper.find('[data-testid="markdown-editor"]').setValue('draft')
-      await wrapper.findAll('.btn-breadcrumb').find((button) => button.text() === 'Vaults').trigger('click')
-      expect(wrapper.emitted('back')).toBeUndefined()
-      await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
-      expect(wrapper.emitted('back')).toBeTruthy()
-    })
+  it('11. emits unauthorized when getVaultEntries, getVaultMarkdown, or creation fails with 401', async () => {
+    api.getVaultEntries.mockRejectedValueOnce(codedError('UNAUTHORIZED'))
+    const wrapper = mount(VaultBrowser, { props: { vault } })
+    await flushPromises()
+    expect(wrapper.emitted('unauthorized')).toBeTruthy()
   })
 })

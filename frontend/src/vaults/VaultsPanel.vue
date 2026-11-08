@@ -8,11 +8,11 @@
     <header class="vaults-panel-header">
       <div>
         <h2 id="vaults-heading">Vaults</h2>
-        <p class="status-message">Your spaces, discovered from the filesystem.</p>
+        <p class="status-message">Your vaults</p>
       </div>
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn btn-secondary btn-compact"
         data-testid="refresh-vaults-button"
         :disabled="Boolean(operation)"
         @click="refreshVaults"
@@ -89,6 +89,7 @@
         <template v-else>
           <div class="vault-details">
             <div class="vault-title-line">
+              <span class="vault-icon" aria-hidden="true">◇</span>
               <h3>{{ vault.name }}</h3>
               <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
             </div>

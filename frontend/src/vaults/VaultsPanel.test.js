@@ -48,6 +48,7 @@ describe('VaultsPanel', () => {
   it('loads on mount and exposes an accessible loading state', () => {
     api.getVaults.mockReturnValue(new Promise(() => {}))
     const wrapper = mount(VaultsPanel)
+    expect(wrapper.text()).toContain('Your vaults')
     expect(wrapper.text()).toContain('Loading vaults...')
     expect(wrapper.find('[aria-busy="true"]').exists()).toBe(true)
     expect(api.getVaults).toHaveBeenCalledTimes(1)

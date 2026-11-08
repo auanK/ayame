@@ -1,6 +1,12 @@
 <template>
-  <main class="ayame-app" :class="{ 'ayame-app--workspace': view === 'authenticated' }">
-    <header class="ayame-header">
+  <main
+    class="ayame-app"
+    :class="{
+      'ayame-app--fullscreen': view === 'authenticated' && activeVault,
+      'ayame-app--workspace': view === 'authenticated' && !activeVault,
+    }"
+  >
+    <header v-if="!activeVault" class="ayame-header">
       <h1 class="ayame-wordmark">ayame</h1>
       <button
         v-if="view === 'authenticated'"
@@ -14,8 +20,10 @@
       </button>
     </header>
 
-    <p class="ayame-tagline">A place to think.</p>
-    <div class="ayame-divider" aria-hidden="true"></div>
+    <template v-if="!activeVault">
+      <p class="ayame-tagline">A place to think.</p>
+      <div class="ayame-divider" aria-hidden="true"></div>
+    </template>
 
     <div
       v-if="view === 'loading'"
@@ -67,9 +75,13 @@
       <VaultBrowser
         v-if="activeVault"
         :vault="activeVault"
+        :pending="pending"
+        :editor-saving="editorSaving"
+        :editor-reloading="editorReloading"
         @back="handleCloseVault"
         @unauthorized="handleVaultUnauthorized"
         @state="handleEditorState"
+        @logout="requestLogout"
       />
       <VaultsPanel
         v-else

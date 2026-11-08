@@ -1,17 +1,24 @@
+<script>
+export const AUTOSAVE_DELAY_MS = 700
+</script>
+
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { getVaultMarkdown, saveVaultMarkdown, MAX_MARKDOWN_BYTES } from '../vaults/api.js'
-import { renderMarkdown } from './render.js'
+import { findHeadingOffset } from './links.js'
 import MarkdownEditor from './MarkdownEditor.vue'
 
 const props = defineProps({
   directory: { type: String, required: true },
   path: { type: String, required: true },
+  knownFiles: { type: Array, default: () => [] },
+  anchor: { type: String, default: null },
+  initialDocument: { type: Object, default: null },
 })
 
-const emit = defineEmits(['back', 'unauthorized', 'state'])
+const emit = defineEmits(['back', 'unauthorized', 'state', 'open-link'])
 
-const mode = ref('view')
+const editorRef = ref(null)
 const loading = ref(true)
 const refreshing = ref(false)
 const saving = ref(false)
@@ -21,27 +28,65 @@ const errorCode = ref(null)
 const baseContent = ref('')
 const draft = ref('')
 const revision = ref(null)
+const documentVersion = ref(0)
+const saveState = ref('saved')
 const hasConfirmedContent = ref(false)
 const stale = ref(false)
 const saveError = ref('')
 const conflict = ref(false)
 const saveResultUnknown = ref(false)
-const discardConfirm = ref(false)
 const reloadConfirm = ref(false)
 const copyMessage = ref('')
 const saveNotice = ref('')
+const activeAnchor = ref(null)
+const shouldAutoFocus = ref(false)
 
 const dirty = computed(() => draft.value !== baseContent.value)
+const hasUnconfirmedChanges = computed(() =>
+  dirty.value ||
+  saving.value ||
+  conflict.value ||
+  saveResultUnknown.value ||
+  saveState.value === 'error'
+)
 const revisionReady = computed(() => typeof revision.value === 'string' && /^[a-f0-9]{64}$/.test(revision.value))
 const filename = computed(() => props.path.split('/').at(-1) || props.path)
-const renderedHtml = computed(() => renderMarkdown(baseContent.value))
 const editorText = computed(() => normalizeLineEndings(draft.value))
+
+const statusLabel = computed(() => {
+  if (reloading.value) return 'Loading server copy…'
+  if (saveState.value === 'saving' || saving.value) return 'Saving…'
+  if (saveState.value === 'conflict' || conflict.value) return 'Conflict'
+  if (saveState.value === 'unknown' || saveResultUnknown.value) return 'Save uncertain'
+  if (saveState.value === 'error') return 'Save failed'
+  if (saveState.value === 'dirty' || dirty.value) return 'Unsaved changes'
+  return 'Saved'
+})
 
 let activeRequestId = 0
 let recoveryRequestId = 0
 let authGeneration = 0
 let isMounted = true
 let unloadHandler = null
+let autosaveTimer = null
+let activeSavePromise = null
+
+function clearAutosaveTimer() {
+  if (autosaveTimer !== null) {
+    clearTimeout(autosaveTimer)
+    autosaveTimer = null
+  }
+}
+
+function scheduleAutosave() {
+  clearAutosaveTimer()
+  if (conflict.value || saveResultUnknown.value || reloading.value || loading.value) return
+  if (!dirty.value) return
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null
+    save()
+  }, AUTOSAVE_DELAY_MS)
+}
 
 function normalizeLineEndings(text) {
   return text.replace(/\r\n|\r/g, '\n')
@@ -61,6 +106,8 @@ function defaultLineEnding(tokens) {
 function updateDraft(nextValue) {
   const previous = normalizeLineEndings(draft.value)
   const next = normalizeLineEndings(nextValue)
+  if (next === previous) return
+
   let prefix = 0
   while (prefix < previous.length && prefix < next.length && previous[prefix] === next[prefix]) prefix++
   let suffix = 0
@@ -83,33 +130,135 @@ function updateDraft(nextValue) {
   ]
   let tokenIndex = 0
   draft.value = next.replace(/\n/g, () => tokens[tokenIndex++] ?? lineEnding)
+  documentVersion.value++
   saveNotice.value = ''
   copyMessage.value = ''
+
+  if (conflict.value) {
+    saveState.value = 'conflict'
+    clearAutosaveTimer()
+    publishState()
+    return
+  }
+  if (saveResultUnknown.value) {
+    saveState.value = 'unknown'
+    clearAutosaveTimer()
+    publishState()
+    return
+  }
+
+  if (draft.value === baseContent.value) {
+    clearAutosaveTimer()
+    if (!saving.value) {
+      saveState.value = 'saved'
+      saveError.value = ''
+    }
+    publishState()
+    return
+  }
+
+  saveError.value = ''
+  if (saving.value) {
+    // New edits occurred during an in-flight PUT; follow-up save will be scheduled when it finishes
+    publishState()
+    return
+  }
+  saveState.value = 'dirty'
+  publishState()
+  scheduleAutosave()
 }
 
-const publishState = () => emit('state', { dirty: dirty.value, saving: saving.value, reloading: reloading.value })
+const handleBeforeUnload = (event) => {
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+function syncUnloadListener() {
+  if (typeof window === 'undefined') return
+  const unconfirmed = hasUnconfirmedChanges.value
+  if (unconfirmed && !unloadHandler) {
+    unloadHandler = handleBeforeUnload
+    window.addEventListener('beforeunload', unloadHandler)
+  } else if (!unconfirmed && unloadHandler) {
+    window.removeEventListener('beforeunload', unloadHandler)
+    unloadHandler = null
+  }
+}
+
+const publishState = () => {
+  syncUnloadListener()
+  emit('state', {
+    dirty: hasUnconfirmedChanges.value,
+    saving: saving.value,
+    reloading: reloading.value,
+    saveState: saveState.value,
+  })
+}
 
 const clearProtectedContent = () => {
+  clearAutosaveTimer()
   authGeneration++
   recoveryRequestId++
   reloading.value = false
-  mode.value = 'view'
+  saving.value = false
   baseContent.value = ''
   draft.value = ''
   revision.value = null
+  documentVersion.value = 0
+  saveState.value = 'saved'
   hasConfirmedContent.value = false
   conflict.value = false
   saveResultUnknown.value = false
-  discardConfirm.value = false
   reloadConfirm.value = false
   publishState()
 }
 
+const applyAnchor = async (anchorName) => {
+  if (!anchorName) return
+  activeAnchor.value = anchorName
+  await nextTick()
+  const hit = findHeadingOffset(normalizeLineEndings(draft.value), anchorName)
+  if (hit && editorRef.value) {
+    editorRef.value.scrollToOffset(hit.from)
+  }
+}
+
 const load = async (isRefresh = false) => {
-  if (isRefresh && (mode.value === 'edit' || dirty.value || saving.value)) return
+  if (isRefresh && (dirty.value || saving.value || conflict.value || saveResultUnknown.value)) return
+  clearAutosaveTimer()
   const reqId = ++activeRequestId
   recoveryRequestId++
   reloading.value = false
+  saving.value = false
+
+  if (
+    !isRefresh &&
+    props.initialDocument &&
+    props.initialDocument.path === props.path &&
+    typeof props.initialDocument.revision === 'string'
+  ) {
+    loading.value = false
+    error.value = null
+    errorCode.value = null
+    const initialContent = props.initialDocument.content ?? ''
+    baseContent.value = initialContent
+    draft.value = initialContent
+    revision.value = props.initialDocument.revision
+    documentVersion.value = 0
+    saveState.value = 'saved'
+    hasConfirmedContent.value = true
+    stale.value = false
+    saveError.value = ''
+    conflict.value = false
+    saveResultUnknown.value = false
+    shouldAutoFocus.value = true
+    publishState()
+    await nextTick()
+    editorRef.value?.focus()
+    return
+  }
+
+  shouldAutoFocus.value = false
 
   if (!isRefresh) {
     loading.value = true
@@ -118,9 +267,10 @@ const load = async (isRefresh = false) => {
     baseContent.value = ''
     draft.value = ''
     revision.value = null
+    documentVersion.value = 0
+    saveState.value = 'saved'
     hasConfirmedContent.value = false
     stale.value = false
-    mode.value = 'view'
     saveError.value = ''
     conflict.value = false
     saveResultUnknown.value = false
@@ -133,13 +283,18 @@ const load = async (isRefresh = false) => {
     if (!isMounted || reqId !== activeRequestId) return
     baseContent.value = result.content
     draft.value = result.content
-    revision.value = result.revision
+    revision.value = result.revision || null
+    documentVersion.value = 0
+    saveState.value = 'saved'
     hasConfirmedContent.value = true
     error.value = null
     errorCode.value = null
     stale.value = false
     saveError.value = ''
     saveNotice.value = ''
+    if (props.anchor) {
+      await applyAnchor(props.anchor)
+    }
   } catch (err) {
     if (!isMounted || reqId !== activeRequestId) return
     if (err.code === 'UNAUTHORIZED') {
@@ -168,89 +323,143 @@ const load = async (isRefresh = false) => {
     if (isMounted && reqId === activeRequestId) {
       loading.value = false
       refreshing.value = false
+      publishState()
     }
   }
 }
 
-const cancelEdit = () => {
-  if (dirty.value) {
-    discardConfirm.value = true
-    return
-  }
-  mode.value = 'view'
-}
-
-const discardDraft = () => {
-  recoveryRequestId++
-  reloading.value = false
-  draft.value = baseContent.value
-  mode.value = 'view'
-  discardConfirm.value = false
-  reloadConfirm.value = false
-  conflict.value = false
-  saveResultUnknown.value = false
-  saveError.value = ''
-}
-
 const save = async () => {
+  clearAutosaveTimer()
   if (saving.value || reloading.value || !dirty.value || conflict.value || saveResultUnknown.value) return
   if (!hasConfirmedContent.value || !revisionReady.value) {
+    saveState.value = 'error'
     saveError.value = 'Reload this note to confirm its current revision before saving.'
+    publishState()
     return
   }
   const bytes = new TextEncoder().encode(draft.value)
   if (bytes.byteLength > MAX_MARKDOWN_BYTES) {
+    saveState.value = 'error'
     saveError.value = 'This note exceeds the 2 MiB limit.'
+    publishState()
     return
   }
   if (new TextDecoder('utf-8', { fatal: true }).decode(bytes) !== draft.value) {
+    saveState.value = 'error'
     saveError.value = 'The draft contains invalid Unicode and cannot be saved.'
+    publishState()
     return
   }
 
   const reqId = activeRequestId
+  const snapshotContent = draft.value
+  const snapshotRevision = revision.value
+  const snapshotVersion = documentVersion.value
+
   saving.value = true
+  saveState.value = 'saving'
   saveError.value = ''
   saveNotice.value = ''
   publishState()
-  try {
-    const result = await saveVaultMarkdown(props.directory, props.path, {
-      content: draft.value,
-      expectedRevision: revision.value,
-    })
-    if (!isMounted || reqId !== activeRequestId) return
-    baseContent.value = draft.value
-    revision.value = result.revision
-    mode.value = 'view'
-    conflict.value = false
-    saveResultUnknown.value = false
-    saveNotice.value = 'Saved.'
-  } catch (err) {
-    if (!isMounted || reqId !== activeRequestId) return
-    if (err.code === 'UNAUTHORIZED') {
-      clearProtectedContent()
-      emit('unauthorized')
-    } else if (err.code === 'VAULT_FILE_CONFLICT') {
-      conflict.value = true
-      saveError.value = 'This note changed on the server. Your draft is preserved.'
-    } else if (err.code === 'VAULT_SAVE_RESULT_UNKNOWN') {
-      saveResultUnknown.value = true
-      saveError.value = 'The save result is uncertain. Verify the server copy before continuing.'
-    } else if (err.code === 'VAULT_FILE_LOCKED') {
-      saveError.value = 'Another Ayame save is using this note. Your draft is preserved.'
-    } else if (err.code === 'VAULT_FILE_TOO_LARGE') {
-      saveError.value = 'This note exceeds the 2 MiB limit.'
-    } else if (err.code === 'INVALID_MARKDOWN_CONTENT') {
-      saveError.value = 'The draft contains invalid Unicode and cannot be saved.'
-    } else {
-      saveError.value = 'Could not save this note. Your draft is preserved.'
-    }
-  } finally {
-    if (isMounted && reqId === activeRequestId) {
-      saving.value = false
-      publishState()
+
+  const runSave = async () => {
+    try {
+      const result = await saveVaultMarkdown(props.directory, props.path, {
+        content: snapshotContent,
+        expectedRevision: snapshotRevision,
+      })
+      if (!isMounted || reqId !== activeRequestId) return
+
+      baseContent.value = snapshotContent
+      revision.value = result.revision
+      conflict.value = false
+      saveResultUnknown.value = false
+
+      if (documentVersion.value === snapshotVersion || draft.value === baseContent.value) {
+        saveState.value = 'saved'
+        saveNotice.value = ''
+      } else {
+        saveState.value = 'dirty'
+      }
+    } catch (err) {
+      if (!isMounted || reqId !== activeRequestId) return
+      if (err.code === 'UNAUTHORIZED') {
+        clearProtectedContent()
+        emit('unauthorized')
+      } else if (err.code === 'VAULT_FILE_CONFLICT') {
+        conflict.value = true
+        saveState.value = 'conflict'
+        saveError.value = 'This note changed on the server. Your draft is preserved.'
+      } else if (err.code === 'VAULT_SAVE_RESULT_UNKNOWN') {
+        saveResultUnknown.value = true
+        saveState.value = 'unknown'
+        saveError.value = 'The save result is uncertain. Verify the server copy before continuing.'
+      } else if (err.code === 'VAULT_FILE_LOCKED') {
+        saveState.value = 'error'
+        saveError.value = 'Another Ayame save is using this note. Your draft is preserved.'
+      } else if (err.code === 'VAULT_FILE_TOO_LARGE') {
+        saveState.value = 'error'
+        saveError.value = 'This note exceeds the 2 MiB limit.'
+      } else if (err.code === 'INVALID_MARKDOWN_CONTENT') {
+        saveState.value = 'error'
+        saveError.value = 'The draft contains invalid Unicode and cannot be saved.'
+      } else {
+        saveState.value = 'error'
+        saveError.value = 'Could not save this note. Your draft is preserved.'
+      }
+    } finally {
+      if (isMounted && reqId === activeRequestId) {
+        saving.value = false
+        publishState()
+        if (
+          dirty.value &&
+          !conflict.value &&
+          !saveResultUnknown.value &&
+          saveState.value === 'dirty'
+        ) {
+          scheduleAutosave()
+        }
+      }
     }
   }
+
+  activeSavePromise = runSave()
+  await activeSavePromise
+  activeSavePromise = null
+}
+
+const flushPendingSave = async () => {
+  clearAutosaveTimer()
+  if (saving.value && activeSavePromise) {
+    await activeSavePromise
+  }
+  if (
+    dirty.value &&
+    !saving.value &&
+    !reloading.value &&
+    !conflict.value &&
+    !saveResultUnknown.value &&
+    saveState.value !== 'error'
+  ) {
+    await save()
+  }
+  return {
+    ok: !hasUnconfirmedChanges.value,
+    saveState: saveState.value,
+  }
+}
+
+const discardChanges = () => {
+  clearAutosaveTimer()
+  recoveryRequestId++
+  reloading.value = false
+  draft.value = baseContent.value
+  conflict.value = false
+  saveResultUnknown.value = false
+  reloadConfirm.value = false
+  saveError.value = ''
+  saveState.value = 'saved'
+  publishState()
 }
 
 const verifyServer = async () => {
@@ -267,12 +476,15 @@ const verifyServer = async () => {
       revision.value = remote.revision
       conflict.value = false
       saveResultUnknown.value = false
-      mode.value = 'view'
+      saveState.value = 'saved'
       saveNotice.value = 'The server copy matches your draft.'
+      publishState()
     } else {
       conflict.value = true
       saveResultUnknown.value = false
+      saveState.value = 'conflict'
       saveError.value = 'The server has a different copy. Your draft remains unchanged.'
+      publishState()
     }
   } catch (err) {
     if (!isMounted || reqId !== activeRequestId || recoveryId !== recoveryRequestId) return
@@ -287,6 +499,7 @@ const verifyServer = async () => {
 
 const reloadServerCopy = async () => {
   if (reloading.value || saving.value) return
+  clearAutosaveTimer()
   const reqId = activeRequestId
   const recoveryId = ++recoveryRequestId
   const authId = authGeneration
@@ -296,9 +509,16 @@ const reloadServerCopy = async () => {
   reloading.value = true
   reloadConfirm.value = false
   saveError.value = ''
+  publishState()
 
-  const isCurrent = () => isMounted && reqId === activeRequestId && recoveryId === recoveryRequestId &&
-    authId === authGeneration && directory === props.directory && path === props.path
+  const isCurrent = () =>
+    isMounted &&
+    reqId === activeRequestId &&
+    recoveryId === recoveryRequestId &&
+    authId === authGeneration &&
+    directory === props.directory &&
+    path === props.path
+
   try {
     const remote = await getVaultMarkdown(directory, path)
     if (!isCurrent()) return
@@ -313,11 +533,10 @@ const reloadServerCopy = async () => {
     baseContent.value = remote.content
     draft.value = remote.content
     revision.value = remote.revision
-    mode.value = 'view'
     conflict.value = false
     saveResultUnknown.value = false
+    saveState.value = 'saved'
     reloadConfirm.value = false
-    discardConfirm.value = false
     saveError.value = ''
     saveNotice.value = 'Loaded the current server copy.'
   } catch (err) {
@@ -345,26 +564,34 @@ const copyDraft = async () => {
   }
 }
 
-const handleBeforeUnload = (event) => {
-  event.preventDefault()
-  event.returnValue = ''
+const handleOpenLink = (linkPayload) => {
+  if (
+    linkPayload.type === 'resolved' &&
+    linkPayload.path === props.path &&
+    linkPayload.anchor
+  ) {
+    applyAnchor(linkPayload.anchor)
+    return
+  }
+  emit('open-link', linkPayload)
 }
 
-watch(dirty, (isDirty) => {
-  if (typeof window === 'undefined') return
-  if (isDirty && !unloadHandler) {
-    unloadHandler = handleBeforeUnload
-    window.addEventListener('beforeunload', unloadHandler)
-  } else if (!isDirty && unloadHandler) {
-    window.removeEventListener('beforeunload', unloadHandler)
-    unloadHandler = null
-  }
-  publishState()
-}, { flush: 'sync' })
+watch(hasUnconfirmedChanges, publishState)
 
 watch(saving, publishState, { flush: 'sync' })
 watch(reloading, publishState, { flush: 'sync' })
-watch(() => [props.directory, props.path], () => load())
+watch(
+  () => [props.directory, props.path],
+  () => load()
+)
+watch(
+  () => props.anchor,
+  (nextAnchor) => {
+    if (nextAnchor && hasConfirmedContent.value) {
+      applyAnchor(nextAnchor)
+    }
+  }
+)
 
 onMounted(() => {
   isMounted = true
@@ -374,67 +601,55 @@ onMounted(() => {
 
 onUnmounted(() => {
   isMounted = false
+  clearAutosaveTimer()
   activeRequestId++
   recoveryRequestId++
-  if (unloadHandler) window.removeEventListener('beforeunload', unloadHandler)
-  emit('state', { dirty: false, saving: false, reloading: false })
+  if (unloadHandler) {
+    window.removeEventListener('beforeunload', unloadHandler)
+    unloadHandler = null
+  }
+  emit('state', { dirty: false, saving: false, reloading: false, saveState: 'saved' })
+})
+
+defineExpose({
+  flushPendingSave,
+  discardChanges,
+  revision,
+  saveState,
+  documentVersion,
+  reload: () => load(true),
+  refresh: () => load(true),
 })
 </script>
 
 <template>
-  <div class="markdown-viewer" data-testid="markdown-viewer">
-    <header class="viewer-header">
-      <div class="header-left">
-        <button
-          type="button"
-          class="back-button"
-          data-testid="markdown-back-button"
-          :disabled="saving || reloading"
-          @click="emit('back')"
-        >
-          ← Back
-        </button>
-        <span class="file-title" data-testid="markdown-filename">{{ filename }}</span>
-        <span
-          v-if="stale"
-          class="stale-badge"
-          data-testid="markdown-stale-indicator"
-          title="Could not refresh; displaying previously confirmed version"
-        >
-          Outdated
-        </span>
-      </div>
+  <div
+    class="markdown-viewer"
+    data-testid="markdown-viewer"
+    :data-active-anchor="activeAnchor || undefined"
+  >
+    <!-- Screen-reader and contract accessible filename without cluttering the canvas -->
+    <span class="sr-only" data-testid="markdown-filename">{{ filename }}</span>
 
-      <div class="header-actions">
-        <button
-          v-if="mode === 'view' && hasConfirmedContent && revisionReady"
-          type="button"
-          class="action-button"
-          data-testid="markdown-edit-button"
-          :disabled="loading || saving || reloading"
-          @click="mode = 'edit'; saveNotice = ''; saveError = ''"
-        >Edit</button>
-        <button
-          v-if="mode === 'view'"
-          type="button"
-          class="action-button refresh-button"
-          data-testid="markdown-refresh-button"
-          :disabled="loading || refreshing || saving || reloading"
-          @click="load(true)"
-        >
-          {{ refreshing ? 'Refreshing...' : 'Refresh' }}
-        </button>
-      </div>
-    </header>
+    <!-- Discreet status indicator: completely silent when saved -->
+    <div
+      v-if="hasConfirmedContent"
+      class="editor-status-indicator"
+      :class="[`editor-status-indicator--${saveState}`, { 'editor-status-indicator--silent': saveState === 'saved' }]"
+      data-testid="autosave-status"
+      role="status"
+    >
+      <span v-if="saveState === 'dirty' || (dirty && !saving)" data-testid="markdown-dirty-indicator">{{ statusLabel }}</span>
+      <span v-else-if="saving || saveState === 'saving'" data-testid="markdown-saving">{{ statusLabel }}</span>
+      <span v-else class="status-silent-text">{{ statusLabel }}</span>
+    </div>
 
     <main class="viewer-body">
-      <!-- Loading State -->
       <div v-if="loading" class="state-container" data-testid="markdown-loading">
         <div class="loading-spinner"></div>
         <p>Loading note...</p>
       </div>
 
-      <!-- Not Found State -->
       <div
         v-else-if="errorCode === 'VAULT_PATH_NOT_FOUND' && !hasConfirmedContent"
         class="state-container error-state"
@@ -448,11 +663,10 @@ onUnmounted(() => {
           data-testid="markdown-back-button"
           @click="emit('back')"
         >
-          Return to directory
+          Close note
         </button>
       </div>
 
-      <!-- Generic Error State -->
       <div
         v-else-if="error && !hasConfirmedContent"
         class="state-container error-state"
@@ -469,56 +683,100 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <!-- Content State -->
-      <p v-show="saveNotice && mode === 'view'" class="editor-status" role="status">{{ saveNotice }}</p>
-      <div v-if="mode === 'edit' && hasConfirmedContent" class="content-container editor-container">
-        <div class="editor-heading">
-          <strong>{{ filename }}</strong>
-          <span v-if="dirty" data-testid="markdown-dirty-indicator">Unsaved changes</span>
-        </div>
-        <MarkdownEditor :model-value="editorText" :disabled="saving || reloading || loading" @update:model-value="updateDraft" />
-        <p v-if="saving" class="editor-status" role="status" data-testid="markdown-saving">Saving…</p>
-        <p v-if="reloading" class="editor-status" role="status" data-testid="markdown-reloading">Loading server copy…</p>
-        <p v-if="saveError" class="editor-error" role="alert" data-testid="markdown-save-error">{{ saveError }}</p>
+      <div v-else-if="hasConfirmedContent" class="content-container editor-container">
+        <p v-if="reloading" class="editor-status" role="status" data-testid="markdown-reloading">
+          Loading server copy…
+        </p>
+        <p v-if="saveError" class="editor-error" role="alert" data-testid="markdown-save-error">
+          {{ saveError }}
+          <button
+            v-if="saveState === 'error' && !conflict && !saveResultUnknown"
+            type="button"
+            class="action-button inline-retry-button"
+            data-testid="markdown-retry-save"
+            :disabled="saving || reloading"
+            @click="save"
+          >
+            Retry save
+          </button>
+        </p>
         <p v-if="saveNotice" class="editor-status" role="status">{{ saveNotice }}</p>
         <p v-if="copyMessage" class="editor-status" role="status">{{ copyMessage }}</p>
+
         <div v-if="conflict" class="editor-conflict" role="alert" data-testid="markdown-conflict">
           <p>This note changed on the server. Your local draft is still here.</p>
-          <button type="button" class="action-button" data-testid="markdown-copy-draft" @click="copyDraft">Copy draft</button>
-          <button type="button" class="action-button" data-testid="markdown-reload-server" :disabled="reloading" @click="reloadConfirm = true">Load server copy…</button>
+          <div class="conflict-actions">
+            <button
+              type="button"
+              class="action-button"
+              data-testid="markdown-copy-draft"
+              @click="copyDraft"
+            >
+              Copy draft
+            </button>
+            <button
+              type="button"
+              class="action-button"
+              data-testid="markdown-reload-server"
+              :disabled="reloading"
+              @click="reloadConfirm = true"
+            >
+              Load server copy…
+            </button>
+          </div>
         </div>
-        <div v-if="saveResultUnknown" class="editor-conflict" role="alert" data-testid="markdown-save-unknown">
-          <p>The server may have saved this note. Verify its current contents before trying again.</p>
-          <button type="button" class="action-button" data-testid="markdown-verify-save" :disabled="saving || reloading" @click="verifyServer">Verify server copy</button>
-        </div>
-        <div class="editor-actions">
-          <button type="button" class="action-button" data-testid="markdown-save-button" :disabled="!dirty || saving || reloading || conflict || saveResultUnknown" @click="save">
-            {{ saving ? 'Saving…' : 'Save' }}
-          </button>
-          <button type="button" class="action-button" data-testid="markdown-cancel-button" :disabled="saving || reloading" @click="cancelEdit">Cancel</button>
-        </div>
-        <div v-if="discardConfirm" class="editor-confirm" role="dialog" aria-modal="true" aria-labelledby="discard-title">
-          <p id="discard-title">Discard your unsaved changes?</p>
-          <button type="button" class="action-button" data-testid="markdown-keep-editing" @click="discardConfirm = false">Keep editing</button>
-          <button type="button" class="action-button" data-testid="markdown-discard-changes" @click="discardDraft">Discard changes</button>
-        </div>
-        <div v-if="reloadConfirm" class="editor-confirm" role="dialog" aria-modal="true" aria-labelledby="reload-title">
-          <p id="reload-title">Discard your draft and load the current server copy?</p>
-          <button type="button" class="action-button" @click="reloadConfirm = false">Keep editing</button>
-          <button type="button" class="action-button" data-testid="markdown-confirm-reload" @click="reloadServerCopy">Discard draft and reload</button>
-        </div>
-      </div>
 
-      <div v-else-if="hasConfirmedContent" class="content-container">
-        <div v-if="baseContent === ''" class="empty-state" data-testid="markdown-empty">
-          <p>This note is empty.</p>
-        </div>
         <div
-          v-else
-          class="markdown-content"
-          data-testid="markdown-content"
-          v-html="renderedHtml"
-        ></div>
+          v-if="saveResultUnknown"
+          class="editor-conflict"
+          role="alert"
+          data-testid="markdown-save-unknown"
+        >
+          <p>The server may have saved this note. Verify its current contents before trying again.</p>
+          <button
+            type="button"
+            class="action-button"
+            data-testid="markdown-verify-save"
+            :disabled="saving || reloading"
+            @click="verifyServer"
+          >
+            Verify server copy
+          </button>
+        </div>
+
+        <div
+          v-if="reloadConfirm"
+          class="editor-confirm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reload-title"
+        >
+          <p id="reload-title">Discard your draft and load the current server copy?</p>
+          <div class="confirm-actions">
+            <button type="button" class="action-button" @click="reloadConfirm = false">
+              Keep editing
+            </button>
+            <button
+              type="button"
+              class="action-button"
+              data-testid="markdown-confirm-reload"
+              @click="reloadServerCopy"
+            >
+              Discard draft and reload
+            </button>
+          </div>
+        </div>
+
+        <MarkdownEditor
+          ref="editorRef"
+          :model-value="editorText"
+          :disabled="reloading || loading"
+          :source-path="path"
+          :known-files="knownFiles"
+          :auto-focus="shouldAutoFocus"
+          @update:model-value="updateDraft"
+          @open-link="handleOpenLink"
+        />
       </div>
     </main>
   </div>
@@ -529,54 +787,61 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
-  color: var(--ayame-lavender, #d4cbe4);
+  min-width: 0;
+  height: 100%;
+  color: var(--ayame-text, #eeeaf3);
+  background: var(--ayame-background, #111218);
+  position: relative;
 }
 
-.viewer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid rgba(212, 203, 228, 0.15);
-  background: rgba(17, 18, 24, 0.6);
-  backdrop-filter: blur(8px);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
   overflow: hidden;
-}
-
-.back-button {
-  background: transparent;
-  border: 1px solid rgba(212, 203, 228, 0.2);
-  color: var(--ayame-lavender, #d4cbe4);
-  padding: 0.35rem 0.65rem;
-  border-radius: 4px;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.back-button:hover {
-  background: rgba(169, 154, 202, 0.15);
-  border-color: var(--ayame-primary, #a99aca);
-}
-
-.file-title {
-  font-weight: 600;
-  font-size: 1rem;
-  color: #fff;
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  border: 0;
+}
+
+.editor-status-indicator {
+  position: absolute;
+  top: 0.65rem;
+  right: 1.25rem;
+  z-index: 10;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  transition: opacity 150ms ease;
+  pointer-events: none;
+}
+
+.editor-status-indicator--silent {
+  opacity: 0;
+}
+
+.editor-status-indicator--dirty {
+  color: var(--ayame-primary, #a99aca);
+  background: rgba(169, 154, 202, 0.12);
+  border: 1px solid rgba(169, 154, 202, 0.25);
+  opacity: 1;
+}
+
+.editor-status-indicator--saving {
+  color: var(--ayame-lavender, #d4cbe4);
+  background: rgba(212, 203, 228, 0.08);
+  border: 1px solid rgba(212, 203, 228, 0.2);
+  opacity: 1;
+}
+
+.autosave-badge--conflict,
+.autosave-badge--unknown,
+.autosave-badge--error {
+  color: #ff9d76;
+  border-color: rgba(220, 100, 50, 0.45);
+  background: rgba(220, 100, 50, 0.14);
 }
 
 .stale-badge {
@@ -617,8 +882,12 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
+.inline-retry-button {
+  margin-left: 0.75rem;
+}
+
 .viewer-body {
-  padding: 1.5rem 1rem 3rem;
+  padding: 1rem 0 2rem;
 }
 
 .state-container {
@@ -656,194 +925,35 @@ onUnmounted(() => {
   color: rgba(212, 203, 228, 0.7);
 }
 
-.empty-state {
-  padding: 3rem 1rem;
-  text-align: center;
-  color: rgba(212, 203, 228, 0.5);
-  font-style: italic;
-}
-
-.markdown-content {
-  line-height: 1.65;
-  font-size: 0.95rem;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-:deep(h1),
-:deep(h2),
-:deep(h3),
-:deep(h4),
-:deep(h5),
-:deep(h6) {
-  color: #fff;
-  font-weight: 600;
-  margin-top: 1.5rem;
-  margin-bottom: 0.75rem;
-  line-height: 1.3;
-}
-
-:deep(h1) {
-  font-size: 1.75rem;
-  border-bottom: 1px solid rgba(212, 203, 228, 0.15);
-  padding-bottom: 0.4rem;
-}
-
-:deep(h2) {
-  font-size: 1.4rem;
-  border-bottom: 1px solid rgba(212, 203, 228, 0.1);
-  padding-bottom: 0.3rem;
-}
-
-:deep(h3) {
-  font-size: 1.15rem;
-}
-
-:deep(p) {
-  margin-top: 0;
-  margin-bottom: 1rem;
-}
-
-:deep(a) {
-  color: var(--ayame-lavender, #d4cbe4);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-:deep(a:hover) {
-  color: #fff;
-}
-
-:deep(span.markdown-non-navigable-link) {
-  color: rgba(212, 203, 228, 0.8);
-  border-bottom: 1px dotted rgba(212, 203, 228, 0.4);
-}
-
-:deep(span.markdown-image-placeholder) {
-  display: inline-block;
-  padding: 0.2rem 0.5rem;
-  background: rgba(169, 154, 202, 0.1);
-  border: 1px dashed rgba(169, 154, 202, 0.3);
-  border-radius: 4px;
-  font-size: 0.85rem;
-  color: rgba(212, 203, 228, 0.75);
-}
-
-:deep(code) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.88em;
-  background: rgba(212, 203, 228, 0.12);
-  padding: 0.15rem 0.35rem;
-  border-radius: 3px;
-  color: #f1eef8;
-}
-
-:deep(pre) {
-  background: #0b0c10;
-  border: 1px solid rgba(212, 203, 228, 0.12);
-  border-radius: 6px;
-  padding: 1rem;
-  overflow-x: auto;
-  margin: 1rem 0;
-}
-
-:deep(pre code) {
-  background: transparent;
-  padding: 0;
-  color: inherit;
-  font-size: 0.88rem;
-}
-
-:deep(blockquote) {
-  margin: 1rem 0;
-  padding: 0.5rem 1rem;
-  border-left: 3px solid var(--ayame-primary, #a99aca);
-  background: rgba(169, 154, 202, 0.05);
-  color: rgba(212, 203, 228, 0.85);
-  font-style: italic;
-}
-
-:deep(blockquote p:last-child) {
-  margin-bottom: 0;
-}
-
-:deep(ul),
-:deep(ol) {
-  margin-top: 0;
-  margin-bottom: 1rem;
-  padding-left: 1.5rem;
-}
-
-:deep(li) {
-  margin-bottom: 0.35rem;
-}
-
-:deep(hr) {
-  border: 0;
-  border-top: 1px solid rgba(212, 203, 228, 0.15);
-  margin: 1.5rem 0;
-}
-
-:deep(table) {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 1rem 0;
-  overflow-x: auto;
-  display: block;
-}
-
-:deep(th),
-:deep(td) {
-  border: 1px solid rgba(212, 203, 228, 0.18);
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-}
-
-:deep(th) {
-  background: rgba(169, 154, 202, 0.1);
-  color: #fff;
-  font-weight: 600;
-}
-
-:deep(tr:nth-child(even)) {
-  background: rgba(212, 203, 228, 0.03);
-}
-
-.editor-container {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.editor-heading,
-.editor-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.editor-heading span,
 .editor-status {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
   color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.875rem;
 }
 
 .editor-error {
-  color: #ff9d76;
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--ayame-error-border, #684651);
+  border-radius: 4px;
+  background: rgba(104, 70, 81, 0.18);
+  color: var(--ayame-error, #d8a6b0);
+  font-size: 0.88rem;
 }
 
 .editor-conflict,
 .editor-confirm {
-  padding: 0.75rem;
-  border: 1px solid rgba(212, 203, 228, 0.2);
+  margin: 0 0 0.9rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(212, 203, 228, 0.22);
   border-radius: 6px;
-  background: rgba(17, 18, 24, 0.9);
+  background: rgba(27, 28, 37, 0.92);
 }
 
-.editor-confirm {
+.conflict-actions,
+.confirm-actions {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
   gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 </style>
