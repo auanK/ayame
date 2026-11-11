@@ -134,7 +134,14 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getVaults, registerVault, unregisterVault } from './api.js'
 
-const emit = defineEmits(['unauthorized', 'open'])
+const props = defineProps({
+  initialVaults: {
+    type: Array,
+    default: null,
+  },
+})
+
+const emit = defineEmits(['unauthorized', 'open', 'loaded'])
 
 const vaults = ref([])
 const hasLoaded = ref(false)
@@ -162,6 +169,7 @@ const loadCurrentVaults = async () => {
     vaults.value = result.vaults
     hasLoaded.value = true
     needsRefresh.value = false
+    emit('loaded', result.vaults)
     if (editingDirectory.value && !result.vaults.some((vault) => (
       vault.directory === editingDirectory.value && !vault.registered
     ))) {
@@ -319,7 +327,16 @@ const resetVault = async (vault) => {
   }
 }
 
-onMounted(refreshVaults)
+onMounted(() => {
+  if (Array.isArray(props.initialVaults)) {
+    vaults.value = props.initialVaults
+    hasLoaded.value = true
+    needsRefresh.value = false
+    emit('loaded', props.initialVaults)
+    return
+  }
+  refreshVaults()
+})
 onBeforeUnmount(() => {
   mounted = false
 })

@@ -65,6 +65,7 @@ const emit = defineEmits([
   'select-tag',
   'rename-note',
   'content-saved',
+  'not-found',
 ])
 
 const editorPreferences = ref(loadEditorPreferences())
@@ -432,6 +433,7 @@ const load = async (isRefresh = false) => {
       error.value = 'Note contains invalid UTF-8 encoding and cannot be displayed.'
     } else if (err.code === 'VAULT_PATH_NOT_FOUND') {
       error.value = 'Note not found in vault.'
+      emit('not-found', props.path)
     } else if (err.code === 'UNSUPPORTED_FILE_TYPE') {
       error.value = 'Unsupported file type. Only Markdown notes (.md, .markdown) are supported.'
     } else {
@@ -558,6 +560,7 @@ const flushPendingSave = async () => {
   }
   if (
     dirty.value &&
+    !propertyEditPending.value &&
     !saving.value &&
     !reloading.value &&
     !conflict.value &&

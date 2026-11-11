@@ -43,6 +43,13 @@ Build the frontend into `frontend/dist/`:
 npm run build
 ```
 
+### Routing and SPA Fallback
+
+The frontend uses Vue Router 4 with HTML5 History (`createWebHistory()`) for `/` and `/vault/:directory` (with `?note=<vault-relative-path>`). During development, `npm run dev:frontend` handles SPA fallback automatically while proxying API requests. When serving the compiled `frontend/dist/` bundle in production, configure the web server or reverse proxy to:
+
+- Forward `/auth/*` and `/vaults/*` directly to the Fastify backend (`http://127.0.0.1:3000`) without rewriting them to `index.html`.
+- Serve static assets from `frontend/dist/` when they exist, and fall back to `frontend/dist/index.html` for application routes (such as `/` and `/vault/*`).
+
 Run the backend tests:
 
 ```sh

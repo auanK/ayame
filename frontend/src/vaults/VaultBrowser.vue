@@ -16,6 +16,7 @@ import {
   searchVaultNotes,
 } from './vaultIndex.js'
 import { calculateContextMenuPosition } from './contextMenuPosition.js'
+import { useAyameRouter, validateNoteQueryParam } from '../router/index.js'
 import MarkdownViewer from '../markdown/MarkdownViewer.vue'
 
 const isTestEnv = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test'
@@ -40,6 +41,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['back', 'unauthorized', 'state', 'logout'])
+
+const { router, route } = useAyameRouter({
+  initialVaultDirectory: props.vault.directory,
+})
 
 const LAYOUT_STORAGE_KEY = `ayame:layout:${props.vault.directory}`
 
@@ -639,31 +644,86 @@ const recordNavigationHistory = (filePath) => {
   navHistoryIndex.value = truncated.length - 1
 }
 
+let suppressRouteWatch = false
+let internalRouteNavigation = false
+
+const buildVaultLocation = (notePath = null, directory = props.vault.directory) => {
+  const query = { ...(route.value?.query || {}) }
+  if (notePath) {
+    query.note = notePath
+  } else {
+    delete query.note
+  }
+  return {
+    name: 'vault',
+    params: { directory },
+    query,
+  }
+}
+
+const syncUrlWithNote = async (notePath, { replace = false } = {}) => {
+  if (!isMounted) return
+  const currentDir = route.value?.params?.directory
+  const currentNote = typeof route.value?.query?.note === 'string' ? route.value.query.note : null
+  const hasExtraNoteQuery = route.value?.query?.note !== undefined && currentNote === null
+  if (
+    route.value?.name === 'vault' &&
+    currentDir === props.vault.directory &&
+    currentNote === (notePath || null) &&
+    !hasExtraNoteQuery
+  ) {
+    return
+  }
+  const targetLocation = buildVaultLocation(notePath, props.vault.directory)
+  suppressRouteWatch = true
+  internalRouteNavigation = true
+  try {
+    if (replace) {
+      await router.replace(targetLocation)
+    } else {
+      await router.push(targetLocation)
+    }
+  } finally {
+    internalRouteNavigation = false
+    suppressRouteWatch = false
+  }
+}
+
+const navigateRouterHistory = (delta) =>
+  new Promise((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      removeAfter()
+      removeError()
+      nextTick().then(resolve)
+    }
+    const removeAfter = router.afterEach(() => {
+      finish()
+    })
+    const removeError = router.onError(() => {
+      finish()
+    })
+    router.go(delta)
+    let p = Promise.resolve()
+    for (let i = 0; i < 12; i++) {
+      p = p.then(() => undefined)
+    }
+    p.then(finish)
+  })
+
 const canNavigateBack = computed(() => navHistoryIndex.value > 0)
 const canNavigateForward = computed(() => navHistoryIndex.value >= 0 && navHistoryIndex.value < navHistory.value.length - 1)
 
 const navigateHistoryBack = async () => {
   if (!canNavigateBack.value || relocateState.value?.loading || relocateState.value?.stage === 'uncertain') return
-  navigatingHistory = true
-  try {
-    navHistoryIndex.value -= 1
-    const target = navHistory.value[navHistoryIndex.value]
-    await selectNote(target)
-  } finally {
-    navigatingHistory = false
-  }
+  await navigateRouterHistory(-1)
 }
 
 const navigateHistoryForward = async () => {
   if (!canNavigateForward.value || relocateState.value?.loading || relocateState.value?.stage === 'uncertain') return
-  navigatingHistory = true
-  try {
-    navHistoryIndex.value += 1
-    const target = navHistory.value[navHistoryIndex.value]
-    await selectNote(target)
-  } finally {
-    navigatingHistory = false
-  }
+  await navigateRouterHistory(1)
 }
 
 const ensureTabOpen = (filePath) => {
@@ -676,14 +736,30 @@ const ensureTabOpen = (filePath) => {
 const closeTab = async (tabPath) => {
   if (relocateState.value?.loading || relocateState.value?.stage === 'uncertain') return
   if (relocateState.value?.stage === 'confirm' && tabPath === selectedFile.value) cancelRelocate()
-  const nextTabs = openTabs.value.filter((t) => t !== tabPath)
-  openTabs.value = nextTabs
   if (selectedFile.value === tabPath) {
+    if (viewerRef.value) {
+      if (
+        viewerState.value.dirty &&
+        viewerState.value.saveState !== 'conflict' &&
+        viewerState.value.saveState !== 'unknown' &&
+        viewerState.value.saveState !== 'error'
+      ) {
+        await viewerRef.value.flushPendingSave()
+      }
+      if (isNavigationBlocked()) {
+        pendingNavigation.value = { type: 'close-tab', tabPath }
+        return
+      }
+    }
+    const nextTabs = openTabs.value.filter((t) => t !== tabPath)
+    openTabs.value = nextTabs
     if (nextTabs.length > 0) {
       await selectNote(nextTabs[nextTabs.length - 1])
     } else {
-      closeNote()
+      await closeNote()
     }
+  } else {
+    openTabs.value = openTabs.value.filter((t) => t !== tabPath)
   }
 }
 
@@ -705,6 +781,7 @@ const selectNote = async (filePath, { anchor = null, initialDoc = null, newTab =
     if (anchor) {
       selectedAnchor.value = anchor
     }
+    await syncUrlWithNote(filePath)
     return
   }
 
@@ -752,6 +829,7 @@ const selectNote = async (filePath, { anchor = null, initialDoc = null, newTab =
   const parentSegments = filePath.split('/')
   parentSegments.pop()
   selectedFolderPath.value = parentSegments.join('/')
+  await syncUrlWithNote(filePath)
 }
 
 const openFile = async (entry, { newTab = false } = {}) => {
@@ -759,7 +837,7 @@ const openFile = async (entry, { newTab = false } = {}) => {
   await selectNote(entry.path, { newTab })
 }
 
-const closeNote = () => {
+const closeNote = async () => {
   if (relocateState.value?.loading || relocateState.value?.stage === 'uncertain') return
   if (relocateState.value?.stage === 'confirm') cancelRelocate()
   if (isNavigationBlocked()) {
@@ -771,6 +849,7 @@ const closeNote = () => {
   initialDocument.value = null
   viewerState.value = { dirty: false, saving: false, reloading: false, saveState: 'saved' }
   emit('state', viewerState.value)
+  await syncUrlWithNote(null)
 }
 
 const requestBackToVaults = () => {
@@ -797,9 +876,27 @@ const confirmDiscardAndNavigate = async () => {
   emit('state', viewerState.value)
 
   if (!target || target.type === 'vaults') {
-    emit('back')
+    if (target?.historyDelta === -1 || target?.historyDelta === 1) {
+      await navigateRouterHistory(target.historyDelta)
+    } else if (target?.to && target.to.name && target.to.name !== 'vaults') {
+      await router.push(target.to)
+    } else {
+      emit('back')
+    }
   } else if (target.type === 'close-note') {
-    closeNote()
+    if (target.historyDelta === -1 || target.historyDelta === 1) {
+      await navigateRouterHistory(target.historyDelta)
+    } else {
+      await closeNote()
+    }
+  } else if (target.type === 'close-tab') {
+    await closeTab(target.tabPath)
+  } else if (target.type === 'route-note') {
+    if (target.historyDelta === -1 || target.historyDelta === 1) {
+      await navigateRouterHistory(target.historyDelta)
+    } else if (target.path) {
+      await selectNote(target.path)
+    }
   } else if (target.type === 'file') {
     await selectNote(target.path, {
       anchor: target.anchor,
@@ -808,6 +905,170 @@ const confirmDiscardAndNavigate = async () => {
     })
   }
 }
+
+const handleNoteNotFound = async (missingPath) => {
+  if (!missingPath || selectedFile.value !== missingPath) return
+  openTabs.value = openTabs.value.filter((t) => t !== missingPath)
+  if (navHistory.value[navHistoryIndex.value] === missingPath) {
+    navHistory.value = navHistory.value.filter((_, idx) => idx !== navHistoryIndex.value)
+    navHistoryIndex.value = Math.min(navHistoryIndex.value, navHistory.value.length - 1)
+  }
+  selectedFile.value = null
+  selectedAnchor.value = null
+  initialDocument.value = null
+  viewerState.value = { dirty: false, saving: false, reloading: false, saveState: 'saved' }
+  emit('state', viewerState.value)
+  workspaceNotice.value = `Note "${missingPath}" was not found in this vault.`
+  await syncUrlWithNote(null, { replace: true })
+}
+
+const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
+  if (!isMounted || suppressRouteWatch) return
+  if (route.value?.matched?.length === 0) {
+    suppressRouteWatch = true
+    internalRouteNavigation = true
+    try {
+      await router.replace(router.options.history.location || `/vault/${encodeURIComponent(props.vault.directory)}`)
+    } catch {} finally {
+      internalRouteNavigation = false
+      suppressRouteWatch = false
+    }
+  }
+  if (!isMounted) return
+  if (route.value?.name !== 'vault' || route.value?.params?.directory !== props.vault.directory) {
+    return
+  }
+
+  const check = validateNoteQueryParam(route.value?.query?.note)
+  if (!check.present) {
+    if (selectedFile.value !== null) {
+      pendingNavigation.value = null
+      selectedFile.value = null
+      selectedAnchor.value = null
+      initialDocument.value = null
+      viewerState.value = { dirty: false, saving: false, reloading: false, saveState: 'saved' }
+      emit('state', viewerState.value)
+    }
+    return
+  }
+
+  if (!check.valid) {
+    pendingNavigation.value = null
+    selectedFile.value = null
+    selectedAnchor.value = null
+    initialDocument.value = null
+    viewerState.value = { dirty: false, saving: false, reloading: false, saveState: 'saved' }
+    emit('state', viewerState.value)
+    workspaceNotice.value = 'Invalid note path in URL.'
+    await syncUrlWithNote(null, { replace: true })
+    return
+  }
+
+  const notePath = check.path
+  if (selectedFile.value === notePath) {
+    return
+  }
+
+  pendingNavigation.value = null
+  linkNotice.value = null
+  initialDocument.value = null
+  selectedAnchor.value = null
+  const prevActive = selectedFile.value
+  selectedFile.value = notePath
+
+  if (openTabs.value.length === 0) {
+    openTabs.value = [notePath]
+  } else if (!openTabs.value.includes(notePath)) {
+    const activeIdx = prevActive ? openTabs.value.indexOf(prevActive) : -1
+    if (activeIdx >= 0) {
+      const next = [...openTabs.value]
+      next[activeIdx] = notePath
+      openTabs.value = next
+    } else {
+      openTabs.value = [...openTabs.value, notePath]
+    }
+  }
+
+  const delta = router.lastHistoryDelta || 0
+  router.lastHistoryDelta = 0
+  if (isInitial && navHistory.value.length === 0) {
+    navHistory.value = [notePath]
+    navHistoryIndex.value = 0
+  } else if (delta < 0 && navHistoryIndex.value > 0 && navHistory.value[navHistoryIndex.value - 1] === notePath) {
+    navHistoryIndex.value -= 1
+  } else if (
+    delta > 0 &&
+    navHistoryIndex.value >= 0 &&
+    navHistoryIndex.value < navHistory.value.length - 1 &&
+    navHistory.value[navHistoryIndex.value + 1] === notePath
+  ) {
+    navHistoryIndex.value += 1
+  } else if (navHistoryIndex.value > 0 && navHistory.value[navHistoryIndex.value - 1] === notePath) {
+    navHistoryIndex.value -= 1
+  } else if (
+    navHistoryIndex.value >= 0 &&
+    navHistoryIndex.value < navHistory.value.length - 1 &&
+    navHistory.value[navHistoryIndex.value + 1] === notePath
+  ) {
+    navHistoryIndex.value += 1
+  } else {
+    recordNavigationHistory(notePath)
+  }
+
+  const parentSegments = notePath.split('/')
+  parentSegments.pop()
+  selectedFolderPath.value = parentSegments.join('/')
+  void expandAncestors(notePath)
+}
+
+const unregisterRouterGuard = router.beforeEach(async (to, from) => {
+  if (!isMounted || internalRouteNavigation) return true
+  if (from.name !== 'vault' || from.params?.directory !== props.vault.directory) {
+    return true
+  }
+
+  const isSameVault = to.name === 'vault' && to.params?.directory === props.vault.directory
+  const toNote = isSameVault && typeof to.query?.note === 'string' ? to.query.note : null
+  const leavingCurrentNote =
+    selectedFile.value !== null && (!isSameVault || toNote !== selectedFile.value)
+
+  if (!leavingCurrentNote && isSameVault) {
+    return true
+  }
+
+  if (relocateState.value?.loading || relocateState.value?.stage === 'uncertain') {
+    workspaceNotice.value = 'Wait for the move to be reconciled before navigating.'
+    return false
+  }
+  if (relocateState.value?.stage === 'confirm') {
+    cancelRelocate()
+  }
+
+  if (isNavigationBlocked()) {
+    let historyDelta = router.lastHistoryDelta || 0
+    if (!historyDelta && isSameVault) {
+      if (navHistoryIndex.value > 0 && navHistory.value[navHistoryIndex.value - 1] === toNote) {
+        historyDelta = -1
+      } else if (
+        navHistoryIndex.value >= 0 &&
+        navHistoryIndex.value < navHistory.value.length - 1 &&
+        navHistory.value[navHistoryIndex.value + 1] === toNote
+      ) {
+        historyDelta = 1
+      }
+    }
+    router.lastHistoryDelta = 0
+    pendingNavigation.value = {
+      type: isSameVault ? (toNote ? 'route-note' : 'close-note') : 'vaults',
+      path: toNote,
+      to: { name: to.name, params: { ...to.params }, query: { ...to.query } },
+      historyDelta,
+    }
+    return false
+  }
+
+  return true
+})
 
 const handleViewerState = (state) => {
   viewerStateGeneration.value++
@@ -1377,10 +1638,14 @@ const remapRelocatedPaths = (sourcePath, newPath) => {
     if (filePath.startsWith(`${sourcePath}/`)) return `${newPath}/${filePath.slice(sourcePath.length + 1)}`
     return filePath
   }
+  const previousSelected = selectedFile.value
   openTabs.value = openTabs.value.map(remapPath)
   navHistory.value = navHistory.value.map(remapPath)
   selectedFile.value = remapPath(selectedFile.value)
   selectedFolderPath.value = remapPath(selectedFolderPath.value)
+  if (selectedFile.value !== previousSelected) {
+    void syncUrlWithNote(selectedFile.value, { replace: true })
+  }
 }
 
 const reconcileUncertainRelocation = async () => {
@@ -1726,14 +1991,22 @@ const requestDeleteEntry = (entry) => {
 
 const cleanupAfterDeletedPath = (deletedPath) => {
   const isDeletedOrInside = (p) => p === deletedPath || p.startsWith(`${deletedPath}/`)
+  const previousSelected = selectedFile.value
   openTabs.value = openTabs.value.filter((t) => !isDeletedOrInside(t))
+  navHistory.value = navHistory.value.filter((p) => !isDeletedOrInside(p))
   if (selectedFile.value && isDeletedOrInside(selectedFile.value)) {
     selectedFile.value = openTabs.value[openTabs.value.length - 1] || null
     selectedAnchor.value = null
     initialDocument.value = null
   }
+  navHistoryIndex.value = selectedFile.value
+    ? navHistory.value.lastIndexOf(selectedFile.value)
+    : navHistory.value.length - 1
   if (selectedFolderPath.value && isDeletedOrInside(selectedFolderPath.value)) {
     selectedFolderPath.value = ''
+  }
+  if (selectedFile.value !== previousSelected) {
+    void syncUrlWithNote(selectedFile.value, { replace: true })
   }
 }
 
@@ -1906,7 +2179,7 @@ const handleDocumentClick = (e) => {
 
 watch(
   () => [props.vault.id, props.vault.directory],
-  () => {
+  async () => {
     relocateState.value = null
     clearDragState()
     pendingNavigation.value = null
@@ -1934,6 +2207,20 @@ watch(
     hasLoadedRoot.value = false
     fetchDirectory('')
     fetchVaultIndexSafe()
+    if (route.value?.name === 'vault' && route.value?.params?.directory === props.vault.directory) {
+      await applyRouteFromUrl({ isInitial: true })
+    } else {
+      await syncUrlWithNote(null, { replace: true })
+    }
+  }
+)
+
+watch(
+  () => [route.value?.name, route.value?.params?.directory, route.value?.query?.note],
+  () => {
+    if (!suppressRouteWatch) {
+      void applyRouteFromUrl({ isInitial: false })
+    }
   }
 )
 
@@ -1944,10 +2231,12 @@ onMounted(() => {
   window.addEventListener('resize', closeContextMenu)
   fetchDirectory('')
   fetchVaultIndexSafe()
+  void applyRouteFromUrl({ isInitial: true })
 })
 
 onUnmounted(() => {
   isMounted = false
+  unregisterRouterGuard()
   relocateState.value = null
   clearDragState()
   directoryRequestGeneration++
@@ -2753,6 +3042,7 @@ defineExpose({
           @select-tag="handleSelectTag"
           @rename-note="handleRenameFromNoteTitle"
           @content-saved="handleContentSaved"
+          @not-found="handleNoteNotFound"
           @unauthorized="emit('unauthorized')"
         />
 
