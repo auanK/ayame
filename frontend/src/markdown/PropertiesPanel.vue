@@ -461,11 +461,11 @@ const handleRawYamlInput = (event) => {
         :aria-expanded="!collapsed ? 'true' : 'false'"
         @click="collapsed = !collapsed"
       >
+        <span class="properties-chevron" aria-hidden="true">{{ collapsed ? '▸' : '▾' }}</span>
         <span class="properties-title">Properties</span>
         <span v-if="effectiveProperties.length" class="properties-count">
           {{ effectiveProperties.length }}
         </span>
-        <span class="properties-toggle-state" aria-hidden="true">{{ collapsed ? 'Expand' : 'Collapse' }}</span>
       </button>
 
       <div class="properties-header-actions">
@@ -613,7 +613,7 @@ const handleRawYamlInput = (event) => {
                     :aria-label="`Remove tag ${tag}`"
                     @click="removeTagFromProperty(prop, tag)"
                   >
-                    Remove
+                    ×
                   </button>
                 </span>
                 <input
@@ -662,7 +662,7 @@ const handleRawYamlInput = (event) => {
                     :aria-label="`Remove item ${item}`"
                     @click="removeListItem(prop, itemIdx)"
                   >
-                    Remove
+                    ×
                   </button>
                 </span>
                 <input
@@ -771,7 +771,7 @@ const handleRawYamlInput = (event) => {
                 aria-label="Move property up"
                 @click="handleMoveProperty(idx, -1)"
               >
-                Up
+                ↑
               </button>
               <button
                 type="button"
@@ -782,7 +782,7 @@ const handleRawYamlInput = (event) => {
                 aria-label="Move property down"
                 @click="handleMoveProperty(idx, 1)"
               >
-                Down
+                ↓
               </button>
               <button
                 type="button"
@@ -793,7 +793,7 @@ const handleRawYamlInput = (event) => {
                 aria-label="Remove property"
                 @click="handleRemoveProperty(prop.key)"
               >
-                Remove
+                ×
               </button>
             </div>
           </div>
@@ -921,18 +921,20 @@ const handleRawYamlInput = (event) => {
   color: var(--ayame-lavender);
 }
 
-.properties-toggle-state {
-  font-size: 0.68rem;
-  font-weight: 500;
+.properties-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 0.72rem;
   color: var(--ayame-muted);
-  opacity: 0.8;
-  margin-left: 0.2rem;
+  line-height: 1;
   user-select: none;
 }
 
-.properties-toggle:hover .properties-toggle-state {
+.properties-toggle:hover .properties-chevron {
   color: var(--ayame-text);
-  opacity: 1;
 }
 
 .properties-action-btn {
@@ -1127,13 +1129,14 @@ const handleRawYamlInput = (event) => {
   background: transparent;
   border: 1px solid transparent;
   color: var(--ayame-muted);
-  font-size: 0.65rem;
-  font-weight: 500;
+  font-size: 0.8rem;
   line-height: 1;
-  padding: 0.08rem 0.25rem;
+  padding: 0 0.15rem;
   border-radius: 3px;
   cursor: pointer;
-  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: all 0.1s ease;
 }
 
@@ -1179,12 +1182,17 @@ const handleRawYamlInput = (event) => {
   background: transparent;
   border: 1px solid transparent;
   color: var(--ayame-muted);
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   font-weight: 500;
-  padding: 0.1rem 0.35rem;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 3px;
   cursor: pointer;
-  white-space: nowrap;
+  line-height: 1;
   transition: all 0.1s ease;
 }
 

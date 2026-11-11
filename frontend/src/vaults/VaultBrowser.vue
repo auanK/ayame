@@ -2426,7 +2426,7 @@ defineExpose({
             aria-label="Close tab"
             @click.stop="closeTab(tabPath)"
           >
-            Close
+            ×
           </button>
         </div>
       </div>
@@ -2519,9 +2519,10 @@ defineExpose({
               class="explorer-action-btn"
               data-testid="explorer-add-button"
               title="New item"
+              aria-label="New item"
               @click.stop="showAddMenu = !showAddMenu"
             >
-              New
+              +
             </button>
             <button
               v-if="selectedFile"
@@ -2843,8 +2844,8 @@ defineExpose({
                     :style="{ paddingLeft: `${row.depth * 14 + 10}px` }"
                     @click="toggleFolder(row.entry.path)"
                   >
+                    <span class="tree-chevron" aria-hidden="true">{{ row.isExpanded ? '▾' : '▸' }}</span>
                     <span class="tree-label">{{ row.entry.name }}</span>
-                    <span class="tree-folder-state" aria-hidden="true">{{ row.isExpanded ? 'Collapse' : 'Expand' }}</span>
                   </button>
                   <button
                     type="button"
@@ -2852,9 +2853,10 @@ defineExpose({
                     data-testid="entry-context-button"
                     :data-entry-path="row.entry.path"
                     aria-label="Folder actions"
+                    title="Folder actions"
                     @click.stop="openContextMenu($event, row.entry)"
                   >
-                    Actions
+                    …
                   </button>
                 </div>
 
@@ -2937,9 +2939,10 @@ defineExpose({
                   data-testid="entry-context-button"
                   :data-entry-path="row.entry.path"
                   aria-label="Note actions"
+                  title="Note actions"
                   @click.stop="openContextMenu($event, row.entry)"
                 >
-                  Actions
+                  …
                 </button>
               </div>
 
@@ -3448,7 +3451,7 @@ defineExpose({
           role="status"
         >
           <span>{{ workspaceNotice }}</span>
-          <button type="button" class="toast-close-btn" aria-label="Dismiss notice" @click="workspaceNotice = ''">Dismiss</button>
+          <button type="button" class="toast-close-btn" aria-label="Dismiss notice" @click="workspaceNotice = ''">×</button>
         </div>
         <div
           v-for="t in toasts"
@@ -3459,7 +3462,7 @@ defineExpose({
           role="status"
         >
           <span>{{ t.message }}</span>
-          <button type="button" class="toast-close-btn" aria-label="Dismiss notification" @click="removeToast(t.id)">Dismiss</button>
+          <button type="button" class="toast-close-btn" aria-label="Dismiss notification" @click="removeToast(t.id)">×</button>
         </div>
       </aside>
     </Teleport>
@@ -3486,7 +3489,7 @@ defineExpose({
             aria-label="Close"
             @click="showTrashModal = false"
           >
-            Close
+            ×
           </button>
         </header>
 
@@ -3587,7 +3590,7 @@ defineExpose({
             <h3 class="trash-modal-title">Command palette</h3>
             <p class="trash-modal-subtitle">Search commands or notes</p>
           </div>
-          <button type="button" class="modal-close-btn" aria-label="Close" @click="showCommandPalette = false">Close</button>
+          <button type="button" class="modal-close-btn" aria-label="Close" @click="showCommandPalette = false">×</button>
         </header>
         <input
           v-model="commandPaletteQuery"
@@ -3626,7 +3629,7 @@ defineExpose({
             <h3 class="trash-modal-title">Open note</h3>
             <p class="trash-modal-subtitle">Type to navigate quickly</p>
           </div>
-          <button type="button" class="modal-close-btn" aria-label="Close" @click="showQuickSwitcher = false">Close</button>
+          <button type="button" class="modal-close-btn" aria-label="Close" @click="showQuickSwitcher = false">×</button>
         </header>
         <input
           v-model="quickSwitcherQuery"
@@ -3675,7 +3678,7 @@ defineExpose({
             <h3 class="trash-modal-title">Vault settings</h3>
             <p class="trash-modal-subtitle">{{ vault.name }} ({{ vault.directory }})</p>
           </div>
-          <button type="button" class="modal-close-btn" aria-label="Close" @click="showSettingsModal = false">Close</button>
+          <button type="button" class="modal-close-btn" aria-label="Close" @click="showSettingsModal = false">×</button>
         </header>
         <div class="settings-form">
           <label class="settings-row">
@@ -4110,44 +4113,80 @@ defineExpose({
   color: var(--ayame-text, #eeeaf3);
 }
 
+.tree-row:focus {
+  outline: none;
+}
+
+.tree-row:focus-visible {
+  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline-offset: -2px;
+}
+
+.tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 0.72rem;
+  color: var(--ayame-text-muted, #aaa6b8);
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1;
+}
+
+.tree-row:hover .tree-chevron {
+  color: var(--ayame-text, #eeeaf3);
+}
+
 .tree-row-menu-btn {
   opacity: 0;
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--ayame-text-muted, #aaa6b8);
   cursor: pointer;
-  padding: 0.1rem 0.35rem;
-  font-size: 0.72rem;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  line-height: 1;
   border-radius: 3px;
+  flex-shrink: 0;
+  margin-right: 2px;
+  transition: opacity 0.1s ease, background-color 0.1s ease, color 0.1s ease;
 }
 
 .tree-row-wrapper:hover .tree-row-menu-btn,
+.tree-row-wrapper:focus-within .tree-row-menu-btn,
 .tree-row-menu-btn:focus-visible {
   opacity: 1;
 }
 
+.tree-row-menu-btn:hover,
+.tree-row-menu-btn:focus-visible {
+  background: var(--ayame-hover, #242530);
+  color: var(--ayame-text, #eeeaf3);
+  border-color: var(--ayame-border, #34323f);
+  outline: none;
+}
+
+@media (hover: none) {
+  .tree-row-menu-btn {
+    opacity: 0.6;
+  }
+}
+
 .tree-folder--selected {
+  background: rgba(169, 154, 202, 0.1);
   color: var(--ayame-text, #eeeaf3);
   font-weight: 500;
-}
-
-.tree-folder-state {
-  font-size: 0.68rem;
-  font-weight: 500;
-  color: var(--ayame-text-muted, #aaa6b8);
-  opacity: 0.7;
-  flex-shrink: 0;
-  margin-left: 0.35rem;
-  user-select: none;
-}
-
-.tree-row:hover .tree-folder-state {
-  color: var(--ayame-text, #eeeaf3);
-  opacity: 1;
 }
 
 .tree-file--active {
-  background: rgba(169, 154, 202, 0.14);
+  background: rgba(169, 154, 202, 0.16);
   color: var(--ayame-lavender, #d4cbe4);
   font-weight: 500;
 }
@@ -4356,15 +4395,18 @@ defineExpose({
   background: transparent;
   border: 1px solid transparent;
   color: inherit;
-  font-size: 0.68rem;
-  font-weight: 500;
+  font-size: 0.85rem;
   line-height: 1;
   margin-left: 0.35rem;
-  padding: 0.12rem 0.35rem;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   border-radius: 3px;
-  opacity: 0.7;
-  white-space: nowrap;
+  opacity: 0.6;
   transition: all 0.1s ease;
 }
 
@@ -4544,13 +4586,16 @@ defineExpose({
   background: transparent;
   border: 1px solid transparent;
   color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.8125rem;
-  font-weight: 500;
+  font-size: 1.15rem;
   cursor: pointer;
-  padding: 0.2rem 0.5rem;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   line-height: 1;
   border-radius: 4px;
-  white-space: nowrap;
   transition: all 0.1s ease;
 }
 
@@ -4703,13 +4748,16 @@ defineExpose({
   background: transparent;
   border: 1px solid transparent;
   color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.72rem;
-  font-weight: 500;
+  font-size: 0.95rem;
   cursor: pointer;
-  padding: 0.12rem 0.35rem;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   line-height: 1;
   border-radius: 3px;
-  white-space: nowrap;
   transition: all 0.1s ease;
 }
 
