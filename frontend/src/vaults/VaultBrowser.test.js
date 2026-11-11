@@ -43,6 +43,8 @@ const projectsEntries = [
 
 const codedError = (code) => Object.assign(new Error(code), { code })
 
+const activeWrappers = []
+
 const deferred = () => {
   let resolve
   let reject
@@ -60,6 +62,7 @@ const mountBrowser = async (props = { vault }, initialEntries = rootEntries) => 
     entries: initialEntries,
   })
   const wrapper = mount(VaultBrowser, { props })
+  activeWrappers.push(wrapper)
   await flushPromises()
   return wrapper
 }
@@ -115,6 +118,14 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  while (activeWrappers.length > 0) {
+    const w = activeWrappers.pop()
+    try {
+      w.unmount()
+    } catch {
+      // ignore
+    }
+  }
   vi.useRealTimers()
 })
 
@@ -894,6 +905,7 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(wrapper.find('[data-testid="relocate-uncertain"]').exists()).toBe(remainsUncertain)
     expect(api.relocateVaultEntry).toHaveBeenCalledTimes(1)
     expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it.each([
@@ -910,6 +922,7 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(wrapper.find(`[data-testid="${conflictTestId}"]`).text()).toContain(message)
     expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe(destinationContent)
     expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('preserves both Markdown and Number drafts when the destination changed during the move', async () => {
@@ -2175,5 +2188,103 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(item.find('.trash-item-path').text()).toContain('Deleted from /pasta/Documento.md')
     expect(item.find('[data-testid="restore-trash-button"]').exists()).toBe(true)
     expect(item.find('[data-testid="delete-trash-permanently-button"]').exists()).toBe(true)
+  })
+
+  it('35. shows workspace-home-button directly on topbar and navigates back to vaults on click when clean', async () => {
+    const wrapper = await mountBrowser()
+    const homeBtn = wrapper.find('[data-testid="workspace-home-button"]')
+    expect(homeBtn.exists()).toBe(true)
+    expect(homeBtn.attributes('aria-label')).toBe('Back to vaults')
+    expect(homeBtn.attributes('title')).toBe('Back to vaults')
+
+    await homeBtn.trigger('click')
+    expect(wrapper.emitted('back')).toBeTruthy()
+  })
+
+  it('36. workspace-home-button respects draft protection, cancellation, and blocked states', async () => {
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content: 'base content',
+      revision: 'a'.repeat(64),
+    })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    // Dirty draft
+    wrapper.findComponent(MarkdownEditor).vm.setText('unsaved draft')
+    await wrapper.vm.$nextTick()
+
+    const homeBtn = wrapper.find('[data-testid="workspace-home-button"]')
+    await homeBtn.trigger('click')
+    expect(wrapper.emitted('back')).toBeUndefined()
+    expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
+
+    // Cancel preserves draft
+    await wrapper.find('[data-testid="navigation-keep-editing"]').trigger('click')
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toBe('unsaved draft')
+    expect(wrapper.emitted('back')).toBeUndefined()
+
+    // Confirm discard allows navigating back
+    await homeBtn.trigger('click')
+    await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
+    expect(wrapper.emitted('back')).toBeTruthy()
+  })
+
+  it('37. unifies tabs bar inside workspace-topbar and eliminates separate bar from editor pane', async () => {
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'README.md',
+        content: 'content 1',
+        revision: 'a'.repeat(64),
+      })
+      .mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'projects/Design.md',
+        content: 'content 2',
+        revision: 'b'.repeat(64),
+      })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    await wrapper.vm.openFileInNewTab('projects/Design.md')
+    await flushPromises()
+
+    // Tabs must be inside workspace-topbar
+    const topbar = wrapper.find('.workspace-topbar')
+    expect(topbar.find('[data-testid="workspace-tabs"]').exists()).toBe(true)
+
+    // Editor pane must NOT contain workspace-tabs
+    const editorPane = wrapper.find('[data-testid="workspace-editor-pane"]')
+    expect(editorPane.find('[data-testid="workspace-tabs"]').exists()).toBe(false)
+
+    // Verify tabs function in topbar
+    const tabs = topbar.findAll('[data-testid="workspace-tab"]')
+    expect(tabs.length).toBe(2)
+    expect(tabs[1].classes()).toContain('workspace-tab--active')
+
+    // Close tab works
+    await topbar.find('[data-testid="close-tab-button"][data-tab-path="projects/Design.md"]').trigger('click')
+    await flushPromises()
+    expect(topbar.findAll('[data-testid="workspace-tab"]').length).toBe(1)
+  })
+
+  it('38. keeps right panel tabs in a single non-wrapping container with all 5 sections accessible', async () => {
+    window.innerWidth = 1440
+    const wrapper = await mountBrowser()
+    await wrapper.find('[data-testid="toggle-right-panel-button"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const rightPanelTabs = wrapper.find('.right-panel-tabs')
+    expect(rightPanelTabs.exists()).toBe(true)
+    expect(rightPanelTabs.find('[data-testid="panel-tab-backlinks"]').exists()).toBe(true)
+    expect(rightPanelTabs.find('[data-testid="panel-tab-outgoing"]').exists()).toBe(true)
+    expect(rightPanelTabs.find('[data-testid="panel-tab-outline"]').exists()).toBe(true)
+    expect(rightPanelTabs.find('[data-testid="panel-tab-tags"]').exists()).toBe(true)
+    expect(rightPanelTabs.find('[data-testid="panel-tab-search"]').exists()).toBe(true)
   })
 })

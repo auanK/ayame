@@ -2298,6 +2298,20 @@ defineExpose({
           ☰
         </button>
 
+        <button
+          type="button"
+          class="btn-icon workspace-home-button"
+          data-testid="workspace-home-button"
+          aria-label="Back to vaults"
+          title="Back to vaults"
+          :disabled="viewerState.saving || viewerState.reloading"
+          @click="requestBackToVaults"
+        >
+          <svg class="home-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8.354 1.146a.5.5 0 0 0-.708 0l-6 6A.5.5 0 0 0 2 7.5v7a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5v-4h2v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.146-.354l-6-6zM2.5 14V7.707l5.5-5.5 5.5 5.5V14H10v-4a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5v4H2.5z" />
+          </svg>
+        </button>
+
         <div class="vault-dropdown-wrapper">
           <button
             type="button"
@@ -2383,6 +2397,43 @@ defineExpose({
           </div>
         </div>
       </div>
+
+      <!-- Discreet Tabs Bar (Center) -->
+      <div
+        v-if="openTabs.length > 0"
+        class="workspace-tabs-bar"
+        data-testid="workspace-tabs"
+        role="tablist"
+      >
+        <div
+          v-for="tabPath in openTabs"
+          :key="tabPath"
+          class="workspace-tab-item"
+          :class="{ 'workspace-tab-item--active': selectedFile === tabPath }"
+        >
+          <button
+            type="button"
+            class="workspace-tab-btn"
+            :class="{ 'workspace-tab--active': selectedFile === tabPath }"
+            data-testid="workspace-tab"
+            :data-tab-path="tabPath"
+            @click="selectNote(tabPath)"
+          >
+            {{ stripMarkdownExtension(tabPath.split('/').pop()) }}
+          </button>
+          <button
+            type="button"
+            class="workspace-tab-close"
+            data-testid="close-tab-button"
+            :data-tab-path="tabPath"
+            aria-label="Close tab"
+            @click.stop="closeTab(tabPath)"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      <div v-else class="workspace-tabs-spacer" aria-hidden="true" />
 
       <div class="workspace-topbar-actions">
         <button
@@ -2942,41 +2993,6 @@ defineExpose({
         class="workspace-editor-pane"
         data-testid="workspace-editor-pane"
       >
-        <!-- Discreet Tabs Bar -->
-        <div
-          v-if="openTabs.length > 0"
-          class="workspace-tabs-bar"
-          data-testid="workspace-tabs"
-          role="tablist"
-        >
-          <div
-            v-for="tabPath in openTabs"
-            :key="tabPath"
-            class="workspace-tab-item"
-            :class="{ 'workspace-tab-item--active': selectedFile === tabPath }"
-          >
-            <button
-              type="button"
-              class="workspace-tab-btn"
-              data-testid="workspace-tab"
-              :data-tab-path="tabPath"
-              @click="selectNote(tabPath)"
-            >
-              {{ stripMarkdownExtension(tabPath.split('/').pop()) }}
-            </button>
-            <button
-              type="button"
-              class="workspace-tab-close"
-              data-testid="close-tab-button"
-              :data-tab-path="tabPath"
-              aria-label="Close tab"
-              @click.stop="closeTab(tabPath)"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-
         <!-- Pending Link Notice -->
         <div
           v-if="linkNotice"
@@ -3749,7 +3765,14 @@ defineExpose({
 .workspace-topbar-left {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.home-icon {
+  width: 15px;
+  height: 15px;
+  display: block;
 }
 
 .vault-dropdown-wrapper {
@@ -3894,15 +3917,26 @@ defineExpose({
 }
 
 .workspace-splitter {
-  width: 4px;
-  flex: 0 0 4px;
+  width: 1px;
+  flex: 0 0 1px;
   background: var(--ayame-border, #34323f);
   cursor: col-resize;
   position: relative;
   user-select: none;
   touch-action: none;
-  z-index: 10;
+  z-index: 20;
   transition: background-color 0.15s ease;
+}
+
+.workspace-splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+  cursor: col-resize;
+  z-index: 1;
 }
 
 .workspace-splitter:hover,
@@ -3916,7 +3950,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   background: var(--ayame-surface, #1b1c25);
-  border-right: 1px solid var(--ayame-border, #34323f);
+  border-right: none;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -4272,13 +4306,28 @@ defineExpose({
 .workspace-tabs-bar {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 0.5rem;
-  background: var(--ayame-surface, #1b1c25);
-  border-bottom: 1px solid var(--ayame-border, #34323f);
-  height: 36px;
-  min-height: 36px;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 3px;
+  padding: 0 0.35rem;
+  height: 100%;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ayame-border, #34323f) transparent;
+}
+
+.workspace-tabs-bar::-webkit-scrollbar {
+  height: 3px;
+}
+
+.workspace-tabs-bar::-webkit-scrollbar-thumb {
+  background: var(--ayame-border, #34323f);
+  border-radius: 2px;
+}
+
+.workspace-tabs-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .workspace-tab-item {
@@ -4286,12 +4335,14 @@ defineExpose({
   align-items: center;
   height: 28px;
   padding: 0 0.55rem;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.03);
   border: 1px solid transparent;
   border-radius: 4px;
   color: var(--ayame-text-muted, #aaa6b8);
   font-size: 0.8rem;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: all 0.1s ease;
 }
 
@@ -4343,7 +4394,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   background: var(--ayame-surface, #1b1c25);
-  border-left: 1px solid var(--ayame-border, #34323f);
+  border-left: none;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -4358,10 +4409,16 @@ defineExpose({
 
 .right-panel-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.2rem;
-  padding: 0.45rem;
+  padding: 0.35rem 0.45rem;
   border-bottom: 1px solid var(--ayame-border, #34323f);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.right-panel-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .right-panel-tab {
@@ -4369,9 +4426,11 @@ defineExpose({
   border: 1px solid transparent;
   color: var(--ayame-text-muted, #aaa6b8);
   font-size: 0.75rem;
-  padding: 0.2rem 0.45rem;
+  padding: 0.2rem 0.4rem;
   border-radius: 4px;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .right-panel-tab:hover {
