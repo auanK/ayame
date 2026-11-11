@@ -2426,7 +2426,7 @@ defineExpose({
             aria-label="Close tab"
             @click.stop="closeTab(tabPath)"
           >
-            ×
+            Close
           </button>
         </div>
       </div>
@@ -2788,9 +2788,10 @@ defineExpose({
                   data-testid="new-entry-submit"
                   :disabled="creating"
                   title="Create"
+                  aria-label="Create"
                   @click="submitCreate"
                 >
-                  ✓
+                  Create
                 </button>
                 <button
                   type="button"
@@ -2798,9 +2799,10 @@ defineExpose({
                   data-testid="new-entry-cancel"
                   :disabled="creating"
                   title="Cancel"
+                  aria-label="Cancel"
                   @click="cancelCreate"
                 >
-                  ✕
+                  Cancel
                 </button>
               </div>
             </form>
@@ -2841,10 +2843,8 @@ defineExpose({
                     :style="{ paddingLeft: `${row.depth * 14 + 10}px` }"
                     @click="toggleFolder(row.entry.path)"
                   >
-                    <span class="tree-chevron" aria-hidden="true">
-                      {{ row.isExpanded ? '▾' : '▸' }}
-                    </span>
                     <span class="tree-label">{{ row.entry.name }}</span>
+                    <span class="tree-folder-state" aria-hidden="true">{{ row.isExpanded ? 'Collapse' : 'Expand' }}</span>
                   </button>
                   <button
                     type="button"
@@ -2883,9 +2883,10 @@ defineExpose({
                       data-testid="new-entry-submit"
                       :disabled="creating"
                       title="Create"
+                      aria-label="Create"
                       @click="submitCreate"
                     >
-                      ✓
+                      Create
                     </button>
                     <button
                       type="button"
@@ -2893,9 +2894,10 @@ defineExpose({
                       data-testid="new-entry-cancel"
                       :disabled="creating"
                       title="Cancel"
+                      aria-label="Cancel"
                       @click="cancelCreate"
                     >
-                      ✕
+                      Cancel
                     </button>
                   </div>
                 </form>
@@ -3446,7 +3448,7 @@ defineExpose({
           role="status"
         >
           <span>{{ workspaceNotice }}</span>
-          <button type="button" class="toast-close-btn" @click="workspaceNotice = ''">×</button>
+          <button type="button" class="toast-close-btn" aria-label="Dismiss notice" @click="workspaceNotice = ''">Dismiss</button>
         </div>
         <div
           v-for="t in toasts"
@@ -3457,7 +3459,7 @@ defineExpose({
           role="status"
         >
           <span>{{ t.message }}</span>
-          <button type="button" class="toast-close-btn" @click="removeToast(t.id)">×</button>
+          <button type="button" class="toast-close-btn" aria-label="Dismiss notification" @click="removeToast(t.id)">Dismiss</button>
         </div>
       </aside>
     </Teleport>
@@ -3484,7 +3486,7 @@ defineExpose({
             aria-label="Close"
             @click="showTrashModal = false"
           >
-            ×
+            Close
           </button>
         </header>
 
@@ -3585,7 +3587,7 @@ defineExpose({
             <h3 class="trash-modal-title">Command palette</h3>
             <p class="trash-modal-subtitle">Search commands or notes</p>
           </div>
-          <button type="button" class="modal-close-btn" @click="showCommandPalette = false">×</button>
+          <button type="button" class="modal-close-btn" aria-label="Close" @click="showCommandPalette = false">Close</button>
         </header>
         <input
           v-model="commandPaletteQuery"
@@ -3624,7 +3626,7 @@ defineExpose({
             <h3 class="trash-modal-title">Open note</h3>
             <p class="trash-modal-subtitle">Type to navigate quickly</p>
           </div>
-          <button type="button" class="modal-close-btn" @click="showQuickSwitcher = false">×</button>
+          <button type="button" class="modal-close-btn" aria-label="Close" @click="showQuickSwitcher = false">Close</button>
         </header>
         <input
           v-model="quickSwitcherQuery"
@@ -3673,7 +3675,7 @@ defineExpose({
             <h3 class="trash-modal-title">Vault settings</h3>
             <p class="trash-modal-subtitle">{{ vault.name }} ({{ vault.directory }})</p>
           </div>
-          <button type="button" class="modal-close-btn" @click="showSettingsModal = false">×</button>
+          <button type="button" class="modal-close-btn" aria-label="Close" @click="showSettingsModal = false">Close</button>
         </header>
         <div class="settings-form">
           <label class="settings-row">
@@ -4129,6 +4131,21 @@ defineExpose({
   font-weight: 500;
 }
 
+.tree-folder-state {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--ayame-text-muted, #aaa6b8);
+  opacity: 0.7;
+  flex-shrink: 0;
+  margin-left: 0.35rem;
+  user-select: none;
+}
+
+.tree-row:hover .tree-folder-state {
+  color: var(--ayame-text, #eeeaf3);
+  opacity: 1;
+}
+
 .tree-file--active {
   background: rgba(169, 154, 202, 0.14);
   color: var(--ayame-lavender, #d4cbe4);
@@ -4192,21 +4209,27 @@ defineExpose({
 
 .tree-btn-action {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--ayame-text-muted, #aaa6b8);
-  width: 20px;
   height: 20px;
+  padding: 0 0.35rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 3px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.1s ease;
 }
 
-.tree-btn-action:hover {
+.tree-btn-action:hover,
+.tree-btn-action:focus-visible {
   background: var(--ayame-hover, #242530);
   color: var(--ayame-text, #eeeaf3);
+  border-color: var(--ayame-border, #34323f);
+  outline: none;
 }
 
 /* Teleported Context Menu */
@@ -4331,20 +4354,26 @@ defineExpose({
 
 .workspace-tab-close {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: inherit;
-  font-size: 0.9rem;
+  font-size: 0.68rem;
+  font-weight: 500;
   line-height: 1;
   margin-left: 0.35rem;
-  padding: 0 2px;
+  padding: 0.12rem 0.35rem;
   cursor: pointer;
-  border-radius: 2px;
-  opacity: 0.6;
+  border-radius: 3px;
+  opacity: 0.7;
+  white-space: nowrap;
+  transition: all 0.1s ease;
 }
 
-.workspace-tab-close:hover {
+.workspace-tab-close:hover,
+.workspace-tab-close:focus-visible {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+  outline: none;
 }
 
 /* Right Panel */
@@ -4513,16 +4542,24 @@ defineExpose({
 
 .modal-close-btn {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 1.25rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
   cursor: pointer;
-  padding: 0 0.25rem;
+  padding: 0.2rem 0.5rem;
   line-height: 1;
+  border-radius: 4px;
+  white-space: nowrap;
+  transition: all 0.1s ease;
 }
 
-.modal-close-btn:hover {
+.modal-close-btn:hover,
+.modal-close-btn:focus-visible {
   color: var(--ayame-text, #eeeaf3);
+  background: var(--ayame-hover, #242530);
+  border-color: var(--ayame-border, #34323f);
+  outline: none;
 }
 
 .trash-empty {
@@ -4664,16 +4701,24 @@ defineExpose({
 
 .toast-close-btn {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 1rem;
+  font-size: 0.72rem;
+  font-weight: 500;
   cursor: pointer;
-  padding: 0;
+  padding: 0.12rem 0.35rem;
   line-height: 1;
+  border-radius: 3px;
+  white-space: nowrap;
+  transition: all 0.1s ease;
 }
 
-.toast-close-btn:hover {
+.toast-close-btn:hover,
+.toast-close-btn:focus-visible {
   color: var(--ayame-text, #eeeaf3);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  outline: none;
 }
 
 @keyframes toast-slide-in {

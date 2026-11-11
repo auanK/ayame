@@ -89,7 +89,6 @@
         <template v-else>
           <div class="vault-details">
             <div class="vault-title-line">
-              <span class="vault-icon" aria-hidden="true">◇</span>
               <h3>{{ vault.name }}</h3>
               <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
             </div>

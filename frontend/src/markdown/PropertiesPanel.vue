@@ -461,11 +461,11 @@ const handleRawYamlInput = (event) => {
         :aria-expanded="!collapsed ? 'true' : 'false'"
         @click="collapsed = !collapsed"
       >
-        <span class="properties-chevron" aria-hidden="true">{{ collapsed ? '▸' : '▾' }}</span>
         <span class="properties-title">Properties</span>
         <span v-if="effectiveProperties.length" class="properties-count">
           {{ effectiveProperties.length }}
         </span>
+        <span class="properties-toggle-state" aria-hidden="true">{{ collapsed ? 'Expand' : 'Collapse' }}</span>
       </button>
 
       <div class="properties-header-actions">
@@ -610,10 +610,10 @@ const handleRawYamlInput = (event) => {
                     data-testid="remove-tag-button"
                     :data-tag="tag"
                     :disabled="disabled"
-                    aria-label="Remove tag"
+                    :aria-label="`Remove tag ${tag}`"
                     @click="removeTagFromProperty(prop, tag)"
                   >
-                    ×
+                    Remove
                   </button>
                 </span>
                 <input
@@ -659,9 +659,10 @@ const handleRawYamlInput = (event) => {
                     class="chip-remove-btn"
                     data-testid="remove-list-item-button"
                     :disabled="disabled"
+                    :aria-label="`Remove item ${item}`"
                     @click="removeListItem(prop, itemIdx)"
                   >
-                    ×
+                    Remove
                   </button>
                 </span>
                 <input
@@ -755,7 +756,7 @@ const handleRawYamlInput = (event) => {
                   title="Open linked note"
                   @click="triggerLinkClick(prop.value)"
                 >
-                  ↗ {{ formatLinkDisplay(prop.value) }}
+                  {{ formatLinkDisplay(prop.value) }}
                 </button>
               </div>
             </div>
@@ -763,33 +764,36 @@ const handleRawYamlInput = (event) => {
             <div class="property-row-actions">
               <button
                 type="button"
-                class="property-icon-btn"
+                class="property-action-btn"
                 data-testid="move-property-up"
                 :disabled="disabled || idx === 0"
                 title="Move property up"
+                aria-label="Move property up"
                 @click="handleMoveProperty(idx, -1)"
               >
-                ↑
+                Up
               </button>
               <button
                 type="button"
-                class="property-icon-btn"
+                class="property-action-btn"
                 data-testid="move-property-down"
                 :disabled="disabled || idx === effectiveProperties.length - 1"
                 title="Move property down"
+                aria-label="Move property down"
                 @click="handleMoveProperty(idx, 1)"
               >
-                ↓
+                Down
               </button>
               <button
                 type="button"
-                class="property-icon-btn property-icon-btn--danger"
+                class="property-action-btn property-action-btn--danger"
                 data-testid="remove-property-button"
                 :disabled="disabled"
                 title="Remove property"
+                aria-label="Remove property"
                 @click="handleRemoveProperty(prop.key)"
               >
-                ×
+                Remove
               </button>
             </div>
           </div>
@@ -915,6 +919,20 @@ const handleRawYamlInput = (event) => {
   border-radius: 999px;
   background-color: rgba(169, 154, 202, 0.14);
   color: var(--ayame-lavender);
+}
+
+.properties-toggle-state {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--ayame-muted);
+  opacity: 0.8;
+  margin-left: 0.2rem;
+  user-select: none;
+}
+
+.properties-toggle:hover .properties-toggle-state {
+  color: var(--ayame-text);
+  opacity: 1;
 }
 
 .properties-action-btn {
@@ -1107,16 +1125,29 @@ const handleRawYamlInput = (event) => {
 
 .chip-remove-btn {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--ayame-muted);
-  font-size: 0.85rem;
+  font-size: 0.65rem;
+  font-weight: 500;
   line-height: 1;
-  padding: 0 0.1rem;
+  padding: 0.08rem 0.25rem;
+  border-radius: 3px;
   cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.1s ease;
 }
 
-.chip-remove-btn:hover {
+.chip-remove-btn:hover:not(:disabled),
+.chip-remove-btn:focus-visible:not(:disabled) {
   color: var(--ayame-text);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+  outline: none;
+}
+
+.chip-remove-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .chip-inline-input {
@@ -1136,7 +1167,7 @@ const handleRawYamlInput = (event) => {
 .property-row-actions {
   display: flex;
   align-items: center;
-  gap: 0.15rem;
+  gap: 0.2rem;
   opacity: 0.65;
 }
 
@@ -1144,23 +1175,35 @@ const handleRawYamlInput = (event) => {
   opacity: 1;
 }
 
-.property-icon-btn {
+.property-action-btn {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--ayame-muted);
-  font-size: 0.78rem;
-  padding: 0.15rem 0.3rem;
-  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
   cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.1s ease;
 }
 
-.property-icon-btn:hover:not(:disabled) {
+.property-action-btn:hover:not(:disabled),
+.property-action-btn:focus-visible:not(:disabled) {
   color: var(--ayame-text);
-  background-color: rgba(255, 255, 255, 0.06);
+  background-color: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  outline: none;
 }
 
-.property-icon-btn--danger:hover:not(:disabled) {
+.property-action-btn--danger:hover:not(:disabled),
+.property-action-btn--danger:focus-visible:not(:disabled) {
   color: var(--ayame-error);
+}
+
+.property-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .add-property-btn {
