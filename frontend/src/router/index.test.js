@@ -276,9 +276,6 @@ describe('Vue Router 4 & URL persistence (Sections 41-52)', () => {
       expect(
         wrapper2.find('[data-testid="open-directory-button"][data-folder-path="Cosmologia"]').attributes('aria-expanded')
       ).toBe('true')
-      expect(wrapper2.find('button[data-file-path="Cosmologia/A Gênese.md"]').classes()).toContain(
-        'tree-file--active'
-      )
       wrapper2.unmount()
     })
   })

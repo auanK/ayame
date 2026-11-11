@@ -56,6 +56,10 @@ Run the backend tests:
 npm test
 ```
 
+### Testing Policy
+
+Os testes do Ayame devem validar comportamentos observáveis, contratos e invariantes. Não devem congelar decisões transitórias de apresentação, copy, CSS, hierarquia DOM ou implementação interna. TDD RED → GREEN é obrigatório para correções de bugs e mudanças comportamentais quando viável, mas não para alterações exclusivamente visuais ou limpezas de testes. Testes de segurança, integridade, concorrência e recuperação continuam prioritários.
+
 ### Editing Markdown notes
 
 Ayame edits existing `.md` and `.markdown` files in place through a same-directory temporary file and replacement rename. Each read returns a SHA-256 revision of the exact file bytes; saves reject stale revisions and serialize Ayame writers with an adjacent lockfile such as `.note.md.ayame.lock`.

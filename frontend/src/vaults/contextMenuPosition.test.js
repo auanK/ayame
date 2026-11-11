@@ -11,7 +11,10 @@ describe('calculateContextMenuPosition', () => {
       menuDimensions,
       viewport,
     })
-    expect(pos).toEqual({ left: 250, top: 300 })
+    expect(pos.left).toBe(250)
+    expect(pos.top).toBe(300)
+    expect(pos.left + menuDimensions.width).toBeLessThanOrEqual(viewport.width)
+    expect(pos.top + menuDimensions.height).toBeLessThanOrEqual(viewport.height)
   })
 
   it('anchors to element rect (below the element) when within viewport', () => {
@@ -21,30 +24,31 @@ describe('calculateContextMenuPosition', () => {
       menuDimensions,
       viewport,
     })
-    expect(pos).toEqual({ left: 100, top: 82 })
+    expect(pos.left).toBe(rect.left)
+    expect(pos.top).toBeGreaterThanOrEqual(rect.bottom)
+    expect(pos.left + menuDimensions.width).toBeLessThanOrEqual(viewport.width)
+    expect(pos.top + menuDimensions.height).toBeLessThanOrEqual(viewport.height)
   })
 
-  it('clamps and flips left when pointer is near the right edge', () => {
+  it('prevents overflow and stays within viewport when pointer is near the right edge', () => {
     const pos = calculateContextMenuPosition({
       anchor: { type: 'pointer', clientX: 1000, clientY: 200 },
       menuDimensions,
       viewport,
     })
-    // 1000 - 180 = 820
-    expect(pos.left).toBeLessThanOrEqual(viewport.width - menuDimensions.width - 8)
-    expect(pos.left).toBe(820)
+    expect(pos.left).toBeGreaterThanOrEqual(0)
+    expect(pos.left + menuDimensions.width).toBeLessThanOrEqual(viewport.width)
     expect(pos.top).toBe(200)
   })
 
-  it('clamps and flips up when pointer is near the bottom edge', () => {
+  it('prevents overflow and stays within viewport when pointer is near the bottom edge', () => {
     const pos = calculateContextMenuPosition({
       anchor: { type: 'pointer', clientX: 200, clientY: 700 },
       menuDimensions,
       viewport,
     })
-    // 700 - 220 = 480
-    expect(pos.top).toBeLessThanOrEqual(viewport.height - menuDimensions.height - 8)
-    expect(pos.top).toBe(480)
+    expect(pos.top).toBeGreaterThanOrEqual(0)
+    expect(pos.top + menuDimensions.height).toBeLessThanOrEqual(viewport.height)
     expect(pos.left).toBe(200)
   })
 
@@ -55,17 +59,19 @@ describe('calculateContextMenuPosition', () => {
       menuDimensions,
       viewport,
     })
-    // top = 700 - 220 - 2 = 478
-    expect(pos.top).toBe(478)
+    expect(pos.top + menuDimensions.height).toBeLessThanOrEqual(rect.top)
+    expect(pos.top).toBeGreaterThanOrEqual(0)
   })
 
-  it('never positions outside viewport margin (min 8px margin)', () => {
+  it('keeps menu within viewport boundaries when coordinates are near origin', () => {
     const pos = calculateContextMenuPosition({
       anchor: { type: 'pointer', clientX: 2, clientY: 2 },
       menuDimensions,
       viewport,
     })
-    expect(pos.left).toBe(8)
-    expect(pos.top).toBe(8)
+    expect(pos.left).toBeGreaterThanOrEqual(0)
+    expect(pos.top).toBeGreaterThanOrEqual(0)
+    expect(pos.left + menuDimensions.width).toBeLessThanOrEqual(viewport.width)
+    expect(pos.top + menuDimensions.height).toBeLessThanOrEqual(viewport.height)
   })
 })

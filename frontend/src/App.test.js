@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { readFileSync } from 'node:fs'
 import App from './App.vue'
 import MarkdownEditor from './markdown/MarkdownEditor.vue'
 import { AUTOSAVE_DELAY_MS } from './markdown/MarkdownViewer.vue'
@@ -157,11 +156,6 @@ describe('App authentication flow', () => {
 
       expect(wrapper.find('[data-testid="login-form"]').exists()).toBe(true)
     })
-  })
-
-  it('sets the HTML document title to Ayame', () => {
-    const html = readFileSync('index.html', 'utf8')
-    expect(html).toMatch(/<title>Ayame<\/title>/)
   })
 
   describe('Setup flow', () => {

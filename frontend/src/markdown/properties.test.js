@@ -429,14 +429,13 @@ describe('Properties & YAML Frontmatter (Obsidian parity)', () => {
     expect(propUpdated.endsWith(mixedBody)).toBe(true)
   })
 
-  it('13. uses a dark readable type selector without changing YAML until a valid type is selected', async () => {
+  it('13. type selector does not mutate YAML until a valid type is selected', async () => {
     let currentMd = '---\nchapter: "3"\n---\n\nBody'
     const wrapper = mount(PropertiesPanel, {
       props: { markdown: currentMd, 'onUpdate:markdown': (value) => { currentMd = value } },
     })
     const selector = wrapper.find('[data-testid="property-type-select"]')
     expect(selector.exists()).toBe(true)
-    expect(selector.classes()).toContain('property-type-select')
     expect(selector.findAll('option').map((option) => option.text().trim())).toEqual([
       'Text', 'List', 'Number', 'Checkbox', 'Date', 'Date & time', 'Tags',
     ])
