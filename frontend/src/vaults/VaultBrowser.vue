@@ -2289,27 +2289,26 @@ defineExpose({
       <div class="workspace-topbar-left">
         <button
           type="button"
-          class="btn-icon"
+          class="workspace-text-button"
+          :class="{ 'workspace-text-button--active': layout.explorerOpen }"
           data-testid="toggle-explorer-button"
           :aria-expanded="layout.explorerOpen ? 'true' : 'false'"
           title="Toggle file explorer"
           @click="layout.explorerOpen = !layout.explorerOpen; persistLayout()"
         >
-          ☰
+          Explorer
         </button>
 
         <button
           type="button"
-          class="btn-icon workspace-home-button"
+          class="workspace-text-button"
           data-testid="workspace-home-button"
           aria-label="Back to vaults"
           title="Back to vaults"
           :disabled="viewerState.saving || viewerState.reloading"
           @click="requestBackToVaults"
         >
-          <svg class="home-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path d="M8.354 1.146a.5.5 0 0 0-.708 0l-6 6A.5.5 0 0 0 2 7.5v7a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5v-4h2v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.146-.354l-6-6zM2.5 14V7.707l5.5-5.5 5.5 5.5V14H10v-4a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5v4H2.5z" />
-          </svg>
+          Home
         </button>
 
         <div class="vault-dropdown-wrapper">
@@ -2321,9 +2320,7 @@ defineExpose({
             title="Vault menu"
             @click.stop="showVaultMenu = !showVaultMenu"
           >
-            <span class="vault-mark" aria-hidden="true">◇</span>
             <span class="vault-name">{{ vault.name }}</span>
-            <span class="vault-chevron" aria-hidden="true">▾</span>
           </button>
 
           <!-- Vault Dropdown Menu -->
@@ -2438,22 +2435,23 @@ defineExpose({
       <div class="workspace-topbar-actions">
         <button
           type="button"
-          class="btn-icon"
+          class="workspace-text-button"
           data-testid="command-palette-button"
           title="Commands (Ctrl+P)"
           @click="openCommandPaletteModal"
         >
-          ⌘
+          Commands
         </button>
         <button
           type="button"
-          class="btn-icon"
+          class="workspace-text-button"
+          :class="{ 'workspace-text-button--active': layout.contextOpen }"
           data-testid="toggle-right-panel-button"
           :aria-expanded="layout.contextOpen ? 'true' : 'false'"
           title="Toggle contextual panel"
           @click="layout.contextOpen = !layout.contextOpen; persistLayout()"
         >
-          ◨
+          Panel
         </button>
       </div>
     </header>
@@ -2518,22 +2516,22 @@ defineExpose({
           <div class="explorer-header-actions">
             <button
               type="button"
-              class="btn-icon-subtle"
+              class="explorer-action-btn"
               data-testid="explorer-add-button"
               title="New item"
               @click.stop="showAddMenu = !showAddMenu"
             >
-              +
+              New
             </button>
             <button
               v-if="selectedFile"
               type="button"
-              class="btn-icon-subtle"
+              class="explorer-action-btn"
               data-testid="reveal-active-file-button"
               title="Reveal active note in explorer"
               @click="revealActiveFile"
             >
-              ◎
+              Reveal
             </button>
 
             <!-- Small Add Menu -->
@@ -2773,12 +2771,6 @@ defineExpose({
               data-testid="new-entry-form"
               @submit.prevent="submitCreate"
             >
-              <span class="tree-create-icon" aria-hidden="true">
-                <svg v-if="createMode === 'folder'" data-testid="tree-folder-create-icon" viewBox="0 0 16 16" fill="none">
-                  <path d="M1.75 4.5h4.1L7.2 5.9h7.05v6.35H1.75z" />
-                </svg>
-                <span v-else>◇</span>
-              </span>
               <input
                 ref="createInputRef"
                 v-model="newEntryName"
@@ -2862,7 +2854,7 @@ defineExpose({
                     aria-label="Folder actions"
                     @click.stop="openContextMenu($event, row.entry)"
                   >
-                    ⋯
+                    Actions
                   </button>
                 </div>
 
@@ -2874,12 +2866,6 @@ defineExpose({
                   data-testid="new-entry-form"
                   @submit.prevent="submitCreate"
                 >
-                  <span class="tree-create-icon" aria-hidden="true">
-                    <svg v-if="createMode === 'folder'" data-testid="tree-folder-create-icon" viewBox="0 0 16 16" fill="none">
-                      <path d="M1.75 4.5h4.1L7.2 5.9h7.05v6.35H1.75z" />
-                    </svg>
-                    <span v-else>◇</span>
-                  </span>
                   <input
                     ref="createInputRef"
                     v-model="newEntryName"
@@ -2951,7 +2937,7 @@ defineExpose({
                   aria-label="Note actions"
                   @click.stop="openContextMenu($event, row.entry)"
                 >
-                  ⋯
+                  Actions
                 </button>
               </div>
 
@@ -2964,7 +2950,6 @@ defineExpose({
                 @dragleave.stop="handleDragLeaveTarget(row.entry.path, $event)"
                 @drop.stop.prevent="clearDragState"
               >
-                <span class="tree-unsupported-icon" aria-hidden="true">▫</span>
                 <span class="tree-label">{{ row.entry.name }}</span>
               </div>
             </template>
@@ -3068,7 +3053,6 @@ defineExpose({
           data-testid="workspace-empty-state"
         >
           <div class="workspace-empty-card">
-            <span class="workspace-empty-icon" aria-hidden="true">◇</span>
             <h3>No note open</h3>
             <p>Select a note in the explorer on the left or create a new one to get started.</p>
             <div class="workspace-empty-actions">
@@ -3547,7 +3531,6 @@ defineExpose({
           Loading trash…
         </div>
         <div v-else-if="trashItems.length === 0" class="trash-empty" data-testid="trash-empty">
-          <span class="trash-empty-icon" aria-hidden="true">🗑</span>
           <p>Trash is empty.</p>
         </div>
         <div v-else class="trash-items-list">
@@ -3559,7 +3542,6 @@ defineExpose({
             :data-trash-id="item.id"
           >
             <div class="trash-item-details">
-              <span class="trash-item-icon" aria-hidden="true">{{ item.type === 'directory' ? '📁' : '◇' }}</span>
               <div class="trash-item-meta">
                 <strong class="trash-item-name">{{ stripMarkdownExtension(item.name) }}</strong>
                 <span class="trash-item-path">Deleted from /{{ item.originalPath }}</span>
@@ -3769,10 +3751,42 @@ defineExpose({
   flex-shrink: 0;
 }
 
-.home-icon {
-  width: 15px;
-  height: 15px;
-  display: block;
+.workspace-text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 0.55rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: all 0.12s ease;
+}
+
+.workspace-text-button:hover,
+.workspace-text-button:focus-visible {
+  background: var(--ayame-hover, #242530);
+  color: var(--ayame-text, #eeeaf3);
+  border-color: var(--ayame-border, #34323f);
+  outline: none;
+}
+
+.workspace-text-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace-text-button--active {
+  background: var(--ayame-hover, #242530);
+  color: var(--ayame-primary, #a99aca);
+  border-color: var(--ayame-border, #34323f);
 }
 
 .vault-dropdown-wrapper {
@@ -3801,22 +3815,11 @@ defineExpose({
   outline: none;
 }
 
-.vault-mark {
-  color: var(--ayame-primary, #a99aca);
-  font-size: 0.95rem;
-}
-
 .vault-name {
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.vault-chevron {
-  color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.72rem;
-  margin-top: 1px;
 }
 
 .vault-dropdown-menu {
@@ -3839,29 +3842,6 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 0.35rem;
-}
-
-.btn-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-
-.btn-icon:hover,
-.btn-icon:focus-visible {
-  background: var(--ayame-hover, #242530);
-  color: var(--ayame-text, #eeeaf3);
-  border-color: var(--ayame-border, #34323f);
-  outline: none;
 }
 
 .dropdown-menu-item {
@@ -3988,24 +3968,28 @@ defineExpose({
   position: relative;
 }
 
-.btn-icon-subtle {
+.explorer-action-btn {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--ayame-text-muted, #aaa6b8);
-  width: 24px;
-  height: 24px;
+  height: 22px;
+  padding: 0 0.45rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 0.75rem;
+  font-weight: 500;
   transition: all 0.1s ease;
 }
 
-.btn-icon-subtle:hover {
+.explorer-action-btn:hover,
+.explorer-action-btn:focus-visible {
   background: var(--ayame-hover, #242530);
   color: var(--ayame-text, #eeeaf3);
+  border-color: var(--ayame-border, #34323f);
+  outline: none;
 }
 
 .explorer-add-menu {
@@ -4131,7 +4115,7 @@ defineExpose({
   color: var(--ayame-text-muted, #aaa6b8);
   cursor: pointer;
   padding: 0.1rem 0.35rem;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   border-radius: 3px;
 }
 
@@ -4171,11 +4155,6 @@ defineExpose({
   cursor: not-allowed;
 }
 
-.tree-unsupported-icon {
-  font-size: 0.75rem;
-  opacity: 0.6;
-}
-
 .tree-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4194,27 +4173,6 @@ defineExpose({
   border-radius: 4px;
   margin: 2px 0;
   padding-right: 0.35rem;
-}
-
-.tree-create-icon {
-  display: inline-flex;
-  flex: 0 0 14px;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.85rem;
-  opacity: 0.85;
-}
-
-.tree-create-icon svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  stroke: currentColor;
-  stroke-width: 1.2;
-  stroke-linejoin: round;
 }
 
 .tree-inline-input {
@@ -4577,11 +4535,6 @@ defineExpose({
   gap: 0.5rem;
 }
 
-.trash-empty-icon {
-  font-size: 2rem;
-  opacity: 0.6;
-}
-
 .trash-items-list {
   display: flex;
   flex-direction: column;
@@ -4604,11 +4557,6 @@ defineExpose({
   align-items: center;
   gap: 0.6rem;
   min-width: 0;
-}
-
-.trash-item-icon {
-  color: var(--ayame-primary, #a99aca);
-  font-size: 0.95rem;
 }
 
 .trash-item-meta {
@@ -4772,12 +4720,6 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   gap: 0.5rem;
-}
-
-.workspace-empty-icon {
-  font-size: 2.2rem;
-  color: var(--ayame-primary, #a99aca);
-  opacity: 0.8;
 }
 
 .workspace-empty-card h3 {
