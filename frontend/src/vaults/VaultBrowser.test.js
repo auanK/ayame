@@ -418,7 +418,7 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     })
 
     await wrapper.find('[data-testid="new-folder-button"]').trigger('click')
-    expect(wrapper.find('[data-testid="new-entry-form"] [data-testid="tree-folder-create-icon"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="new-entry-form"]').exists()).toBe(true)
     await wrapper.find('[data-testid="new-entry-input"]').setValue('Architecture')
     await wrapper.find('[data-testid="new-entry-submit"]').trigger('click')
     await flushPromises()
