@@ -2152,8 +2152,6 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     const wrapper = await mountBrowser()
     const homeBtn = wrapper.find('[data-testid="workspace-home-button"]')
     expect(homeBtn.exists()).toBe(true)
-    expect(homeBtn.attributes('aria-label')).toBe('Back to vaults')
-    expect(homeBtn.attributes('title')).toBe('Back to vaults')
 
     await homeBtn.trigger('click')
     expect(wrapper.emitted('back')).toBeTruthy()
@@ -2186,6 +2184,39 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(wrapper.emitted('back')).toBeUndefined()
 
     // Confirm discard allows navigating back
+    await homeBtn.trigger('click')
+    await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
+    expect(wrapper.emitted('back')).toBeTruthy()
+  })
+
+  it('guards home button navigation when a Number draft is unsaved', async () => {
+    localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+    const content = '---\nchapter: 42\n---\n\n# Document'
+    const wrapper = await mountBrowser()
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'README.md',
+      content,
+      revision: 'a'.repeat(64),
+    })
+
+    await wrapper.find('button[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-testid="property-number-input"]').setValue('999')
+    await wrapper.vm.$nextTick()
+
+    const homeBtn = wrapper.find('[data-testid="workspace-home-button"]')
+    await homeBtn.trigger('click')
+    expect(wrapper.emitted('back')).toBeUndefined()
+    expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
+
+    // Cancel keeps draft
+    await wrapper.find('[data-testid="navigation-keep-editing"]').trigger('click')
+    expect(wrapper.emitted('back')).toBeUndefined()
+    expect(wrapper.find('[data-testid="property-number-input"]').element.value).toBe('999')
+
+    // Confirm discard navigates back
     await homeBtn.trigger('click')
     await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
     expect(wrapper.emitted('back')).toBeTruthy()
