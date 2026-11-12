@@ -2927,10 +2927,11 @@ defineExpose({
                   :class="{ 'tree-file--active': selectedFile === row.entry.path }"
                   data-testid="open-file-button"
                   :data-file-path="row.entry.path"
-                  :style="{ paddingLeft: `${row.depth * 14 + 24}px` }"
+                  :style="{ paddingLeft: `${row.depth * 14 + 10}px` }"
                   @click="openFile(row.entry)"
                   @click.middle.prevent="openFile(row.entry, { newTab: true })"
                 >
+                  <span class="tree-chevron tree-chevron--spacer" aria-hidden="true" />
                   <span class="tree-label">{{ stripMarkdownExtension(row.entry.name) }}</span>
                 </button>
                 <button
@@ -2950,11 +2951,12 @@ defineExpose({
                 v-else-if="vaultSettings.showUnsupportedFiles"
                 class="tree-row tree-file tree-file--unsupported"
                 :class="{ 'tree-file--drop-invalid': dropTarget?.path === row.entry.path && dropTarget && !dropTarget.valid }"
-                :style="{ paddingLeft: `${row.depth * 14 + 24}px` }"
+                :style="{ paddingLeft: `${row.depth * 14 + 10}px` }"
                 @dragover.stop.prevent="handleDragOverFile(row.entry.path, $event)"
                 @dragleave.stop="handleDragLeaveTarget(row.entry.path, $event)"
                 @drop.stop.prevent="clearDragState"
               >
+                <span class="tree-chevron tree-chevron--spacer" aria-hidden="true" />
                 <span class="tree-label">{{ row.entry.name }}</span>
               </div>
             </template>
@@ -4135,6 +4137,11 @@ defineExpose({
   line-height: 1;
 }
 
+.tree-chevron--spacer {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .tree-row:hover .tree-chevron {
   color: var(--ayame-text, #eeeaf3);
 }
@@ -4159,9 +4166,20 @@ defineExpose({
   transition: opacity 0.1s ease, background-color 0.1s ease, color 0.1s ease;
 }
 
+.tree-row-wrapper:has(.tree-file--active) .tree-row-menu-btn,
+.tree-row-wrapper:has(.tree-folder--selected) .tree-row-menu-btn,
+.tree-file--active + .tree-row-menu-btn,
+.tree-folder--selected + .tree-row-menu-btn {
+  opacity: 0.72;
+}
+
 .tree-row-wrapper:hover .tree-row-menu-btn,
 .tree-row-wrapper:focus-within .tree-row-menu-btn,
-.tree-row-menu-btn:focus-visible {
+.tree-row-menu-btn:focus-visible,
+.tree-row-wrapper:has(.tree-file--active) .tree-row-menu-btn:hover,
+.tree-row-wrapper:has(.tree-folder--selected) .tree-row-menu-btn:hover,
+.tree-file--active + .tree-row-menu-btn:hover,
+.tree-folder--selected + .tree-row-menu-btn:hover {
   opacity: 1;
 }
 
@@ -4194,9 +4212,6 @@ defineExpose({
 .tree-file--unsupported {
   opacity: 0.72;
   cursor: default;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
 }
 
 .tree-file--unsupported:hover {
