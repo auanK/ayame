@@ -412,16 +412,10 @@ const resolveUnresolvedDescriptor = (ref, sourcePath) => {
   })
   if (!pending?.path) return null
 
-  const rawNoHeading = ref.rawTarget.split('#')[0].split('|')[0].trim()
-  const isBareWikilink = ref.kind === 'wikilink' && !rawNoHeading.includes('/')
   const label = stripMarkdownExtension(pending.name) || pending.name
-  const key = isBareWikilink
-    ? `bare:${label.toLowerCase()}`
-    : `path:${pending.path.toLowerCase()}`
-
   return {
-    id: `unresolved:${key}`,
-    path: isBareWikilink ? null : pending.path,
+    id: `unresolved:${pending.path.toLowerCase()}`,
+    path: pending.path,
     label,
   }
 }
@@ -466,12 +460,18 @@ export const applyGraphFilters = (graph, rawFilters = {}, vaultIndex = {}) => {
 
   const keptNotes = []
   const keptNoteIds = new Set()
+  const hasValidLocalCenter = Boolean(graph?.centerId && !graph?.centerMissing)
 
   for (const node of noteNodes) {
     const originalDegree = node.originalDegree ?? node.degree ?? 0
-    if (filters.showOrphans === false && originalDegree === 0) continue
-    if (parsedQuery.valid && !parsedQuery.isEmpty) {
-      if (!noteMatchesTerms(node, parsedQuery.terms, tagsByFile)) continue
+    // In a valid local neighborhood, the center note is an obligatory structural anchor
+    // and must survive Orphans and Search files without altering its originalDegree.
+    const isLocalCenter = hasValidLocalCenter && node.id === graph.centerId
+    if (!isLocalCenter) {
+      if (filters.showOrphans === false && originalDegree === 0) continue
+      if (parsedQuery.valid && !parsedQuery.isEmpty) {
+        if (!noteMatchesTerms(node, parsedQuery.terms, tagsByFile)) continue
+      }
     }
     keptNotes.push({
       ...node,

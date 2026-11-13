@@ -241,7 +241,8 @@ const formatHoverCaption = (node) => {
       Array.isArray(node.sourcePaths) && node.sourcePaths.length > 0
         ? ` — ${node.sourcePaths.join(', ')}`
         : ''
-    return `${node.label} (unresolved${origins})`
+    const targetDisplay = node.path || node.label
+    return `${targetDisplay} (unresolved${origins})`
   }
   return node.path || node.label
 }
@@ -403,12 +404,15 @@ const draw = () => {
 
       if (alpha < 0.05) continue
 
-      const showFolderDisambiguator =
+      const showDisambiguator =
         isFocused &&
-        (n.type === 'note' || !n.type) &&
         typeof n.path === 'string' &&
         (duplicateLabelCounts.get(n.label) || 0) > 1
-      const text = showFolderDisambiguator ? n.path.replace(/\.(md|markdown)$/i, '') : n.label
+      const text = showDisambiguator
+        ? n.type === 'unresolved'
+          ? n.path
+          : n.path.replace(/\.(md|markdown)$/i, '')
+        : n.label
 
       ctx.fillStyle = isFocused
         ? `rgba(238, 234, 243, ${alpha})`
