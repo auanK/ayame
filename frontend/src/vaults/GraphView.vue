@@ -10,6 +10,13 @@ import {
 } from 'd3-force'
 import GraphControls from './GraphControls.vue'
 import { createDefaultGraphFilters } from './graphSelection.js'
+import {
+  GRAPH_DISPLAY_LIMITS,
+  createDefaultGraphSettings,
+  resolveLabelOpacity,
+  computeArrowGeometry,
+  applySimulationForces,
+} from './graphSettings.js'
 
 let graphLocatorInstanceSeq = 0
 
@@ -54,6 +61,30 @@ const props = defineProps({
     type: String,
     default: 'both',
   },
+  groups: {
+    type: Array,
+    default: () => [],
+  },
+  groupColors: {
+    type: Object,
+    default: () => ({}),
+  },
+  groupErrors: {
+    type: Object,
+    default: () => ({}),
+  },
+  display: {
+    type: Object,
+    default: () => createDefaultGraphSettings().global.display,
+  },
+  forces: {
+    type: Object,
+    default: () => createDefaultGraphSettings().global.forces,
+  },
+  storageWarning: {
+    type: String,
+    default: '',
+  },
 })
 
 const emit = defineEmits([
@@ -62,6 +93,11 @@ const emit = defineEmits([
   'update:filters',
   'update:local-depth',
   'update:local-direction',
+  'update:groups',
+  'update:display',
+  'update:forces',
+  'restore-defaults',
+  'reset-groups',
 ])
 
 const MIN_SCALE = 0.15
@@ -211,6 +247,9 @@ const computeStructureKey = (graph) => {
 
 const nodeRadiusForDegree = (degree) => 3.8 + Math.min(8, Math.sqrt(Math.max(0, degree)) * 1.4)
 
+const clampDisplayMetric = (raw, { min, max, default: fallback }) =>
+  typeof raw === 'number' && Number.isFinite(raw) ? Math.max(min, Math.min(max, raw)) : fallback
+
 const screenToWorld = (sx, sy) => ({
   x: (sx - viewWidth / 2 - viewport.offsetX) / viewport.scale,
   y: (sy - viewHeight / 2 - viewport.offsetY) / viewport.scale,
@@ -219,10 +258,11 @@ const screenToWorld = (sx, sy) => ({
 const findNodeAtScreen = (sx, sy) => {
   const { x: wx, y: wy } = screenToWorld(sx, sy)
   const scalePow = Math.pow(viewport.scale, 0.7)
+  const nodeSizeMult = clampDisplayMetric(props.display?.nodeSize, GRAPH_DISPLAY_LIMITS.nodeSize)
   for (let i = simNodes.length - 1; i >= 0; i--) {
     const node = simNodes[i]
     if (typeof node.x !== 'number' || typeof node.y !== 'number') continue
-    const screenRadius = Math.max(2.5, node.radius * scalePow)
+    const screenRadius = Math.max(2, node.radius * nodeSizeMult * scalePow)
     const hitRadiusWorld = Math.max(screenRadius + 5, 8) / viewport.scale
     const dx = wx - node.x
     const dy = wy - node.y
@@ -286,12 +326,18 @@ const draw = () => {
   const cy = viewHeight / 2 + viewport.offsetY
   const scale = viewport.scale
   const scalePow = Math.pow(scale, 0.7)
+  const nodeSizeMult = clampDisplayMetric(props.display?.nodeSize, GRAPH_DISPLAY_LIMITS.nodeSize)
+  const linkThicknessMult = clampDisplayMetric(
+    props.display?.linkThickness,
+    GRAPH_DISPLAY_LIMITS.linkThickness
+  )
+  const showArrows = Boolean(props.display?.arrows)
 
   for (let i = 0; i < simNodes.length; i++) {
     const n = simNodes[i]
     n._sx = (n.x || 0) * scale + cx
     n._sy = (n.y || 0) * scale + cy
-    n._sr = Math.max(2.4, n.radius * scalePow)
+    n._sr = Math.max(2, n.radius * nodeSizeMult * scalePow)
   }
 
   const focusedId = viewport.draggingNodeId || viewport.hoveredNodeId
@@ -299,6 +345,23 @@ const draw = () => {
   const canDash = typeof ctx.setLineDash === 'function'
   const localCenterId =
     isLocalMode.value && effectiveCenterPath.value ? `note:${effectiveCenterPath.value}` : null
+
+  const noteEdgeKeys = showArrows ? new Set() : null
+  if (noteEdgeKeys) {
+    for (let i = 0; i < simLinks.length; i++) {
+      const link = simLinks[i]
+      const s = link.source
+      const t = link.target
+      if (!s || !t || s === t) continue
+      if (
+        (!link.type || link.type === 'note') &&
+        (!s.type || s.type === 'note') &&
+        (!t.type || t.type === 'note')
+      ) {
+        noteEdgeKeys.add(`${s.id}\0${t.id}`)
+      }
+    }
+  }
 
   // Draw edges
   for (let i = 0; i < simLinks.length; i++) {
@@ -311,29 +374,59 @@ const draw = () => {
     const linkType = link.type || 'note'
     if (focusedId && !isHighlighted) {
       ctx.strokeStyle = 'rgba(170, 166, 184, 0.08)'
-      ctx.lineWidth = 0.8
+      ctx.lineWidth = 0.8 * linkThicknessMult
     } else if (linkType === 'tag') {
       ctx.strokeStyle = isHighlighted ? 'rgba(110, 196, 159, 0.78)' : 'rgba(110, 196, 159, 0.28)'
-      ctx.lineWidth = isHighlighted ? 1.3 : 0.9
+      ctx.lineWidth = (isHighlighted ? 1.3 : 0.9) * linkThicknessMult
     } else if (linkType === 'unresolved') {
       ctx.strokeStyle = isHighlighted ? 'rgba(170, 166, 184, 0.55)' : 'rgba(170, 166, 184, 0.18)'
-      ctx.lineWidth = isHighlighted ? 1.1 : 0.85
+      ctx.lineWidth = (isHighlighted ? 1.1 : 0.85) * linkThicknessMult
     } else if (isHighlighted) {
       ctx.strokeStyle = 'rgba(169, 154, 202, 0.88)'
-      ctx.lineWidth = 1.4
+      ctx.lineWidth = 1.4 * linkThicknessMult
     } else {
       ctx.strokeStyle = 'rgba(170, 166, 184, 0.25)'
-      ctx.lineWidth = 1
+      ctx.lineWidth = 1 * linkThicknessMult
     }
 
     if (canDash) {
       ctx.setLineDash(linkType === 'unresolved' ? [4, 3] : [])
     }
 
+    const isNoteEdge =
+      linkType === 'note' && (!s.type || s.type === 'note') && (!t.type || t.type === 'note')
+    const arrow =
+      showArrows && isNoteEdge
+        ? computeArrowGeometry({
+            sx: s._sx,
+            sy: s._sy,
+            tx: t._sx,
+            ty: t._sy,
+            sourceRadius: s._sr,
+            targetRadius: t._sr,
+            bidirectional: noteEdgeKeys.has(`${t.id}\0${s.id}`),
+            arrowSize: Math.max(4.5, Math.min(8.5, 5.5 * Math.sqrt(linkThicknessMult))),
+          })
+        : null
+
     ctx.beginPath()
-    ctx.moveTo(s._sx, s._sy)
-    ctx.lineTo(t._sx, t._sy)
-    ctx.stroke()
+    if (arrow) {
+      ctx.moveTo(arrow.x1, arrow.y1)
+      ctx.lineTo(arrow.tipX, arrow.tipY)
+      ctx.stroke()
+
+      ctx.fillStyle = ctx.strokeStyle
+      ctx.beginPath()
+      ctx.moveTo(arrow.tipX, arrow.tipY)
+      ctx.lineTo(arrow.leftX, arrow.leftY)
+      ctx.lineTo(arrow.rightX, arrow.rightY)
+      ctx.closePath?.()
+      ctx.fill()
+    } else {
+      ctx.moveTo(s._sx, s._sy)
+      ctx.lineTo(t._sx, t._sy)
+      ctx.stroke()
+    }
   }
   if (canDash) ctx.setLineDash([])
 
@@ -346,6 +439,7 @@ const draw = () => {
     const isActiveNote =
       nodeType === 'note' && Boolean(props.activeNotePath && n.path === props.activeNotePath)
     const isCenterNode = Boolean(localCenterId && n.id === localCenterId)
+    const groupColor = nodeType === 'note' ? props.groupColors?.[n.id] || null : null
 
     if (focusedId && !isFocused && !isNeighbor) {
       ctx.fillStyle = 'rgba(170, 166, 184, 0.2)'
@@ -353,6 +447,8 @@ const draw = () => {
       ctx.fillStyle = isFocused ? '#9ae0c1' : '#6ec49f'
     } else if (nodeType === 'unresolved') {
       ctx.fillStyle = isFocused ? 'rgba(182, 178, 196, 0.72)' : 'rgba(143, 139, 163, 0.36)'
+    } else if (groupColor) {
+      ctx.fillStyle = groupColor
     } else if (isFocused || isCenterNode) {
       ctx.fillStyle = '#d4cbe4'
     } else if (isNeighbor || isActiveNote) {
@@ -380,7 +476,7 @@ const draw = () => {
   }
 
   // Draw labels only when zoom justifies them or when node is focused/neighbor
-  const baseLabelAlpha = scale < 0.48 ? 0 : Math.min(0.88, (scale - 0.48) / 0.45)
+  const baseLabelAlpha = resolveLabelOpacity(scale, props.display?.textFadeThreshold)
   if (baseLabelAlpha > 0 || focusedId) {
     ctx.font = '11.5px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     ctx.textAlign = 'center'
@@ -582,10 +678,12 @@ const syncSimulationWithModel = (graph) => {
       .velocityDecay(0.42)
       .on('tick', scheduleDraw)
       .on('end', scheduleDraw)
+    applySimulationForces(simulation, props.forces, { restart: false })
   } else {
     simulation.nodes(simNodes)
     const linkForce = simulation.force('link')
     if (linkForce) linkForce.links(simLinks)
+    applySimulationForces(simulation, props.forces, { restart: false })
     simulation.alpha(hadExistingNodes ? 0.35 : 0.9).restart()
   }
 
@@ -867,10 +965,21 @@ watch(viewStatus, async (status) => {
 })
 
 watch(
-  () => [props.activeNotePath, effectiveCenterPath.value],
+  () => [props.activeNotePath, effectiveCenterPath.value, props.display, props.groupColors],
   () => {
     scheduleDraw()
-  }
+  },
+  { deep: true }
+)
+
+watch(
+  () => props.forces,
+  (nextForces) => {
+    if (!simulation) return
+    applySimulationForces(simulation, nextForces)
+    scheduleDraw()
+  },
+  { deep: true }
 )
 
 watch(filtersOpen, async () => {
@@ -994,13 +1103,14 @@ defineExpose({
           class="graph-filters-toggle"
           :class="{
             'graph-filters-toggle--open': filtersOpen,
-            'graph-filters-toggle--active': hasActiveFilters,
+            'graph-filters-toggle--active': hasActiveFilters || groups.length > 0,
           }"
           data-testid="graph-filters-toggle"
+          aria-label="Graph settings"
           :aria-expanded="filtersOpen ? 'true' : 'false'"
           @click="filtersOpen = !filtersOpen"
         >
-          Filters
+          Settings
         </button>
       </div>
 
@@ -1061,7 +1171,16 @@ defineExpose({
       v-if="filtersOpen && showHeaderBar"
       :filters="filters"
       :query-error="queryError"
+      :groups="groups"
+      :group-errors="groupErrors"
+      :display="display"
+      :forces="forces"
       @update:filters="emit('update:filters', $event)"
+      @update:groups="emit('update:groups', $event)"
+      @update:display="emit('update:display', $event)"
+      @update:forces="emit('update:forces', $event)"
+      @restore-defaults="emit('restore-defaults')"
+      @reset-groups="emit('reset-groups')"
     />
 
     <div ref="stageRef" class="graph-stage">
@@ -1167,7 +1286,7 @@ defineExpose({
         />
 
         <div
-          v-if="hasRefreshError || isIncomplete || hasFiltersRemovedOthers"
+          v-if="hasRefreshError || isIncomplete || hasFiltersRemovedOthers || storageWarning"
           class="graph-notices"
         >
           <div
@@ -1204,6 +1323,15 @@ defineExpose({
             role="status"
           >
             Graph data is incomplete.
+          </div>
+
+          <div
+            v-if="storageWarning"
+            class="graph-incomplete-notice"
+            data-testid="graph-storage-warning"
+            role="status"
+          >
+            {{ storageWarning }}
           </div>
         </div>
 

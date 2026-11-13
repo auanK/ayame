@@ -98,17 +98,69 @@ describe('GraphView.vue', () => {
     }
 
     originalGetContext = HTMLCanvasElement.prototype.getContext
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
-      setTransform: vi.fn(),
-      clearRect: vi.fn(),
-      beginPath: vi.fn(),
-      moveTo: vi.fn(),
-      lineTo: vi.fn(),
-      stroke: vi.fn(),
-      arc: vi.fn(),
-      fill: vi.fn(),
-      fillText: vi.fn(),
-    }))
+    const ctxByCanvas = new WeakMap()
+    HTMLCanvasElement.prototype.getContext = vi.fn(function getMockContext() {
+      let ctx = ctxByCanvas.get(this)
+      if (!ctx) {
+        const recorded = {
+          arcs: [],
+          texts: [],
+          strokes: [],
+          fills: [],
+          moves: [],
+          lines: [],
+        }
+        let currentPath = []
+        ctx = {
+          _recorded: recorded,
+          fillStyle: '',
+          strokeStyle: '',
+          lineWidth: 1,
+          font: '',
+          textAlign: 'left',
+          textBaseline: 'alphabetic',
+          setTransform: vi.fn(),
+          clearRect: vi.fn(),
+          setLineDash: vi.fn(),
+          beginPath: vi.fn(() => {
+            currentPath = []
+          }),
+          closePath: vi.fn(() => {
+            currentPath.push({ op: 'close' })
+          }),
+          moveTo: vi.fn((x, y) => {
+            recorded.moves.push({ x, y })
+            currentPath.push({ op: 'move', x, y })
+          }),
+          lineTo: vi.fn((x, y) => {
+            recorded.lines.push({ x, y })
+            currentPath.push({ op: 'line', x, y })
+          }),
+          stroke: vi.fn(() => {
+            recorded.strokes.push({
+              strokeStyle: ctx.strokeStyle,
+              lineWidth: ctx.lineWidth,
+              path: [...currentPath],
+            })
+          }),
+          arc: vi.fn((x, y, r) => {
+            recorded.arcs.push({ x, y, r })
+            currentPath.push({ op: 'arc', x, y, r })
+          }),
+          fill: vi.fn(() => {
+            recorded.fills.push({
+              fillStyle: ctx.fillStyle,
+              path: [...currentPath],
+            })
+          }),
+          fillText: vi.fn((text, x, y) => {
+            recorded.texts.push({ text, x, y, fillStyle: ctx.fillStyle })
+          }),
+        }
+        ctxByCanvas.set(this, ctx)
+      }
+      return ctx
+    })
 
     originalGetBoundingClientRect = Element.prototype.getBoundingClientRect
     Element.prototype.getBoundingClientRect = vi.fn(() => ({
@@ -684,6 +736,260 @@ describe('GraphView.vue', () => {
     canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: tX, clientY: tY }))
     canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: tX, clientY: tY }))
     expect(wrapper.emitted('open-note')).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
+  it('applies Display controls (arrows, nodeSize, linkThickness, textFadeThreshold) and Group colors without restarting D3 simulation', async () => {
+    const flushFrame = (canvasEl) => {
+      const ctx = canvasEl.getContext('2d')
+      ctx._recorded.arcs.length = 0
+      ctx._recorded.texts.length = 0
+      ctx._recorded.strokes.length = 0
+      ctx._recorded.fills.length = 0
+      ctx._recorded.moves.length = 0
+      ctx._recorded.lines.length = 0
+      const callbacks = [...rafQueue.values()]
+      rafQueue.clear()
+      callbacks.forEach((cb) => cb())
+      return {
+        arcs: [...ctx._recorded.arcs],
+        texts: [...ctx._recorded.texts],
+        strokes: [...ctx._recorded.strokes],
+        fills: [...ctx._recorded.fills],
+        moves: [...ctx._recorded.moves],
+        lines: [...ctx._recorded.lines],
+      }
+    }
+
+    const index = buildVaultIndex({
+      directory: 'C:/vaults/story',
+      complete: true,
+      failures: [],
+      files: ['A.md', 'B.md', 'C.md'],
+      notes: [
+        { path: 'A.md', content: '#focus [[B]] [[C]] [[Missing]]', mtimeMs: 1000 },
+        { path: 'B.md', content: '[[A]]', mtimeMs: 1000 },
+        { path: 'C.md', content: 'Dest.', mtimeMs: 1000 },
+      ],
+    })
+    const base = buildGraphModel(index)
+    const graph = projectGraphView({
+      baseGraph: base,
+      vaultIndex: index,
+      mode: 'global',
+      filters: { ...createDefaultGraphFilters(), showTags: true, existingFilesOnly: false },
+    })
+
+    const wrapper = mount(GraphView, {
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+        groupColors: { 'note:A.md': '#e06c75', 'tag:#focus': '#111111' },
+        display: { arrows: false, textFadeThreshold: 0.48, nodeSize: 1, linkThickness: 1 },
+      },
+    })
+
+    expect(simulationRecords).toHaveLength(1)
+    const sim = simulationRecords[0]
+    const nA = sim.nodes().find((n) => n.id === 'note:A.md')
+    const nB = sim.nodes().find((n) => n.id === 'note:B.md')
+    const nC = sim.nodes().find((n) => n.id === 'note:C.md')
+    nA.x = 0
+    nA.y = 0
+    nB.x = 120
+    nB.y = 0
+    nC.x = 0
+    nC.y = 120
+    const tagNode = sim.nodes().find((n) => n.type === 'tag')
+    const unresolvedNode = sim.nodes().find((n) => n.type === 'unresolved')
+    tagNode.x = -120
+    tagNode.y = 0
+    unresolvedNode.x = 0
+    unresolvedNode.y = -120
+
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+    const initialDraw = flushFrame(canvasEl)
+
+    // Group color fills A.md (#e06c75), while tag node keeps #6ec49f semantic color (ignores groupColors on tags)
+    expect(initialDraw.fills.some((f) => f.fillStyle === '#e06c75')).toBe(true)
+    expect(initialDraw.fills.some((f) => f.fillStyle === '#6ec49f')).toBe(true)
+    expect(initialDraw.fills.some((f) => f.fillStyle === '#111111')).toBe(false)
+
+    // At scale 1 and threshold 0.48, labels render; no arrowhead polygon triangles yet
+    expect(initialDraw.texts.length).toBeGreaterThan(0)
+    const triangleFillsBefore = initialDraw.fills.filter((f) => f.path.some((p) => p.op === 'close'))
+    expect(triangleFillsBefore).toHaveLength(0)
+
+    // Baseline click at 15px offset from C misses at nodeSize=1 (radius ~5.2, hit ~10.2)
+    const smallHitMissX = 400 + nC.x + 15
+    const smallHitMissY = 300 + nC.y
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: smallHitMissX, clientY: smallHitMissY }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: smallHitMissX, clientY: smallHitMissY }))
+    expect(wrapper.emitted('open-note')).toBeUndefined()
+
+    await wrapper.setProps({
+      display: { arrows: true, textFadeThreshold: 1.5, nodeSize: 2.5, linkThickness: 2.4 },
+    })
+    await nextTick()
+
+    // Display updates NEVER recreate forceSimulation and NEVER shift node positions
+    expect(simulationRecords).toHaveLength(1)
+    expect(nA.x).toBe(0)
+    expect(nB.x).toBe(120)
+
+    const updatedDraw = flushFrame(canvasEl)
+    // Threshold 1.5 > current scale 1 -> labels hidden when not focused
+    expect(updatedDraw.texts).toHaveLength(0)
+
+    // Node radii scaled noticeably larger
+    const maxRadiusBefore = Math.max(...initialDraw.arcs.map((a) => a.r))
+    const maxRadiusAfter = Math.max(...updatedDraw.arcs.map((a) => a.r))
+    expect(maxRadiusAfter).toBeGreaterThan(maxRadiusBefore * 1.8)
+
+    // Link widths scaled cleanly
+    const maxStrokeAfter = Math.max(...updatedDraw.strokes.map((s) => s.lineWidth))
+    expect(maxStrokeAfter).toBeGreaterThan(2)
+
+    // Arrows drawn for real note edges (A->B, B->A, A->C => 3 arrows), NEVER for tag or unresolved edges
+    const triangleFillsAfter = updatedDraw.fills.filter((f) => f.path.some((p) => p.op === 'close'))
+    expect(triangleFillsAfter).toHaveLength(3)
+    expect(
+      triangleFillsAfter.every((f) => f.path.every((p) => (p.x === undefined || Number.isFinite(p.x)) && (p.y === undefined || Number.isFinite(p.y))))
+    ).toBe(true)
+
+    // Enlarged node C is now clickable at offset 15px from center
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: smallHitMissX, clientY: smallHitMissY }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: smallHitMissX, clientY: smallHitMissY }))
+    expect(wrapper.emitted('open-note')?.[0]).toEqual(['C.md'])
+
+    // Coincident nodes with arrows enabled produce finite draw calls and do not throw
+    nB.x = 0
+    nB.y = 0
+    const zeroDistDraw = flushFrame(canvasEl)
+    expect(zeroDistDraw.strokes.length).toBeGreaterThan(0)
+
+    wrapper.unmount()
+  })
+
+  it('updates live D3 forces without recreating simulation and affects physical layout predictably', async () => {
+    const index = sampleIndex()
+    const base = buildGraphModel(index)
+    const graph = projectGraphView({ baseGraph: base, vaultIndex: index, mode: 'global' })
+
+    const wrapper = mount(GraphView, {
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+        forces: { centerForce: 0.055, repelForce: 165, linkForce: 0.55, linkDistance: 60 },
+      },
+    })
+
+    expect(simulationRecords).toHaveLength(1)
+    const sim = simulationRecords[0]
+    sim.stop()
+    const nodeA = sim.nodes().find((n) => n.id === 'note:Historia.md')
+    nodeA.x = 42
+    nodeA.y = -18
+
+    // Zoom & pan before force adjustment to verify viewport is preserved
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+    canvasEl.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, clientX: 400, clientY: 300 }))
+
+    const restartsBefore = sim.restart.mock.calls.length
+    await wrapper.setProps({
+      forces: { centerForce: 0.45, repelForce: 340, linkForce: 0.9, linkDistance: 150 },
+    })
+    await nextTick()
+
+    expect(simulationRecords).toHaveLength(1)
+    expect(nodeA.x).toBe(42)
+    expect(nodeA.y).toBe(-18)
+    expect(sim.force('x').strength()()).toBeCloseTo(0.45, 5)
+    expect(sim.force('y').strength()()).toBeCloseTo(0.45, 5)
+    expect(sim.force('charge').strength()()).toBeCloseTo(-340, 5)
+    expect(sim.force('link').strength()()).toBeCloseTo(0.9, 5)
+    expect(sim.force('link').distance()()).toBeCloseTo(150, 5)
+    expect(sim.restart.mock.calls.length).toBeGreaterThan(restartsBefore)
+
+    // Physical sanity: connected distance grows when linkDistance increases over fixed simulation ticks
+    const heroNode = sim.nodes().find((n) => n.id === 'note:Personagens/Heroi.md')
+    nodeA.x = 0
+    nodeA.y = 0
+    nodeA.vx = 0
+    nodeA.vy = 0
+    heroNode.x = 50
+    heroNode.y = 0
+    heroNode.vx = 0
+    heroNode.vy = 0
+    sim.stop()
+
+    await wrapper.setProps({
+      forces: { centerForce: 0.02, repelForce: 120, linkForce: 0.9, linkDistance: 40 },
+    })
+    await nextTick()
+    sim.stop()
+    sim.tick(40)
+    const closeDistance = Math.hypot(heroNode.x - nodeA.x, heroNode.y - nodeA.y)
+
+    await wrapper.setProps({
+      forces: { centerForce: 0.02, repelForce: 120, linkForce: 0.9, linkDistance: 180 },
+    })
+    await nextTick()
+    sim.stop()
+    sim.tick(40)
+    const farDistance = Math.hypot(heroNode.x - nodeA.x, heroNode.y - nodeA.y)
+    expect(farDistance).toBeGreaterThan(closeDistance)
+
+    wrapper.unmount()
+  })
+
+  it('exposes Groups, Display, Forces, and Restore default settings controls and emits clean updates', async () => {
+    const index = sampleIndex()
+    const base = buildGraphModel(index)
+    const graph = projectGraphView({ baseGraph: base, vaultIndex: index, mode: 'global' })
+
+    const wrapper = mount(GraphView, {
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+        groups: [{ id: 'g1', query: 'path:', color: '#e06c75' }],
+        groupErrors: { g1: 'Operator "path:" requires a value.' },
+      },
+    })
+
+    await wrapper.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+
+    // Expand Groups section -> displays existing group query, error, add/move/remove buttons
+    await wrapper.find('[data-testid="graph-section-groups"]').trigger('click')
+    expect(wrapper.find('[data-testid="graph-group-error-g1"]').text()).toContain('path:')
+    await wrapper.find('[data-testid="graph-group-add"]').trigger('click')
+    expect(wrapper.emitted('update:groups')?.[0]?.[0]).toHaveLength(2)
+
+    await wrapper.find('[data-testid="graph-group-query-g1"]').setValue('tag:#lore')
+    const queryUpdate = wrapper.emitted('update:groups').at(-1)[0]
+    expect(queryUpdate[0].query).toBe('tag:#lore')
+
+    await wrapper.find('[data-testid="graph-group-color-g1"]').setValue('#98c379')
+    expect(wrapper.emitted('update:groups').at(-1)[0][0].color).toBe('#98c379')
+
+    await wrapper.find('[data-testid="graph-group-remove-g1"]').trigger('click')
+    expect(wrapper.emitted('update:groups').at(-1)[0]).toEqual([])
+
+    // Expand Display section & toggle Arrows
+    await wrapper.find('[data-testid="graph-section-display"]').trigger('click')
+    await wrapper.find('[data-testid="graph-display-arrows"]').setValue(true)
+    expect(wrapper.emitted('update:display').at(-1)[0].arrows).toBe(true)
+
+    // Expand Forces section & adjust Repel force
+    await wrapper.find('[data-testid="graph-section-forces"]').trigger('click')
+    await wrapper.find('[data-testid="graph-force-repel"]').setValue('280')
+    expect(wrapper.emitted('update:forces').at(-1)[0].repelForce).toBe(280)
+
+    // Restore default settings emits clean action
+    await wrapper.find('[data-testid="graph-restore-defaults"]').trigger('click')
+    expect(wrapper.emitted('restore-defaults')).toHaveLength(1)
 
     wrapper.unmount()
   })

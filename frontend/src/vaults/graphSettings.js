@@ -453,7 +453,7 @@ export const computeArrowGeometry = ({
 }
 
 /** Update live D3 force parameters without recreating the simulation or dropping node positions. */
-export const applySimulationForces = (simulation, rawForces) => {
+export const applySimulationForces = (simulation, rawForces, { restart = true } = {}) => {
   if (!simulation || typeof simulation.force !== 'function') return
   const forces = normalizeForces(rawForces)
 
@@ -466,5 +466,7 @@ export const applySimulationForces = (simulation, rawForces) => {
     linkForce.distance?.(forces.linkDistance)
   }
 
-  simulation.alpha?.(0.32)?.restart?.()
+  if (restart) {
+    simulation.alpha?.(0.32)?.restart?.()
+  }
 }
