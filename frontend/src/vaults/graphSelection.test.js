@@ -4,7 +4,6 @@ import { buildGraphModel } from './graphModel.js'
 import {
   DEFAULT_GRAPH_FILTERS,
   createDefaultGraphFilters,
-  deriveLocalGraph,
   parseGraphSearchQuery,
   applyGraphFilters,
   projectGraphView,
@@ -21,193 +20,6 @@ const makeVaultIndex = (notes, { complete = true, failures = [] } = {}) =>
   })
 
 describe('graphSelection', () => {
-  describe('deriveLocalGraph', () => {
-    it('expands neighborhoods accurately from depth 1 to 5', () => {
-      // Chain: N0 -> N1 -> N2 -> N3 -> N4 -> N5 -> N6
-      const index = makeVaultIndex([
-        { path: 'N0.md', content: '[[N1]]' },
-        { path: 'N1.md', content: '[[N2]]' },
-        { path: 'N2.md', content: '[[N3]]' },
-        { path: 'N3.md', content: '[[N4]]' },
-        { path: 'N4.md', content: '[[N5]]' },
-        { path: 'N5.md', content: '[[N6]]' },
-        { path: 'N6.md', content: '' },
-      ])
-      const base = buildGraphModel(index)
-
-      expect(deriveLocalGraph(base, { centerPath: 'N0.md', depth: 1 }).nodes.map((n) => n.path)).toEqual([
-        'N0.md',
-        'N1.md',
-      ])
-      expect(deriveLocalGraph(base, { centerPath: 'N0.md', depth: 2 }).nodes.map((n) => n.path)).toEqual([
-        'N0.md',
-        'N1.md',
-        'N2.md',
-      ])
-      expect(deriveLocalGraph(base, { centerPath: 'N0.md', depth: 5 }).nodes.map((n) => n.path)).toEqual([
-        'N0.md',
-        'N1.md',
-        'N2.md',
-        'N3.md',
-        'N4.md',
-        'N5.md',
-      ])
-    })
-
-    it('clamps out-of-range depth values to [1, 5]', () => {
-      const index = makeVaultIndex([
-        { path: 'N0.md', content: '[[N1]]' },
-        { path: 'N1.md', content: '[[N2]]' },
-        { path: 'N2.md', content: '[[N3]]' },
-        { path: 'N3.md', content: '[[N4]]' },
-        { path: 'N4.md', content: '[[N5]]' },
-        { path: 'N5.md', content: '[[N6]]' },
-        { path: 'N6.md', content: '' },
-      ])
-      const base = buildGraphModel(index)
-
-      const low = deriveLocalGraph(base, { centerPath: 'N0.md', depth: 0 })
-      expect(low.depth).toBe(1)
-      expect(low.nodes.map((n) => n.path)).toEqual(['N0.md', 'N1.md'])
-
-      const high = deriveLocalGraph(base, { centerPath: 'N0.md', depth: 9 })
-      expect(high.depth).toBe(5)
-      expect(high.nodes.map((n) => n.path)).not.toContain('N6.md')
-    })
-
-    it('respects outgoing, incoming, and both direction policies including mutual links', () => {
-      const index = makeVaultIndex([
-        { path: 'Center.md', content: '[[Out1]]' },
-        { path: 'Out1.md', content: '[[Center]] [[Out2]]' }, // mutual link with Center!
-        { path: 'Out2.md', content: '' },
-        { path: 'In1.md', content: '[[Center]]' },
-        { path: 'In2.md', content: '[[In1]]' },
-      ])
-      const base = buildGraphModel(index)
-
-      const out1 = deriveLocalGraph(base, { centerPath: 'Center.md', depth: 1, direction: 'outgoing' })
-      expect(out1.nodes.map((n) => n.path)).toEqual(['Center.md', 'Out1.md'])
-      // Out1 -> Center is incoming into Center, so excluded under depth-1 outgoing policy
-      expect(out1.edges).toEqual([{ source: 'note:Center.md', target: 'note:Out1.md' }])
-
-      const in1 = deriveLocalGraph(base, { centerPath: 'Center.md', depth: 1, direction: 'incoming' })
-      expect(in1.nodes.map((n) => n.path)).toEqual(['Center.md', 'In1.md', 'Out1.md'])
-      // Center -> Out1 is outgoing from Center, so excluded under depth-1 incoming policy
-      expect(in1.edges).toEqual([
-        { source: 'note:In1.md', target: 'note:Center.md' },
-        { source: 'note:Out1.md', target: 'note:Center.md' },
-      ])
-
-      const both1 = deriveLocalGraph(base, { centerPath: 'Center.md', depth: 1, direction: 'both' })
-      expect(both1.nodes.map((n) => n.path)).toEqual(['Center.md', 'In1.md', 'Out1.md'])
-      expect(both1.edges).toEqual([
-        { source: 'note:Center.md', target: 'note:Out1.md' },
-        { source: 'note:In1.md', target: 'note:Center.md' },
-        { source: 'note:Out1.md', target: 'note:Center.md' },
-      ])
-    })
-
-    it('includes existing edges between same-depth neighbors in both mode without inventing artificial ones', () => {
-      const index = makeVaultIndex([
-        { path: 'Center.md', content: '[[A]] [[B]] [[C]]' },
-        { path: 'A.md', content: '[[B]]' },
-        { path: 'B.md', content: '' },
-        { path: 'C.md', content: '' },
-      ])
-      const base = buildGraphModel(index)
-
-      const local = deriveLocalGraph(base, { centerPath: 'Center.md', depth: 1, direction: 'both' })
-      expect(local.nodes.map((n) => n.path)).toEqual(['A.md', 'B.md', 'C.md', 'Center.md'])
-      expect(local.edges).toEqual([
-        { source: 'note:A.md', target: 'note:B.md' },
-        { source: 'note:Center.md', target: 'note:A.md' },
-        { source: 'note:Center.md', target: 'note:B.md' },
-        { source: 'note:Center.md', target: 'note:C.md' },
-      ])
-    })
-
-    it('handles cycles and self-links safely without infinite loops or duplicates', () => {
-      const index = makeVaultIndex([
-        { path: 'A.md', content: '[[A]] [[B]]' },
-        { path: 'B.md', content: '[[C]]' },
-        { path: 'C.md', content: '[[A]]' },
-      ])
-      const base = buildGraphModel(index)
-
-      const local = deriveLocalGraph(base, { centerPath: 'A.md', depth: 5, direction: 'outgoing' })
-      expect(local.nodes.map((n) => n.path)).toEqual(['A.md', 'B.md', 'C.md'])
-      expect(local.edges).toEqual([
-        { source: 'note:A.md', target: 'note:B.md' },
-        { source: 'note:B.md', target: 'note:C.md' },
-        { source: 'note:C.md', target: 'note:A.md' },
-      ])
-
-      const withSyntheticSelfLoop = {
-        ...base,
-        edges: [{ source: 'note:A.md', target: 'note:A.md' }, ...base.edges],
-      }
-      const localSelf = deriveLocalGraph(withSyntheticSelfLoop, {
-        centerPath: 'A.md',
-        depth: 1,
-        direction: 'outgoing',
-      })
-      expect(localSelf.nodes.map((n) => n.path)).toEqual(['A.md', 'B.md'])
-      expect(localSelf.edges).toEqual([
-        { source: 'note:A.md', target: 'note:A.md' },
-        { source: 'note:A.md', target: 'note:B.md' },
-      ])
-    })
-
-    it('returns isolated single node when center exists with no connections', () => {
-      const index = makeVaultIndex([
-        { path: 'Solo.md', content: 'Just text' },
-        { path: 'Other.md', content: '[[Third]]' },
-        { path: 'Third.md', content: '' },
-      ])
-      const base = buildGraphModel(index)
-
-      const local = deriveLocalGraph(base, { centerPath: 'Solo.md', depth: 2 })
-      expect(local.nodes.map((n) => n.path)).toEqual(['Solo.md'])
-      expect(local.edges).toEqual([])
-      expect(local.centerMissing).toBe(false)
-    })
-
-    it('handles missing or empty centerPath without falling back to another note', () => {
-      const index = makeVaultIndex([
-        { path: 'A.md', content: '[[B]]' },
-        { path: 'B.md', content: '' },
-      ])
-      const base = buildGraphModel(index)
-
-      const noCenter = deriveLocalGraph(base, { centerPath: null })
-      expect(noCenter.nodes).toEqual([])
-      expect(noCenter.reason).toBe('no-center')
-      expect(noCenter.centerMissing).toBe(false)
-
-      const missingCenter = deriveLocalGraph(base, { centerPath: 'Ghost.md' })
-      expect(missingCenter.nodes).toEqual([])
-      expect(missingCenter.centerMissing).toBe(true)
-      expect(missingCenter.reason).toBe('center-missing')
-    })
-
-    it('does not mutate the base global graph and produces deterministic results', () => {
-      const index = makeVaultIndex([
-        { path: 'A.md', content: '[[B]] [[C]]' },
-        { path: 'B.md', content: '[[C]]' },
-        { path: 'C.md', content: '' },
-      ])
-      const base = buildGraphModel(index)
-      const snapshot = structuredClone(base)
-
-      const first = deriveLocalGraph(base, { centerPath: 'A.md', depth: 1 })
-      const second = deriveLocalGraph(base, { centerPath: 'A.md', depth: 1 })
-
-      expect(base).toEqual(snapshot)
-      expect(first).toEqual(second)
-      expect(first.nodes[0]).not.toBe(base.nodes[0])
-    })
-  })
-
   describe('parseGraphSearchQuery', () => {
     it('accepts empty or whitespace-only queries as empty valid filter', () => {
       expect(parseGraphSearchQuery('')).toMatchObject({ valid: true, isEmpty: true, terms: [] })
@@ -378,61 +190,14 @@ describe('graphSelection', () => {
       expect(partialResult.nodes.filter((n) => n.type === 'unresolved')).toEqual([])
     })
 
-    it('respects local hop depth and direction for unresolved targets', () => {
+    it('adds case-unified tag nodes only for visible notes in Global Graph', () => {
       const index = makeVaultIndex([
-        { path: 'Center.md', content: '[[B]] [[MissingA]]' },
-        { path: 'B.md', content: '[[MissingB]]' },
-      ])
-      const base = buildGraphModel(index)
-
-      const depth1Both = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'local',
-        centerPath: 'Center.md',
-        depth: 1,
-        direction: 'both',
-        filters: { ...createDefaultGraphFilters(), existingFilesOnly: false },
-      })
-      expect(depth1Both.nodes.filter((n) => n.type === 'unresolved').map((n) => n.label)).toEqual([
-        'MissingA',
-      ])
-
-      const depth2Both = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'local',
-        centerPath: 'Center.md',
-        depth: 2,
-        direction: 'both',
-        filters: { ...createDefaultGraphFilters(), existingFilesOnly: false },
-      })
-      expect(depth2Both.nodes.filter((n) => n.type === 'unresolved').map((n) => n.label)).toEqual([
-        'MissingA',
-        'MissingB',
-      ])
-
-      const depth1Incoming = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'local',
-        centerPath: 'Center.md',
-        depth: 1,
-        direction: 'incoming',
-        filters: { ...createDefaultGraphFilters(), existingFilesOnly: false },
-      })
-      expect(depth1Incoming.nodes.filter((n) => n.type === 'unresolved')).toEqual([])
-    })
-
-    it('adds case-unified tag nodes only for visible notes and prevents tag bridges in Local Graph', () => {
-      const index = makeVaultIndex([
-        { path: 'Center.md', content: '#Magia [[Direct]]' },
+        { path: 'Alpha.md', content: '#Magia [[Direct]]' },
         { path: 'Direct.md', content: '#magia' },
-        { path: 'UnrelatedSameTag.md', content: '#MAGIA #Secreta' },
+        { path: 'HiddenBySearch.md', content: '#MAGIA #Secreta' },
       ])
       const base = buildGraphModel(index)
 
-      // Global with tags: one unified tag:magia node plus tag:secreta
       const globalWithTags = applyGraphFilters(
         base,
         { ...createDefaultGraphFilters(), showTags: true },
@@ -441,68 +206,75 @@ describe('graphSelection', () => {
       const magiaNodes = globalWithTags.nodes.filter((n) => n.id === 'tag:magia')
       expect(magiaNodes).toHaveLength(1)
       expect(magiaNodes[0].degree).toBe(3)
+      expect(globalWithTags.nodes.some((n) => n.id === 'tag:secreta')).toBe(true)
 
-      // Local depth 1 on Center with tags: does NOT bridge to UnrelatedSameTag.md or include #Secreta
-      const localWithTags = projectGraphView({
+      // When search excludes HiddenBySearch, #Secreta is omitted and tag:magia degree drops cleanly
+      const filteredWithTags = projectGraphView({
         baseGraph: base,
         vaultIndex: index,
-        mode: 'local',
-        centerPath: 'Center.md',
-        depth: 1,
-        direction: 'both',
-        filters: { ...createDefaultGraphFilters(), showTags: true },
+        filters: { ...createDefaultGraphFilters(), searchQuery: 'Alpha Direct', showTags: true },
       })
-      expect(localWithTags.nodes.map((n) => n.id)).toEqual([
-        'note:Center.md',
-        'note:Direct.md',
-        'tag:magia',
-      ])
+      const emptyFiltered = projectGraphView({
+        baseGraph: base,
+        vaultIndex: index,
+        filters: { ...createDefaultGraphFilters(), searchQuery: 'Alpha', showTags: true },
+      })
+      expect(filteredWithTags.nodes).toEqual([])
+      expect(emptyFiltered.nodes.map((n) => n.id)).toEqual(['note:Alpha.md', 'tag:magia'])
+      expect(emptyFiltered.nodes.find((n) => n.id === 'tag:magia').degree).toBe(1)
+      expect(emptyFiltered.nodes.some((n) => n.id === 'tag:secreta')).toBe(false)
     })
 
-    it('reports empty or single-center filter outcomes cleanly in Local Graph and stays live after vault index updates', () => {
+    it('projects only the global graph without local-mode semantics or residual local metadata', () => {
       let index = makeVaultIndex([
         { path: 'Heroi.md', content: '[[Historia]] #protagonista' },
         { path: 'Historia.md', content: '[[Falta]] #lore' },
+        { path: 'Isolada.md', content: '' },
       ])
       let base = buildGraphModel(index)
+      const baseSnapshot = structuredClone(base)
 
-      const onlyCenterLeft = projectGraphView({
+      // Legacy local arguments (mode/centerPath/depth/direction) must never scope down the global graph
+      const projected = projectGraphView({
         baseGraph: base,
         vaultIndex: index,
         mode: 'local',
         centerPath: 'Heroi.md',
         depth: 1,
-        filters: { ...createDefaultGraphFilters(), searchQuery: 'Heroi' },
+        direction: 'incoming',
+        filters: createDefaultGraphFilters(),
       })
-      expect(onlyCenterLeft.nodes.map((n) => n.path)).toEqual(['Heroi.md'])
-      expect(onlyCenterLeft.filtersRemovedOthers).toBe(true)
-      expect(onlyCenterLeft.centerPath).toBe('Heroi.md')
+      expect(projected.nodes.map((n) => n.path)).toEqual(['Heroi.md', 'Historia.md', 'Isolada.md'])
+      expect(projected.edges).toEqual([{ source: 'note:Heroi.md', target: 'note:Historia.md' }])
+      expect(projected.centerId).toBeUndefined()
+      expect(projected.centerPath).toBeUndefined()
+      expect(projected.centerMissing).toBeUndefined()
+      expect(projected.filtersRemovedOthers).toBeUndefined()
+      expect(projected.nodes.every((n) => n.depth === undefined && n.originalDegree === undefined)).toBe(
+        true
+      )
 
-      // Corrected Stage 2 contract: Local Graph preserves the existing center node
-      // when Search files matches no other nodes, while marking filtersRemovedOthers.
-      const onlyCenterOnNoMatch = projectGraphView({
-        baseGraph: base,
+      // Orphans disabled hides isolated note uniformly even if another stray property is attached
+      const noOrphans = projectGraphView({
+        baseGraph: { ...base, centerId: 'note:Isolada.md', direction: 'incoming' },
         vaultIndex: index,
-        mode: 'local',
-        centerPath: 'Heroi.md',
-        depth: 1,
-        filters: { ...createDefaultGraphFilters(), searchQuery: 'NaoExiste' },
+        filters: {
+          ...createDefaultGraphFilters(),
+          showOrphans: false,
+          existingFilesOnly: false,
+        },
       })
-      expect(onlyCenterOnNoMatch.nodes.map((n) => n.path)).toEqual(['Heroi.md'])
-      expect(onlyCenterOnNoMatch.edges).toEqual([])
-      expect(onlyCenterOnNoMatch.filteredOut).toBe(false)
-      expect(onlyCenterOnNoMatch.filtersRemovedOthers).toBe(true)
-      expect(onlyCenterOnNoMatch.centerPath).toBe('Heroi.md')
+      expect(noOrphans.nodes.map((n) => n.path)).toEqual(['Falta.md', 'Heroi.md', 'Historia.md'])
 
-      // Global Graph keeps strict search exclusion when nothing matches.
+      // Global search keeps strict exclusion when nothing matches
       const globalEmptyOnNoMatch = projectGraphView({
         baseGraph: base,
         vaultIndex: index,
-        mode: 'global',
         filters: { ...createDefaultGraphFilters(), searchQuery: 'NaoExiste' },
       })
       expect(globalEmptyOnNoMatch.nodes).toEqual([])
       expect(globalEmptyOnNoMatch.filteredOut).toBe(true)
+      expect(globalEmptyOnNoMatch.reason).toBe('filtered-empty')
 
       // Live index update removes tag & resolves link when Falta.md is saved
       index = updateNoteInVaultIndex(index, {
@@ -510,110 +282,20 @@ describe('graphSelection', () => {
         content: 'Criada agora',
       })
       base = buildGraphModel(index)
-      const afterCreate = applyGraphFilters(
-        base,
-        { ...createDefaultGraphFilters(), existingFilesOnly: false },
-        index
-      )
+      const afterCreate = projectGraphView({
+        baseGraph: base,
+        vaultIndex: index,
+        filters: { ...createDefaultGraphFilters(), existingFilesOnly: false },
+      })
       expect(afterCreate.nodes.some((n) => n.type === 'unresolved')).toBe(false)
       expect(afterCreate.nodes.find((n) => n.path === 'Falta.md').type).toBe('note')
-    })
 
-    it('preserves isolated local center when Orphans is disabled while hiding it in Global Graph', () => {
-      const index = makeVaultIndex([{ path: 'Solo.md', content: 'Isolated note' }])
-      const base = buildGraphModel(index)
-
-      const localSolo = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'local',
-        centerPath: 'Solo.md',
-        depth: 1,
-        filters: { ...createDefaultGraphFilters(), showOrphans: false },
-      })
-      expect(localSolo.nodes.map((n) => n.path)).toEqual(['Solo.md'])
-      expect(localSolo.edges).toEqual([])
-      expect(localSolo.centerId).toBe('note:Solo.md')
-      expect(localSolo.centerMissing).toBe(false)
-      expect(localSolo.filteredOut).toBe(false)
-      expect(localSolo.filtersRemovedOthers).toBe(false)
-
-      const globalSolo = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'global',
-        filters: { ...createDefaultGraphFilters(), showOrphans: false },
-      })
-      expect(globalSolo.nodes).toEqual([])
-      expect(globalSolo.filteredOut).toBe(true)
-    })
-
-    it('preserves local center when Search matches only a neighbor or combined filters apply, without inventing missing centers or mutating inputs', () => {
-      const index = makeVaultIndex([
-        { path: 'Center.md', content: '[[Neighbor]] [[Other]]' },
-        { path: 'Neighbor.md', content: '' },
-        { path: 'Other.md', content: '' },
+      // Immutability check
+      expect(buildGraphModel(makeVaultIndex([
+        { path: 'Heroi.md', content: '[[Historia]] #protagonista' },
+        { path: 'Historia.md', content: '[[Falta]] #lore' },
         { path: 'Isolada.md', content: '' },
-      ])
-      const base = buildGraphModel(index)
-      const baseSnapshot = structuredClone(base)
-
-      // Search matches only Neighbor -> Center, Neighbor, and real Center->Neighbor edge remain
-      const neighborMatch = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'local',
-        centerPath: 'Center.md',
-        depth: 1,
-        filters: { ...createDefaultGraphFilters(), searchQuery: 'Neighbor', showOrphans: false },
-      })
-      expect(neighborMatch.nodes.map((n) => n.path)).toEqual(['Center.md', 'Neighbor.md'])
-      expect(neighborMatch.edges).toEqual([{ source: 'note:Center.md', target: 'note:Neighbor.md' }])
-      expect(neighborMatch.centerId).toBe('note:Center.md')
-      expect(neighborMatch.centerMissing).toBe(false)
-      expect(neighborMatch.filteredOut).toBe(false)
-      expect(neighborMatch.filtersRemovedOthers).toBe(false)
-
-      // Global keeps strict exclusion for Center and Isolada
-      const globalMatch = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'global',
-        filters: { ...createDefaultGraphFilters(), searchQuery: 'Neighbor', showOrphans: false },
-      })
-      expect(globalMatch.nodes.map((n) => n.path)).toEqual(['Neighbor.md'])
-
-      // Isolated center under combined Search no-match + Orphans false still preserves Solo center only
-      const isolatedCombo = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'local',
-        centerPath: 'Isolada.md',
-        depth: 1,
-        filters: { ...createDefaultGraphFilters(), searchQuery: 'NoSuchNote', showOrphans: false },
-      })
-      expect(isolatedCombo.nodes.map((n) => n.path)).toEqual(['Isolada.md'])
-      expect(isolatedCombo.edges).toEqual([])
-      expect(isolatedCombo.filteredOut).toBe(false)
-
-      // Missing center note is never invented under filters
-      const missingCenter = projectGraphView({
-        baseGraph: base,
-        vaultIndex: index,
-        mode: 'local',
-        centerPath: 'MissingCenter.md',
-        filters: { ...createDefaultGraphFilters(), searchQuery: 'MissingCenter', showOrphans: false },
-      })
-      expect(missingCenter.nodes).toEqual([])
-      expect(missingCenter.centerMissing).toBe(true)
-      expect(missingCenter.reason).toBe('center-missing')
-
-      // Immutability check on input base graph and scoped intermediate graph
-      const scoped = deriveLocalGraph(base, { centerPath: 'Center.md', depth: 1 })
-      const scopedSnapshot = structuredClone(scoped)
-      applyGraphFilters(scoped, { searchQuery: 'Neighbor', showOrphans: false }, index)
-      expect(base).toEqual(baseSnapshot)
-      expect(scoped).toEqual(scopedSnapshot)
+      ]))).toEqual(baseSnapshot)
     })
 
     it('distinguishes unresolved targets with different extensions or folders while deduplicating equivalent references stably', () => {

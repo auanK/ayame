@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { buildVaultIndex } from './vaultIndex.js'
+import graphViewRaw from './GraphView.vue?raw'
+import graphControlsRaw from './GraphControls.vue?raw'
 import { buildGraphModel } from './graphModel.js'
 import { createDefaultGraphFilters, projectGraphView } from './graphSelection.js'
 
@@ -1658,6 +1660,214 @@ describe('GraphView.vue', () => {
     expect(simB.alphaTarget()).toBe(0)
     expect(alphaB.fx).toBeNull()
     expect(alphaB.fy).toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('closes settings popover on Escape from toggle, internal control, or body focus, restores focus, enforces ARIA linkage, and cleans up global listeners on unmount', async () => {
+    const index = sampleIndex()
+    const base = buildGraphModel(index)
+    const graph = projectGraphView({ baseGraph: base, vaultIndex: index })
+
+    const docAddSpy = vi.spyOn(document, 'addEventListener')
+    const docRemoveSpy = vi.spyOn(document, 'removeEventListener')
+    const winAddSpy = vi.spyOn(window, 'addEventListener')
+    const winRemoveSpy = vi.spyOn(window, 'removeEventListener')
+
+    const wrapper = mount(GraphView, {
+      attachTo: document.body,
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+
+    const toggleBtn = wrapper.find('[data-testid="graph-filters-toggle"]')
+
+    // 1. Open popover via gear button (focus stays on toggle button outside GraphControls)
+    toggleBtn.element.focus()
+    await toggleBtn.trigger('click')
+    await nextTick()
+
+    const panel = wrapper.find('[data-testid="graph-filters-panel"]')
+    expect(panel.exists()).toBe(true)
+
+    // 2. Escape when focus is still on the gear toggle button (outside GraphControls) closes popover cleanly
+    toggleBtn.element.focus()
+    await toggleBtn.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+    expect(toggleBtn.attributes('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(toggleBtn.element)
+
+    // Verify ARIA disclosure & tabpanel linkage
+    expect(toggleBtn.attributes('aria-label')).toBe('Graph settings')
+    const controlledId = toggleBtn.attributes('aria-controls')
+    expect(controlledId).toBeTruthy()
+
+    await toggleBtn.trigger('click')
+    await nextTick()
+    const openedPanel = wrapper.find('[data-testid="graph-filters-panel"]')
+    expect(toggleBtn.attributes('aria-expanded')).toBe('true')
+    expect(openedPanel.attributes('id')).toBe(controlledId)
+    expect(openedPanel.attributes('role')).toBe('region')
+
+    const filtersTab = wrapper.find('[data-testid="graph-section-filters"]')
+    const filtersPane = wrapper.find('[data-testid="graph-tab-pane-filters"]')
+    expect(filtersTab.attributes('role')).toBe('tab')
+    expect(filtersTab.attributes('aria-controls')).toBe(filtersPane.attributes('id'))
+    expect(filtersPane.attributes('role')).toBe('tabpanel')
+    expect(filtersPane.attributes('aria-labelledby')).toBe(filtersTab.attributes('id'))
+
+    // 3. Interact inside (pointerdown + filter toggle) -> stays open cleanly
+    const tagsCheckbox = wrapper.find('[data-testid="graph-filter-tags"]')
+    tagsCheckbox.element.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await tagsCheckbox.setValue(true)
+    await nextTick()
+    expect(wrapper.emitted('update:filters')).toBeTruthy()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+
+    // 4. Escape from an internal control closes popover and returns focus to gear button
+    const searchInput = wrapper.find('[data-testid="graph-filter-search"]')
+    searchInput.element.focus()
+    expect(document.activeElement).toBe(searchInput.element)
+    await searchInput.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(toggleBtn.element)
+
+    // 5. Escape when focus fell onto document.body closes popover and restores focus to gear button
+    await toggleBtn.trigger('click')
+    await nextTick()
+    document.body.focus?.()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(toggleBtn.element)
+
+    // 6. Outside pointerdown closes popover without error
+    await toggleBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+    wrapper.find('[data-testid="graph-canvas"]').element.dispatchEvent(
+      new Event('pointerdown', { bubbles: true })
+    )
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+
+    // 7. Keep popover open across unmount, unmount instance 1 -> zero orphan listeners & old events do not affect instance 2
+    await toggleBtn.trigger('click')
+    await nextTick()
+
+    const docAdds = new Set(docAddSpy.mock.calls.map(([type, fn]) => `${type}:${String(Boolean(fn))}`))
+    const winAdds = new Set(winAddSpy.mock.calls.map(([type, fn]) => `${type}:${String(Boolean(fn))}`))
+
+    wrapper.unmount()
+
+    const docRemovedCalls = docRemoveSpy.mock.calls
+    const winRemovedCalls = winRemoveSpy.mock.calls
+    for (const [type, fn] of docAddSpy.mock.calls) {
+      expect(docRemovedCalls.some(([rt, rfn]) => rt === type && rfn === fn)).toBe(true)
+    }
+    for (const [type, fn] of winAddSpy.mock.calls) {
+      expect(winRemovedCalls.some(([rt, rfn]) => rt === type && rfn === fn)).toBe(true)
+    }
+    expect(docAdds.size).toBeGreaterThanOrEqual(2)
+    expect(winAdds.size).toBeGreaterThanOrEqual(2)
+
+    // 8. Second instance stays isolated (different aria-controls id & unaffected by Escape when closed)
+    const wrapper2 = mount(GraphView, {
+      attachTo: document.body,
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+    const toggleBtn2 = wrapper2.find('[data-testid="graph-filters-toggle"]')
+    expect(toggleBtn2.attributes('aria-controls')).not.toBe(controlledId)
+    await toggleBtn2.trigger('click')
+    await nextTick()
+    expect(wrapper2.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+    wrapper2.unmount()
+
+    docAddSpy.mockRestore()
+    docRemoveSpy.mockRestore()
+    winAddSpy.mockRestore()
+    winRemoveSpy.mockRestore()
+  })
+
+  it('bounds settings popover to container dimensions across narrow resizes without altering canvas size or overflowing controls', async () => {
+    const index = sampleIndex()
+    const base = buildGraphModel(index)
+    const graph = projectGraphView({ baseGraph: base, vaultIndex: index })
+
+    const wrapper = mount(GraphView, {
+      attachTo: document.body,
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+        groups: [{ id: 'g1', query: 'path:Personagens', color: '#e06c75' }],
+      },
+    })
+
+    const stageEl = wrapper.find('.graph-stage').element
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+    let stageWidth = 800
+    let stageHeight = 600
+    stageEl.getBoundingClientRect = vi.fn(() => ({
+      left: 0,
+      top: 0,
+      right: stageWidth,
+      bottom: stageHeight,
+      width: stageWidth,
+      height: stageHeight,
+    }))
+    wrapper.vm.updateCanvasSize()
+    await nextTick()
+
+    const widthBeforeOpen = canvasEl.width
+    const heightBeforeOpen = canvasEl.height
+
+    // Opening popover must not resize canvas
+    await wrapper.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    await nextTick()
+    expect(canvasEl.width).toBe(widthBeforeOpen)
+    expect(canvasEl.height).toBe(heightBeforeOpen)
+
+    // Popover must render inside .graph-hud inside .graph-stage so CSS % bounds resolve to Graph View container
+    const popoverPanel = wrapper.find('.graph-stage > .graph-hud [data-testid="graph-filters-panel"]')
+    expect(popoverPanel.exists()).toBe(true)
+
+    // Narrow panel simulation (e.g. side panels expanded): popover stays open and all 4 tabs + controls stay reachable
+    stageWidth = 220
+    stageHeight = 260
+    wrapper.vm.updateCanvasSize()
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+
+    for (const tabTestId of [
+      'graph-section-filters',
+      'graph-section-groups',
+      'graph-section-display',
+      'graph-section-forces',
+    ]) {
+      const tabBtn = wrapper.find(`[data-testid="${tabTestId}"]`)
+      expect(tabBtn.exists()).toBe(true)
+      await tabBtn.trigger('click')
+      await nextTick()
+    }
+    expect(wrapper.find('[data-testid="graph-restore-defaults"]').exists()).toBe(true)
+
+    // CSS responsiveness & focus-visible contract: container-relative bounds (no 100vw), wrapping/scroll, and visible focus ring
+    expect(graphControlsRaw).not.toContain('100vw')
+    expect(graphControlsRaw).toMatch(/\.graph-filters-panel\s*\{[^}]*max-width:\s*min\(308px,\s*100%\)/s)
+    expect(graphControlsRaw).toMatch(/\.graph-tabs-bar\s*\{[^}]*flex-wrap:\s*wrap/s)
+    expect(graphControlsRaw).toMatch(/\.graph-tab-btn:focus-visible\s*\{/s)
+    expect(graphViewRaw).toMatch(/\.graph-hud\s*\{[^}]*inset:\s*0\.75rem/s)
+    expect(graphViewRaw).toMatch(/\.graph-settings-popover\s*\{[^}]*width:\s*min\(308px,\s*100%\)/s)
+    expect(graphViewRaw).toMatch(/\.graph-settings-popover\s*\{[^}]*max-height:\s*min\(390px,\s*calc\(100%\s*-/s)
+    expect(graphViewRaw).toMatch(/\.graph-filters-toggle:focus-visible\s*\{/s)
+    expect(graphViewRaw).toMatch(/\.graph-locator\s*\{[^}]*min-width:\s*0/s)
 
     wrapper.unmount()
   })
