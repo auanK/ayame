@@ -6,6 +6,7 @@ import graphViewRaw from './GraphView.vue?raw'
 import graphControlsRaw from './GraphControls.vue?raw'
 import { buildGraphModel } from './graphModel.js'
 import { createDefaultGraphFilters, projectGraphView } from './graphSelection.js'
+import { createDefaultGraphSettings } from './graphSettings.js'
 
 const simulationRecords = vi.hoisted(() => [])
 
@@ -1865,5 +1866,272 @@ describe('GraphView.vue', () => {
     expect(graphViewRaw).toMatch(/\.graph-locator\s*\{[^}]*min-width:\s*0/s)
 
     wrapper.unmount()
+  })
+
+  it('resolves Escape priority by active interaction, preserves locator query, handles locator focusout without breaking result clicks, and ignores unmounted listeners', async () => {
+    const index = sampleIndex()
+    const base = buildGraphModel(index)
+    const graph = projectGraphView({ baseGraph: base, vaultIndex: index })
+
+    const wrapper = mount(GraphView, {
+      attachTo: document.body,
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+
+    const locator = wrapper.find('[data-testid="graph-node-locator"]')
+    const toggleBtn = wrapper.find('[data-testid="graph-filters-toggle"]')
+
+    // 1. Exact reproduction sequence: open locator -> move focus to gear -> open Settings -> single Escape closes Settings, restores focus, and preserves search query
+    locator.element.focus()
+    await locator.trigger('focus')
+    await locator.setValue('Heroi')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(true)
+
+    toggleBtn.element.focus()
+    await toggleBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+
+    await toggleBtn.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(toggleBtn.element)
+    expect(locator.element.value).toBe('Heroi')
+
+    // Leaving locator interactive region via focusout closes results without clearing query
+    locator.element.focus()
+    await locator.trigger('focus')
+    await locator.setValue('Heroi')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(true)
+    toggleBtn.element.focus()
+    await locator.trigger('focusout', { relatedTarget: toggleBtn.element })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(false)
+    expect(locator.element.value).toBe('Heroi')
+
+    // Even if both locatorOpen and filtersOpen remain open simultaneously, a single Escape from Settings closes Settings immediately
+    await locator.trigger('focus')
+    await locator.setValue('Heroi')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(true)
+
+    await toggleBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+
+    const searchInput = wrapper.find('[data-testid="graph-filter-search"]')
+    searchInput.element.focus()
+    await searchInput.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(toggleBtn.element)
+    expect(locator.element.value).toBe('Heroi')
+
+    // Escape when only locator is open closes results without touching query or opening Settings
+    locator.element.focus()
+    await locator.trigger('focus')
+    await locator.setValue('Isolada')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(true)
+    await locator.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+    expect(locator.element.value).toBe('Isolada')
+
+    // Escape when only Settings is open from toggle closes Settings cleanly
+    toggleBtn.element.focus()
+    await toggleBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+    await toggleBtn.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(toggleBtn.element)
+
+    // Mouse / focus shift inside locator region does not prematurely close before clicking a result
+    locator.element.focus()
+    await locator.trigger('focus')
+    await locator.setValue('Heroi')
+    await nextTick()
+    const firstItem = wrapper.find('[data-testid="graph-locator-item"]')
+    firstItem.element.focus()
+    await locator.trigger('focusout', { relatedTarget: firstItem.element })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(true)
+
+    // Simulated Safari blur (null relatedTarget) during pointerdown inside locator keeps button clickable
+    firstItem.element.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await locator.trigger('focusout', { relatedTarget: null })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(true)
+
+    await firstItem.trigger('click')
+    await nextTick()
+    expect(wrapper.emitted('open-note')?.length).toBe(1)
+    expect(wrapper.find('[data-testid="graph-locator-results"]').exists()).toBe(false)
+
+    // Escape after component unmount throws nothing and does not affect another instance
+    await toggleBtn.trigger('click')
+    await locator.trigger('focus')
+    await nextTick()
+    wrapper.unmount()
+
+    const wrapper2 = mount(GraphView, {
+      attachTo: document.body,
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+    expect(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    }).not.toThrow()
+    await nextTick()
+    expect(wrapper2.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+    wrapper2.unmount()
+  })
+
+  it('keeps all four tab/tabpanel ARIA relationships valid, prevents keyboard access to inactive panels, preserves tab state, and isolates multiple instances', async () => {
+    const index = sampleIndex()
+    const base = buildGraphModel(index)
+    const graph = projectGraphView({ baseGraph: base, vaultIndex: index })
+
+    const makeMount = (overrides = {}) =>
+      mount(GraphView, {
+        attachTo: document.body,
+        props: {
+          graph,
+          vaultDirectory: 'C:/vaults/story',
+          filters: createDefaultGraphFilters(),
+          groups: [{ id: 'g1', query: 'path:Personagens', color: '#e06c75' }],
+          display: createDefaultGraphSettings().global.display,
+          forces: createDefaultGraphSettings().global.forces,
+          ...overrides,
+        },
+      })
+
+    const wrapper1 = makeMount()
+    const wrapper2 = makeMount()
+
+    await wrapper1.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    await wrapper2.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    await nextTick()
+
+    const tabSpecs = [
+      { id: 'filters', tabTestId: 'graph-section-filters', paneTestId: 'graph-tab-pane-filters' },
+      { id: 'groups', tabTestId: 'graph-section-groups', paneTestId: 'graph-tab-pane-groups' },
+      { id: 'display', tabTestId: 'graph-section-display', paneTestId: 'graph-tab-pane-display' },
+      { id: 'forces', tabTestId: 'graph-section-forces', paneTestId: 'graph-tab-pane-forces' },
+    ]
+
+    const ids1 = new Set()
+    const ids2 = new Set()
+
+    // Verify all 4 tab/tabpanel pairs exist in DOM simultaneously with valid 1:1 ARIA linkage and unique cross-instance IDs
+    for (const spec of tabSpecs) {
+      const tab1 = wrapper1.find(`[data-testid="${spec.tabTestId}"]`)
+      const pane1 = wrapper1.find(`[data-testid="${spec.paneTestId}"]`)
+      const tab2 = wrapper2.find(`[data-testid="${spec.tabTestId}"]`)
+      const pane2 = wrapper2.find(`[data-testid="${spec.paneTestId}"]`)
+
+      expect(tab1.attributes('role')).toBe('tab')
+      expect(pane1.exists()).toBe(true)
+      expect(pane1.attributes('role')).toBe('tabpanel')
+      expect(tab1.attributes('aria-controls')).toBe(pane1.attributes('id'))
+      expect(pane1.attributes('aria-labelledby')).toBe(tab1.attributes('id'))
+
+      expect(pane2.exists()).toBe(true)
+      expect(tab2.attributes('aria-controls')).toBe(pane2.attributes('id'))
+      expect(pane2.attributes('aria-labelledby')).toBe(tab2.attributes('id'))
+
+      ids1.add(tab1.attributes('id'))
+      ids1.add(pane1.attributes('id'))
+      ids2.add(tab2.attributes('id'))
+      ids2.add(pane2.attributes('id'))
+
+      const isActive = spec.id === 'filters'
+      expect(tab1.attributes('aria-selected')).toBe(isActive ? 'true' : 'false')
+      expect(pane1.isVisible()).toBe(isActive)
+      if (isActive) {
+        expect(pane1.attributes('hidden')).toBeUndefined()
+        expect(pane1.attributes('inert')).toBeUndefined()
+      } else {
+        expect(pane1.attributes('hidden')).toBeDefined()
+        expect(pane1.attributes('inert')).toBeDefined()
+      }
+    }
+
+    for (const id of ids1) {
+      expect(ids2.has(id)).toBe(false)
+    }
+
+    // Keyboard tab navigation (ArrowRight -> ArrowLeft -> End -> Home) updates active tab & accessible states
+    const filtersTab = wrapper1.find('[data-testid="graph-section-filters"]')
+    const groupsTab = wrapper1.find('[data-testid="graph-section-groups"]')
+    const displayTab = wrapper1.find('[data-testid="graph-section-display"]')
+    const forcesTab = wrapper1.find('[data-testid="graph-section-forces"]')
+
+    filtersTab.element.focus()
+    await filtersTab.trigger('keydown', { key: 'ArrowRight' })
+    await nextTick()
+    expect(groupsTab.attributes('aria-selected')).toBe('true')
+    expect(filtersTab.attributes('aria-selected')).toBe('false')
+    expect(document.activeElement).toBe(groupsTab.element)
+    expect(wrapper1.find('[data-testid="graph-tab-pane-groups"]').isVisible()).toBe(true)
+    expect(wrapper1.find('[data-testid="graph-tab-pane-filters"]').attributes('hidden')).toBeDefined()
+    expect(wrapper1.find('[data-testid="graph-tab-pane-filters"]').attributes('inert')).toBeDefined()
+
+    await groupsTab.trigger('keydown', { key: 'End' })
+    await nextTick()
+    expect(forcesTab.attributes('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(forcesTab.element)
+
+    await forcesTab.trigger('keydown', { key: 'Home' })
+    await nextTick()
+    expect(filtersTab.attributes('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(filtersTab.element)
+
+    // Switching tabs preserves configured values across Filters, Groups, Display, and Forces
+    const filterSearch = wrapper1.find('[data-testid="graph-filter-search"]')
+    await filterSearch.setValue('Historia')
+    const latestFilters = wrapper1.emitted('update:filters').at(-1)[0]
+    await wrapper1.setProps({ filters: latestFilters })
+
+    await displayTab.trigger('click')
+    await nextTick()
+    await wrapper1.find('[data-testid="graph-display-arrows"]').setValue(true)
+    const latestDisplay = wrapper1.emitted('update:display').at(-1)[0]
+    await wrapper1.setProps({ display: latestDisplay })
+
+    await forcesTab.trigger('click')
+    await nextTick()
+    await wrapper1.find('[data-testid="graph-force-repel"]').setValue('290')
+    const latestForces = wrapper1.emitted('update:forces').at(-1)[0]
+    await wrapper1.setProps({ forces: latestForces })
+
+    await groupsTab.trigger('click')
+    await nextTick()
+    expect(wrapper1.find('[data-testid="graph-group-query-g1"]').element.value).toBe('path:Personagens')
+
+    await filtersTab.trigger('click')
+    await nextTick()
+    expect(wrapper1.find('[data-testid="graph-filter-search"]').element.value).toBe('Historia')
+
+    await displayTab.trigger('click')
+    await nextTick()
+    expect(wrapper1.find('[data-testid="graph-display-arrows"]').element.checked).toBe(true)
+
+    await forcesTab.trigger('click')
+    await nextTick()
+    expect(wrapper1.find('[data-testid="graph-force-repel"]').element.value).toBe('290')
+
+    wrapper1.unmount()
+    wrapper2.unmount()
   })
 })
