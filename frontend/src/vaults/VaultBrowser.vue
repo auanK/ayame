@@ -2485,7 +2485,7 @@ watch(
 )
 
 watch(
-  () => [layout.value.contextOpen, rightPanelTab.value, activeWorkspaceView.value],
+  () => [layout.value.contextOpen, rightPanelTab.value, activeWorkspaceView.value, layout.value.contextWidth],
   async ([contextOpen, panelTab, wsView]) => {
     await nextTick()
     if (contextOpen) {

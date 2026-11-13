@@ -1044,14 +1044,14 @@ describe('GraphView.vue', () => {
     expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
     expect(wrapper.emitted('open-note')).toBeUndefined()
 
-    // pointercancel also cleans up active drag safely without opening the note
-    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: pressX, clientY: pressY, pointerId: 3 }))
+    // pointercancel also cleans up active drag safely without opening the note (grabbing node at its updated 120,60 position)
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: pressX + 20, clientY: pressY + 10, pointerId: 3 }))
     canvasEl.dispatchEvent(
-      pointerEvent('pointermove', { clientX: pressX + 15, clientY: pressY, pointerId: 3 })
+      pointerEvent('pointermove', { clientX: pressX + 35, clientY: pressY + 10, pointerId: 3 })
     )
-    expect(targetNode.fx).toBeCloseTo(115, 5)
+    expect(targetNode.fx).toBeCloseTo(135, 5)
     canvasEl.dispatchEvent(
-      pointerEvent('pointercancel', { clientX: pressX + 15, clientY: pressY, pointerId: 3 })
+      pointerEvent('pointercancel', { clientX: pressX + 35, clientY: pressY + 10, pointerId: 3 })
     )
     expect(targetNode.fx).toBeNull()
     expect(targetNode.fy).toBeNull()

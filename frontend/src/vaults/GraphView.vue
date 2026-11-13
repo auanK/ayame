@@ -867,15 +867,21 @@ const handlePointerDown = (event) => {
     } catch {}
   }
 
+  cancelCameraAnimation()
+
   if (hit) {
     const { x: wx, y: wy } = screenToWorld(sx, sy)
-    dragOffset = { x: (hit.x || 0) - wx, y: (hit.y || 0) - wy }
+    dragOffset = {
+      x: (hit.x || 0) - wx,
+      y: (hit.y || 0) - wy,
+      originX: hit.x || 0,
+      originY: hit.y || 0,
+    }
     viewport.draggingNodeId = hit.id
     isGrabbing.value = true
     updateHoveredNode(hit)
     scheduleDraw()
   } else {
-    cancelCameraAnimation()
     viewport.panning = true
     isGrabbing.value = true
     panOrigin = { x: sx, y: sy, offsetX: viewport.offsetX, offsetY: viewport.offsetY }
@@ -897,14 +903,24 @@ const handlePointerMove = (event) => {
       Math.hypot(sx - pointerDownPos.x, sy - pointerDownPos.y) >= DRAG_THRESHOLD_PX
     ) {
       didDrag = true
+      if (dragOffset) {
+        dragOffset.x += (draggedNode.x || 0) - dragOffset.originX
+        dragOffset.y += (draggedNode.y || 0) - dragOffset.originY
+      }
       simulation?.alphaTarget(0.28).restart()
     }
     if (didDrag) {
       const { x: wx, y: wy } = screenToWorld(sx, sy)
       const ox = dragOffset ? dragOffset.x : 0
       const oy = dragOffset ? dragOffset.y : 0
-      draggedNode.fx = wx + ox
-      draggedNode.fy = wy + oy
+      const nextX = wx + ox
+      const nextY = wy + oy
+      draggedNode.x = nextX
+      draggedNode.y = nextY
+      draggedNode.fx = nextX
+      draggedNode.fy = nextY
+      draggedNode.vx = 0
+      draggedNode.vy = 0
       scheduleDraw()
     }
     return
@@ -956,13 +972,15 @@ function finishPointerInteraction(event, allowClick, force = false) {
     const draggedNode = simNodesById.get(viewport.draggingNodeId)
     viewport.draggingNodeId = null
     if (draggedNode) {
-      draggedNode.fx = null
-      draggedNode.fy = null
       if (didDrag) {
+        if (Number.isFinite(draggedNode.fx)) draggedNode.x = draggedNode.fx
+        if (Number.isFinite(draggedNode.fy)) draggedNode.y = draggedNode.fy
         simulation?.alphaTarget(0)
       } else if (allowClick && (draggedNode.type === 'note' || !draggedNode.type) && draggedNode.path) {
         emit('open-note', draggedNode.path)
       }
+      draggedNode.fx = null
+      draggedNode.fy = null
     }
     scheduleDraw()
   } else if (viewport.panning) {
