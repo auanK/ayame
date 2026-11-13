@@ -325,10 +325,21 @@ const viewerState = ref({
 const directoryRequestIds = new Map()
 let directoryRequestGeneration = 0
 let indexRequestGeneration = 0
+let activeIndexFetchGeneration = null
+let activeIndexFetchDirectory = ''
+const pendingSavedNotesForFetch = new Map()
 let isMounted = true
+
+const clearActiveIndexFetch = () => {
+  activeIndexFetchGeneration = null
+  activeIndexFetchDirectory = ''
+  pendingSavedNotesForFetch.clear()
+  indexLoading.value = false
+}
 
 const invalidateVaultIndexRequest = () => {
   indexRequestGeneration++
+  clearActiveIndexFetch()
 }
 
 const isMarkdownFile = (name) => {
@@ -483,38 +494,66 @@ const setFolderEntries = (folderPath, entries) => {
   folderEntriesMap.value = next
 }
 
+const reconcileIndexWithPendingSaves = (raw, savedNotesMap) => {
+  if (!savedNotesMap || savedNotesMap.size === 0) return raw
+  const rawNotes = Array.isArray(raw.notes) ? raw.notes : []
+  const mergedNotes = rawNotes.filter((n) => n && !savedNotesMap.has(n.path))
+  const fileSet = new Set(Array.isArray(raw.files) ? raw.files : [])
+  for (const doc of savedNotesMap.values()) {
+    fileSet.add(doc.path)
+    mergedNotes.push({
+      path: doc.path,
+      name: doc.name || doc.path.split('/').pop(),
+      content: doc.content ?? '',
+      revision: doc.revision ?? '',
+    })
+  }
+  return {
+    ...raw,
+    files: Array.from(fileSet),
+    notes: mergedNotes,
+  }
+}
+
 const fetchVaultIndexSafe = async () => {
   const generation = ++indexRequestGeneration
   const directory = props.vault.directory
   const isCurrent = () =>
     isMounted && generation === indexRequestGeneration && directory === props.vault.directory
 
+  activeIndexFetchGeneration = generation
+  activeIndexFetchDirectory = directory
+  pendingSavedNotesForFetch.clear()
   indexLoading.value = true
-  indexError.value = false
 
   try {
     if (!('getVaultIndex' in vaultApi) || typeof vaultApi.getVaultIndex !== 'function') {
-      if (isCurrent()) indexLoading.value = false
+      if (isCurrent()) {
+        clearActiveIndexFetch()
+        indexError.value = false
+      }
       return false
     }
     const raw = await vaultApi.getVaultIndex(directory)
     if (!isCurrent()) return false
     if (!raw) {
-      indexLoading.value = false
+      clearActiveIndexFetch()
+      indexError.value = false
       return false
     }
     if (raw.directory !== directory) {
-      indexLoading.value = false
+      clearActiveIndexFetch()
       indexError.value = true
       return false
     }
-    vaultIndexData.value = buildVaultIndex(raw)
-    indexLoading.value = false
+    const reconciled = reconcileIndexWithPendingSaves(raw, pendingSavedNotesForFetch)
+    clearActiveIndexFetch()
+    vaultIndexData.value = buildVaultIndex(reconciled)
     indexError.value = false
     return true
   } catch (err) {
     if (!isCurrent()) return false
-    indexLoading.value = false
+    clearActiveIndexFetch()
     if (err?.code === 'UNAUTHORIZED') {
       emit('unauthorized')
       return false
@@ -522,6 +561,11 @@ const fetchVaultIndexSafe = async () => {
     indexError.value = true
     return false
   }
+}
+
+const retryVaultIndex = async () => {
+  if (indexLoading.value) return false
+  return fetchVaultIndexSafe()
 }
 
 const fetchDirectory = async (folderPath, { isRefresh = false } = {}) => {
@@ -1142,9 +1186,14 @@ const handleViewerState = (state) => {
 
 const handleContentSaved = (savedDoc) => {
   if (!savedDoc?.path) return
-  invalidateVaultIndexRequest()
+  if (
+    activeIndexFetchGeneration !== null &&
+    activeIndexFetchGeneration === indexRequestGeneration &&
+    activeIndexFetchDirectory === props.vault.directory
+  ) {
+    pendingSavedNotesForFetch.set(savedDoc.path, { ...savedDoc })
+  }
   vaultIndexData.value = updateNoteInVaultIndex(vaultIndexData.value, savedDoc)
-  indexError.value = false
 }
 
 const handleOpenLink = async (linkPayload) => {
@@ -3171,7 +3220,7 @@ defineExpose({
           :error="indexError"
           :active-note-path="selectedFile"
           @open-note="openNoteFromGraph"
-          @retry="fetchVaultIndexSafe"
+          @retry="retryVaultIndex"
         />
 
         <div
