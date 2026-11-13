@@ -28,14 +28,6 @@ const props = defineProps({
     type: Object,
     required: true,
   },
-  mode: {
-    type: String,
-    default: 'global',
-  },
-  centerPath: {
-    type: String,
-    default: null,
-  },
   vaultDirectory: {
     type: String,
     default: '',
@@ -55,14 +47,6 @@ const props = defineProps({
   filters: {
     type: Object,
     default: () => createDefaultGraphFilters(),
-  },
-  localDepth: {
-    type: Number,
-    default: 1,
-  },
-  localDirection: {
-    type: String,
-    default: 'both',
   },
   groups: {
     type: Array,
@@ -94,8 +78,6 @@ const emit = defineEmits([
   'open-note',
   'retry',
   'update:filters',
-  'update:local-depth',
-  'update:local-direction',
   'update:groups',
   'update:display',
   'update:forces',
@@ -115,6 +97,8 @@ const containerRef = ref(null)
 const stageRef = ref(null)
 const canvasRef = ref(null)
 const locatorRef = ref(null)
+const settingsToggleRef = ref(null)
+const settingsPopoverRef = ref(null)
 
 const locatorQuery = ref('')
 const locatorOpen = ref(false)
@@ -181,22 +165,12 @@ const cancelCameraAnimation = () => {
   cameraTarget.scale = viewport.scale
 }
 
-const isLocalMode = computed(() => props.mode === 'local')
-const effectiveCenterPath = computed(() => props.centerPath || props.graph?.centerPath || null)
-const centerDisplayLabel = computed(() => {
-  const path = effectiveCenterPath.value
-  if (!path) return 'No note open'
-  const base = path.split('/').pop() || path
-  return base.replace(/\.(md|markdown)$/i, '')
-})
-
 const hasNodes = computed(() => Array.isArray(props.graph?.nodes) && props.graph.nodes.length > 0)
 const hasFailures = computed(
   () => Array.isArray(props.graph?.failures) && props.graph.failures.length > 0
 )
 const isIncomplete = computed(() => Boolean(props.graph && !props.graph.complete && hasFailures.value))
 const hasRefreshError = computed(() => Boolean(props.error && hasNodes.value))
-const hasFiltersRemovedOthers = computed(() => Boolean(props.graph?.filtersRemovedOthers))
 const queryError = computed(() =>
   props.graph?.queryValid === false ? props.graph.queryError || 'Invalid search filter.' : ''
 )
@@ -217,40 +191,22 @@ const clearFilters = () => {
   emit('update:filters', createDefaultGraphFilters())
 }
 
-const handleDepthInput = (event) => {
-  const next = Number(event?.target?.value)
-  if (Number.isFinite(next) && next !== props.localDepth) {
-    emit('update:local-depth', next)
-  }
-}
-
-const handleDirectionSelect = (dir) => {
-  if (dir !== props.localDirection) {
-    emit('update:local-direction', dir)
-  }
-}
-
 const viewStatus = computed(() => {
-  if (isLocalMode.value && !effectiveCenterPath.value) return 'no-center'
   if (props.loading && !hasNodes.value) return 'loading'
   if (props.error && !hasNodes.value) return 'error'
-  if (isLocalMode.value && props.graph?.centerMissing) return 'center-missing'
   if (!hasNodes.value && props.graph?.filteredOut) return 'filtered-empty'
   if (!hasNodes.value && hasFailures.value) return 'incomplete-empty'
   if (!hasNodes.value) return 'empty'
   return 'ready'
 })
 
-const showHeaderBar = computed(
-  () => isLocalMode.value || viewStatus.value === 'ready' || viewStatus.value === 'filtered-empty'
+const showOverlayControls = computed(
+  () => viewStatus.value === 'ready' || viewStatus.value === 'filtered-empty'
 )
 
 const canvasAriaLabel = computed(() => {
   const nodesCount = props.graph?.nodes?.length || 0
   const edgesCount = props.graph?.edges?.length || 0
-  if (isLocalMode.value) {
-    return `Local graph with ${nodesCount} nodes and ${edgesCount} connections`
-  }
   return `Global graph with ${nodesCount} notes and ${edgesCount} connections`
 })
 
@@ -375,8 +331,6 @@ const draw = () => {
   const focusedId = viewport.draggingNodeId || viewport.hoveredNodeId
   const focusedNeighbors = focusedId ? neighborsById.get(focusedId) : null
   const canDash = typeof ctx.setLineDash === 'function'
-  const localCenterId =
-    isLocalMode.value && effectiveCenterPath.value ? `note:${effectiveCenterPath.value}` : null
 
   const noteEdgeKeys = showArrows ? new Set() : null
   if (noteEdgeKeys) {
@@ -470,7 +424,6 @@ const draw = () => {
     const isNeighbor = focusedNeighbors ? focusedNeighbors.has(n.id) : false
     const isActiveNote =
       nodeType === 'note' && Boolean(props.activeNotePath && n.path === props.activeNotePath)
-    const isCenterNode = Boolean(localCenterId && n.id === localCenterId)
     const groupColor = nodeType === 'note' ? props.groupColors?.[n.id] || null : null
 
     if (focusedId && !isFocused && !isNeighbor) {
@@ -481,7 +434,7 @@ const draw = () => {
       ctx.fillStyle = isFocused ? 'rgba(182, 178, 196, 0.72)' : 'rgba(143, 139, 163, 0.36)'
     } else if (groupColor) {
       ctx.fillStyle = groupColor
-    } else if (isFocused || isCenterNode) {
+    } else if (isFocused) {
       ctx.fillStyle = '#d4cbe4'
     } else if (isNeighbor || isActiveNote) {
       ctx.fillStyle = '#a99aca'
@@ -499,10 +452,9 @@ const draw = () => {
       if (canDash) ctx.setLineDash([2.5, 2])
       ctx.stroke()
       if (canDash) ctx.setLineDash([])
-    } else if (isFocused || isActiveNote || isCenterNode) {
-      ctx.strokeStyle =
-        isFocused || isCenterNode ? 'rgba(238, 234, 243, 0.88)' : 'rgba(169, 154, 202, 0.65)'
-      ctx.lineWidth = isCenterNode ? 1.6 : 1.25
+    } else if (isFocused || isActiveNote) {
+      ctx.strokeStyle = isFocused ? 'rgba(238, 234, 243, 0.88)' : 'rgba(169, 154, 202, 0.65)'
+      ctx.lineWidth = 1.25
       ctx.stroke()
     }
   }
@@ -1112,9 +1064,15 @@ const closeLocator = () => {
 }
 
 const handleDocumentPointerDown = (event) => {
-  if (!locatorOpen.value) return
-  if (locatorRef.value && !locatorRef.value.contains(event.target)) {
+  if (locatorOpen.value && locatorRef.value && !locatorRef.value.contains(event.target)) {
     closeLocator()
+  }
+  if (
+    filtersOpen.value &&
+    !settingsPopoverRef.value?.contains(event.target) &&
+    !settingsToggleRef.value?.contains(event.target)
+  ) {
+    filtersOpen.value = false
   }
 }
 
@@ -1147,7 +1105,7 @@ watch(viewStatus, async (status) => {
 })
 
 watch(
-  () => [props.activeNotePath, effectiveCenterPath.value, props.display, props.groupColors],
+  () => [props.activeNotePath, props.display, props.groupColors],
   () => {
     scheduleDraw()
   },
@@ -1165,11 +1123,6 @@ watch(
   },
   { deep: true }
 )
-
-watch(filtersOpen, async () => {
-  await nextTick()
-  updateCanvasSize()
-})
 
 onMounted(() => {
   isUnmounted = false
@@ -1218,22 +1171,12 @@ defineExpose({
   <section
     ref="containerRef"
     class="graph-view"
-    :class="{ 'graph-view--local': isLocalMode }"
-    :data-testid="isLocalMode ? 'local-graph-view' : 'graph-view'"
-    :aria-label="isLocalMode ? 'Local graph view' : 'Global graph view'"
+    data-testid="graph-view"
+    aria-label="Global graph view"
   >
-    <header v-if="showHeaderBar" class="graph-toolbar">
-      <div class="graph-toolbar-row">
-        <span
-          v-if="isLocalMode"
-          class="graph-center-badge"
-          data-testid="local-graph-center"
-          :title="effectiveCenterPath || 'No note open'"
-        >
-          {{ centerDisplayLabel }}
-        </span>
-
-        <!-- Accessible keyboard note locator without overlaying dozens of DOM buttons -->
+    <div ref="stageRef" class="graph-stage">
+      <!-- Floating top overlay HUD: unobtrusive locator on left, gear trigger + corner popover on right -->
+      <div v-if="showOverlayControls" class="graph-hud">
         <div
           v-if="viewStatus === 'ready'"
           ref="locatorRef"
@@ -1288,103 +1231,68 @@ defineExpose({
           </ul>
         </div>
 
-        <button
-          type="button"
-          class="graph-filters-toggle"
-          :class="{
-            'graph-filters-toggle--open': filtersOpen,
-            'graph-filters-toggle--active': hasActiveFilters || groups.length > 0,
-          }"
-          data-testid="graph-filters-toggle"
-          aria-label="Graph settings"
-          :aria-expanded="filtersOpen ? 'true' : 'false'"
-          @click="filtersOpen = !filtersOpen"
-        >
-          Settings
-        </button>
-      </div>
+        <div class="graph-settings-anchor">
+          <button
+            ref="settingsToggleRef"
+            type="button"
+            class="graph-filters-toggle"
+            :class="{
+              'graph-filters-toggle--open': filtersOpen,
+              'graph-filters-toggle--active': hasActiveFilters || groups.length > 0,
+            }"
+            data-testid="graph-filters-toggle"
+            aria-label="Graph settings"
+            title="Graph settings"
+            :aria-expanded="filtersOpen ? 'true' : 'false'"
+            @click="filtersOpen = !filtersOpen"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            <span
+              v-if="hasActiveFilters || groups.length > 0"
+              class="graph-settings-dot"
+              aria-hidden="true"
+            />
+          </button>
 
-      <div v-if="isLocalMode" class="graph-local-strip">
-        <label class="graph-depth-control">
-          <span class="graph-local-label">Depth {{ localDepth }}</span>
-          <input
-            type="range"
-            min="1"
-            max="5"
-            step="1"
-            class="graph-depth-slider"
-            data-testid="graph-local-depth"
-            aria-label="Local graph depth"
-            :value="localDepth"
-            @input="handleDepthInput"
-          />
-        </label>
-
-        <div
-          class="graph-direction-group"
-          role="group"
-          aria-label="Local graph link direction"
-          data-testid="graph-local-direction"
-        >
-          <button
-            type="button"
-            class="graph-dir-button"
-            :class="{ 'graph-dir-button--active': localDirection === 'both' }"
-            data-testid="graph-direction-both"
-            @click="handleDirectionSelect('both')"
+          <div
+            v-if="filtersOpen"
+            ref="settingsPopoverRef"
+            class="graph-settings-popover"
           >
-            Both
-          </button>
-          <button
-            type="button"
-            class="graph-dir-button"
-            :class="{ 'graph-dir-button--active': localDirection === 'incoming' }"
-            data-testid="graph-direction-incoming"
-            @click="handleDirectionSelect('incoming')"
-          >
-            Incoming
-          </button>
-          <button
-            type="button"
-            class="graph-dir-button"
-            :class="{ 'graph-dir-button--active': localDirection === 'outgoing' }"
-            data-testid="graph-direction-outgoing"
-            @click="handleDirectionSelect('outgoing')"
-          >
-            Outgoing
-          </button>
+            <GraphControls
+              :filters="filters"
+              :query-error="queryError"
+              :groups="groups"
+              :group-errors="groupErrors"
+              :display="display"
+              :forces="forces"
+              @update:filters="emit('update:filters', $event)"
+              @update:groups="emit('update:groups', $event)"
+              @update:display="emit('update:display', $event)"
+              @update:forces="emit('update:forces', $event)"
+              @restore-defaults="emit('restore-defaults')"
+              @reset-groups="emit('reset-groups')"
+              @close="filtersOpen = false"
+            />
+          </div>
         </div>
       </div>
-    </header>
-
-    <GraphControls
-      v-if="filtersOpen && showHeaderBar"
-      :filters="filters"
-      :query-error="queryError"
-      :groups="groups"
-      :group-errors="groupErrors"
-      :display="display"
-      :forces="forces"
-      @update:filters="emit('update:filters', $event)"
-      @update:groups="emit('update:groups', $event)"
-      @update:display="emit('update:display', $event)"
-      @update:forces="emit('update:forces', $event)"
-      @restore-defaults="emit('restore-defaults')"
-      @reset-groups="emit('reset-groups')"
-    />
-
-    <div ref="stageRef" class="graph-stage">
-      <div
-        v-if="viewStatus === 'no-center'"
-        class="graph-state"
-        data-testid="graph-no-center-state"
-        role="status"
-      >
-        <p>Open a note to view its local graph.</p>
-      </div>
 
       <div
-        v-else-if="viewStatus === 'loading'"
+        v-if="viewStatus === 'loading'"
         class="graph-state"
         data-testid="graph-loading-state"
         role="status"
@@ -1408,15 +1316,6 @@ defineExpose({
         >
           Try again
         </button>
-      </div>
-
-      <div
-        v-else-if="viewStatus === 'center-missing'"
-        class="graph-state"
-        data-testid="graph-center-missing-state"
-        role="status"
-      >
-        <p>Selected note is not in the graph index.</p>
       </div>
 
       <div
@@ -1476,7 +1375,7 @@ defineExpose({
         />
 
         <div
-          v-if="hasRefreshError || isIncomplete || hasFiltersRemovedOthers || storageWarning"
+          v-if="hasRefreshError || isIncomplete || storageWarning"
           class="graph-notices"
         >
           <div
@@ -1495,15 +1394,6 @@ defineExpose({
             >
               {{ loading ? 'Retrying...' : 'Try again' }}
             </button>
-          </div>
-
-          <div
-            v-if="hasFiltersRemovedOthers"
-            class="graph-incomplete-notice"
-            data-testid="graph-filter-notice"
-            role="status"
-          >
-            Filters hid other connected nodes.
           </div>
 
           <div
@@ -1552,113 +1442,72 @@ defineExpose({
   user-select: none;
 }
 
-.graph-toolbar {
+.graph-hud {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  right: 0.75rem;
   display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.4rem 0.55rem;
-  background: var(--ayame-surface, #1b1c25);
-  border-bottom: 1px solid var(--ayame-border, #34323f);
-  flex-shrink: 0;
-  z-index: 6;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  z-index: 16;
+  pointer-events: none;
 }
 
-.graph-toolbar-row {
+.graph-settings-anchor {
+  position: relative;
+  margin-left: auto;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
-  min-width: 0;
-}
-
-.graph-center-badge {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.76rem;
-  font-weight: 600;
-  color: var(--ayame-lavender, #d4cbe4);
-  padding: 0.15rem 0.35rem;
-  background: var(--ayame-hover, #242530);
-  border: 1px solid var(--ayame-border, #34323f);
-  border-radius: 4px;
+  pointer-events: auto;
+  flex-shrink: 0;
 }
 
 .graph-filters-toggle {
-  margin-left: auto;
-  background: transparent;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: rgba(27, 28, 37, 0.86);
+  backdrop-filter: blur(8px);
   border: 1px solid var(--ayame-border, #34323f);
+  border-radius: 7px;
   color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.75rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .graph-filters-toggle:hover,
 .graph-filters-toggle--open {
-  background: var(--ayame-hover, #242530);
+  background: rgba(36, 37, 48, 0.95);
   color: var(--ayame-text, #eeeaf3);
+  border-color: rgba(169, 154, 202, 0.45);
 }
 
 .graph-filters-toggle--active {
-  border-color: var(--ayame-primary, #a99aca);
   color: var(--ayame-lavender, #d4cbe4);
+  border-color: rgba(169, 154, 202, 0.55);
 }
 
-.graph-local-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.35rem 0.5rem;
-  min-width: 0;
+.graph-settings-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ayame-primary, #a99aca);
 }
 
-.graph-depth-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  min-width: 0;
-  flex: 1 1 105px;
-}
-
-.graph-local-label {
-  font-size: 0.72rem;
-  color: var(--ayame-text-muted, #aaa6b8);
-  white-space: nowrap;
-}
-
-.graph-depth-slider {
-  flex: 1 1 auto;
-  min-width: 48px;
-  accent-color: var(--ayame-primary, #a99aca);
-}
-
-.graph-direction-group {
-  display: inline-flex;
-  gap: 0.2rem;
-  flex-wrap: wrap;
-}
-
-.graph-dir-button {
-  background: transparent;
-  border: 1px solid var(--ayame-border, #34323f);
-  color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.7rem;
-  padding: 0.15rem 0.35rem;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.graph-dir-button--active {
-  background: var(--ayame-hover, #242530);
-  border-color: var(--ayame-primary, #a99aca);
-  color: var(--ayame-lavender, #d4cbe4);
+.graph-settings-popover {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 25;
 }
 
 .graph-stage {
@@ -1711,19 +1560,22 @@ defineExpose({
 
 .graph-locator {
   position: relative;
-  flex: 1 1 110px;
-  min-width: 80px;
+  flex: 0 1 220px;
+  min-width: 130px;
   max-width: 240px;
-  z-index: 15;
+  pointer-events: auto;
+  z-index: 18;
 }
 
 .graph-locator-input {
   width: 100%;
-  padding: 0.28rem 0.5rem;
-  background: var(--ayame-background, #111218);
+  height: 32px;
+  padding: 0.28rem 0.6rem;
+  background: rgba(27, 28, 37, 0.86);
+  backdrop-filter: blur(8px);
   color: var(--ayame-text, #eeeaf3);
   border: 1px solid var(--ayame-border, #34323f);
-  border-radius: 5px;
+  border-radius: 7px;
   font-size: 0.78rem;
 }
 
@@ -1787,7 +1639,7 @@ defineExpose({
 
 .graph-notices {
   position: absolute;
-  top: 0.75rem;
+  bottom: 0.75rem;
   right: 0.75rem;
   z-index: 5;
   display: flex;

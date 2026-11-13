@@ -257,7 +257,6 @@ const indexLoading = ref(false)
 const indexError = ref(false)
 const graphModel = computed(() => buildGraphModel(vaultIndexData.value))
 const globalGraphRef = ref(null)
-const localGraphRef = ref(null)
 const initialGraphLoad = loadGraphSettings(props.vault.directory)
 const graphSettings = ref(initialGraphLoad.settings)
 const graphStorageWarning = ref(initialGraphLoad.error || '')
@@ -268,8 +267,8 @@ const commitGraphSettings = (nextSettings) => {
   graphStorageWarning.value = saved.ok ? '' : saved.error || 'Could not save graph settings.'
 }
 
-const handleUpdateGraphView = (mode, patch) => {
-  commitGraphSettings(updateGraphViewSettings(graphSettings.value, mode, patch))
+const handleUpdateGraphView = (patch) => {
+  commitGraphSettings(updateGraphViewSettings(graphSettings.value, patch))
 }
 
 const handleUpdateGraphGroups = (nextGroups) => {
@@ -281,8 +280,8 @@ const handleUpdateGraphGroups = (nextGroups) => {
   )
 }
 
-const handleRestoreGraphDefaults = (mode) => {
-  commitGraphSettings(resetGraphViewSettings(graphSettings.value, mode))
+const handleRestoreGraphDefaults = () => {
+  commitGraphSettings(resetGraphViewSettings(graphSettings.value))
 }
 
 const handleResetGraphGroups = () => {
@@ -298,30 +297,10 @@ const globalGraphView = computed(() =>
   })
 )
 
-const localGraphView = computed(() =>
-  projectGraphView({
-    baseGraph: graphModel.value,
-    vaultIndex: vaultIndexData.value,
-    mode: 'local',
-    centerPath: selectedFile.value,
-    depth: graphSettings.value.local.depth,
-    direction: graphSettings.value.local.direction,
-    filters: graphSettings.value.local.filters,
-  })
-)
-
 const globalGroupEvaluation = computed(() =>
   evaluateGraphGroups(
     graphSettings.value.groups,
     globalGraphView.value.nodes,
-    vaultIndexData.value.tagsByFile
-  )
-)
-
-const localGroupEvaluation = computed(() =>
-  evaluateGraphGroups(
-    graphSettings.value.groups,
-    localGraphView.value.nodes,
     vaultIndexData.value.tagsByFile
   )
 )
@@ -509,7 +488,7 @@ const activeOutgoingLinks = computed(() =>
     : { resolved: [], unresolved: [] }
 )
 
-const RIGHT_PANEL_TAB_ORDER = ['backlinks', 'outgoing', 'outline', 'tags', 'search', 'local-graph']
+const RIGHT_PANEL_TAB_ORDER = ['backlinks', 'outgoing', 'outline', 'tags', 'search']
 
 const rightPanelTabs = computed(() => [
   { id: 'backlinks', testid: 'panel-tab-backlinks', label: `Backlinks (${activeBacklinks.value.linked.length})` },
@@ -521,7 +500,6 @@ const rightPanelTabs = computed(() => [
   { id: 'outline', testid: 'panel-tab-outline', label: 'Outline' },
   { id: 'tags', testid: 'panel-tab-tags', label: 'Tags' },
   { id: 'search', testid: 'panel-tab-search', label: 'Search' },
-  { id: 'local-graph', testid: 'panel-tab-local-graph', label: 'Local Graph' },
 ])
 
 const ensureRightPanelTabVisible = (tabId) => {
@@ -580,7 +558,6 @@ const availableCommands = computed(() => {
     { id: 'toggle-explorer', label: 'Toggle file explorer', run: () => { explorerCollapsed.value = !explorerCollapsed.value } },
     { id: 'toggle-right-panel', label: 'Toggle contextual panel', run: () => { rightPanelCollapsed.value = !rightPanelCollapsed.value } },
     { id: 'open-graph', label: 'Open graph view', run: () => openGraphView() },
-    { id: 'open-local-graph', label: 'Open local graph', run: () => openLocalGraphView() },
     { id: 'toggle-properties', label: 'Toggle properties (Hidden / Visible / Source)', run: () => viewerRef.value?.cyclePropertiesMode?.() },
     { id: 'toggle-readable-line', label: 'Toggle readable line length', run: () => viewerRef.value?.toggleReadableLineLength?.() },
     { id: 'reveal-active', label: 'Reveal active note in explorer', run: () => revealActiveFile() },
@@ -941,12 +918,6 @@ const ensureTabOpen = (filePath) => {
 const openGraphView = () => {
   graphTabOpen.value = true
   activeWorkspaceView.value = 'graph'
-}
-
-const openLocalGraphView = () => {
-  layout.value.contextOpen = true
-  persistLayout()
-  rightPanelTab.value = 'local-graph'
 }
 
 const closeGraphTab = () => {
@@ -2494,9 +2465,6 @@ watch(
     if (wsView === 'graph' && graphTabOpen.value) {
       globalGraphRef.value?.updateCanvasSize?.()
     }
-    if (contextOpen && panelTab === 'local-graph') {
-      localGraphRef.value?.updateCanvasSize?.()
-    }
   }
 )
 
@@ -2763,32 +2731,6 @@ defineExpose({
             <circle cx="12.5" cy="10.5" r="1.8" fill="currentColor" />
           </svg>
           <span>Graph</span>
-        </button>
-
-        <button
-          type="button"
-          class="workspace-nav-graph workspace-nav-graph--local"
-          :class="{ 'workspace-nav-graph--active': layout.contextOpen && rightPanelTab === 'local-graph' }"
-          data-testid="open-local-graph-button"
-          :aria-pressed="layout.contextOpen && rightPanelTab === 'local-graph' ? 'true' : 'false'"
-          title="Open local graph"
-          @click="openLocalGraphView"
-        >
-          <svg
-            class="workspace-graph-icon"
-            viewBox="0 0 16 16"
-            width="14"
-            height="14"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path d="M8 8L3.5 4.5M8 8L12.5 5M8 8L5.5 12.5" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" />
-            <circle cx="8" cy="8" r="2.1" fill="currentColor" />
-            <circle cx="3.5" cy="4.5" r="1.4" fill="currentColor" />
-            <circle cx="12.5" cy="5" r="1.4" fill="currentColor" />
-            <circle cx="5.5" cy="12.5" r="1.4" fill="currentColor" />
-          </svg>
-          <span>Local Graph</span>
         </button>
       </nav>
 
@@ -3420,7 +3362,6 @@ defineExpose({
           v-if="graphTabOpen"
           v-show="activeWorkspaceView === 'graph'"
           ref="globalGraphRef"
-          mode="global"
           :graph="globalGraphView"
           :vault-directory="vault.directory"
           :loading="indexLoading"
@@ -3435,11 +3376,11 @@ defineExpose({
           :storage-warning="graphStorageWarning"
           @open-note="openNoteFromGraph"
           @retry="retryVaultIndex"
-          @update:filters="handleUpdateGraphView('global', { filters: $event })"
+          @update:filters="handleUpdateGraphView({ filters: $event })"
           @update:groups="handleUpdateGraphGroups"
-          @update:display="handleUpdateGraphView('global', { display: $event })"
-          @update:forces="handleUpdateGraphView('global', { forces: $event })"
-          @restore-defaults="handleRestoreGraphDefaults('global')"
+          @update:display="handleUpdateGraphView({ display: $event })"
+          @update:forces="handleUpdateGraphView({ forces: $event })"
+          @restore-defaults="handleRestoreGraphDefaults()"
           @reset-groups="handleResetGraphGroups"
         />
 
@@ -3510,10 +3451,7 @@ defineExpose({
           </button>
         </nav>
 
-        <div
-          class="right-panel-body"
-          :class="{ 'right-panel-body--graph': rightPanelTab === 'local-graph' }"
-        >
+        <div class="right-panel-body">
           <!-- Backlinks Tab -->
           <div v-if="rightPanelTab === 'backlinks'" data-testid="backlinks-panel">
             <h4 class="panel-section-title">Linked mentions ({{ activeBacklinks.linked.length }})</h4>
@@ -3657,43 +3595,6 @@ defineExpose({
                 <span class="panel-item-snippet">{{ res.snippet || res.path }}</span>
               </button>
             </div>
-          </div>
-
-          <!-- Local Graph Tab -->
-          <div
-            v-else-if="rightPanelTab === 'local-graph'"
-            class="local-graph-panel"
-            data-testid="local-graph-panel"
-          >
-            <GraphView
-              ref="localGraphRef"
-              mode="local"
-              :center-path="selectedFile"
-              :graph="localGraphView"
-              :vault-directory="vault.directory"
-              :loading="indexLoading"
-              :error="indexError"
-              :active-note-path="selectedFile"
-              :filters="graphSettings.local.filters"
-              :local-depth="graphSettings.local.depth"
-              :local-direction="graphSettings.local.direction"
-              :groups="graphSettings.groups"
-              :group-colors="localGroupEvaluation.colorsByNodeId"
-              :group-errors="localGroupEvaluation.errorsByGroupId"
-              :display="graphSettings.local.display"
-              :forces="graphSettings.local.forces"
-              :storage-warning="graphStorageWarning"
-              @open-note="openNoteFromGraph"
-              @retry="retryVaultIndex"
-              @update:filters="handleUpdateGraphView('local', { filters: $event })"
-              @update:local-depth="handleUpdateGraphView('local', { depth: $event })"
-              @update:local-direction="handleUpdateGraphView('local', { direction: $event })"
-              @update:groups="handleUpdateGraphGroups"
-              @update:display="handleUpdateGraphView('local', { display: $event })"
-              @update:forces="handleUpdateGraphView('local', { forces: $event })"
-              @restore-defaults="handleRestoreGraphDefaults('local')"
-              @reset-groups="handleResetGraphGroups"
-            />
           </div>
         </div>
       </aside>
@@ -4275,11 +4176,6 @@ defineExpose({
   white-space: nowrap;
   user-select: none;
   transition: all 0.12s ease;
-}
-
-.workspace-nav-graph--local {
-  background: transparent;
-  color: var(--ayame-text-muted, #aaa6b8);
 }
 
 .workspace-nav-graph:hover,
@@ -4954,23 +4850,6 @@ defineExpose({
   padding: 0.65rem;
   overflow-y: auto;
   flex: 1;
-}
-
-.right-panel-body--graph {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.local-graph-panel {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
 }
 
 .panel-section-title {

@@ -20,11 +20,6 @@ export const GRAPH_FORCE_LIMITS = {
   linkDistance: { min: 20, max: 250, step: 5, default: 60 },
 }
 
-export const GRAPH_LOCAL_LIMITS = {
-  depth: { min: 1, max: 5, step: 1, default: 1, integer: true },
-  directions: ['both', 'incoming', 'outgoing'],
-}
-
 export const GRAPH_GROUP_PALETTE = [
   '#7c9cff',
   '#e06c75',
@@ -117,46 +112,29 @@ const normalizeGroups = (raw) => {
   return result
 }
 
-const createDefaultViewSettings = (isLocal = false) => {
-  const base = {
-    filters: createDefaultGraphFilters(),
-    display: normalizeDisplay(),
-    forces: normalizeForces(),
-  }
-  if (!isLocal) return base
-  return {
-    depth: GRAPH_LOCAL_LIMITS.depth.default,
-    direction: GRAPH_LOCAL_LIMITS.directions[0],
-    ...base,
-  }
-}
+const createDefaultViewSettings = () => ({
+  filters: createDefaultGraphFilters(),
+  display: normalizeDisplay(),
+  forces: normalizeForces(),
+})
 
-const normalizeViewSettings = (raw, isLocal = false) => {
+const normalizeViewSettings = (raw) => {
   const src = isPlainObject(raw) ? raw : {}
-  const base = {
+  return {
     filters: normalizeFilters(src.filters),
     display: normalizeDisplay(src.display),
     forces: normalizeForces(src.forces),
   }
-  if (!isLocal) return base
-  return {
-    depth: normalizeNumber(src.depth, GRAPH_LOCAL_LIMITS.depth),
-    direction: GRAPH_LOCAL_LIMITS.directions.includes(src.direction)
-      ? src.direction
-      : GRAPH_LOCAL_LIMITS.directions[0],
-    ...base,
-  }
 }
 
-/** Create fresh normalized graph settings matching Stage 1/2 baseline defaults. */
+/** Create fresh normalized global graph settings with baseline defaults. */
 export const createDefaultGraphSettings = () => ({
   version: GRAPH_SETTINGS_VERSION,
   groups: [],
-  global: createDefaultViewSettings(false),
-  local: createDefaultViewSettings(true),
+  global: createDefaultViewSettings(),
 })
 
-/** Validate and strip unknown fields from untrusted settings input. */
+/** Validate and strip unknown or legacy fields (including removed local graph settings) from untrusted input. */
 export const normalizeGraphSettings = (raw) => {
   if (!isPlainObject(raw)) return createDefaultGraphSettings()
   if (raw.version !== undefined && raw.version !== GRAPH_SETTINGS_VERSION) {
@@ -165,8 +143,7 @@ export const normalizeGraphSettings = (raw) => {
   return {
     version: GRAPH_SETTINGS_VERSION,
     groups: normalizeGroups(raw.groups),
-    global: normalizeViewSettings(raw.global, false),
-    local: normalizeViewSettings(raw.local, true),
+    global: normalizeViewSettings(raw.global),
   }
 }
 
@@ -236,21 +213,14 @@ export const saveGraphSettings = (vaultDirectory, settings, storage = resolveDef
   }
 }
 
-/** Return a normalized copy with patched settings for either 'global' or 'local'. */
-export const updateGraphViewSettings = (settings, mode, patch) => {
+/** Return a normalized copy with patched settings for Global Graph. */
+export const updateGraphViewSettings = (settings, patch) => {
   const current = normalizeGraphSettings(settings)
-  const viewKey = mode === 'local' ? 'local' : 'global'
-  const prevView = current[viewKey]
+  const prevView = current.global
   const srcPatch = isPlainObject(patch) ? patch : {}
 
   const nextView = {
     ...prevView,
-    ...(viewKey === 'local'
-      ? {
-          depth: srcPatch.depth !== undefined ? srcPatch.depth : prevView.depth,
-          direction: srcPatch.direction !== undefined ? srcPatch.direction : prevView.direction,
-        }
-      : {}),
     filters: isPlainObject(srcPatch.filters) ? { ...prevView.filters, ...srcPatch.filters } : prevView.filters,
     display: isPlainObject(srcPatch.display) ? { ...prevView.display, ...srcPatch.display } : prevView.display,
     forces: isPlainObject(srcPatch.forces) ? { ...prevView.forces, ...srcPatch.forces } : prevView.forces,
@@ -258,7 +228,7 @@ export const updateGraphViewSettings = (settings, mode, patch) => {
 
   return normalizeGraphSettings({
     ...current,
-    [viewKey]: nextView,
+    global: nextView,
   })
 }
 
@@ -327,14 +297,13 @@ export const moveColorGroup = (settings, groupId, delta) => {
   })
 }
 
-/** Restore default settings for one view while preserving shared groups unless opted in. */
-export const resetGraphViewSettings = (settings, mode, { includeGroups = false } = {}) => {
+/** Restore default Global Graph settings while preserving shared groups unless opted in. */
+export const resetGraphViewSettings = (settings, { includeGroups = false } = {}) => {
   const current = normalizeGraphSettings(settings)
-  const viewKey = mode === 'local' ? 'local' : 'global'
   return normalizeGraphSettings({
     ...current,
     groups: includeGroups ? [] : current.groups,
-    [viewKey]: createDefaultViewSettings(viewKey === 'local'),
+    global: createDefaultViewSettings(),
   })
 }
 

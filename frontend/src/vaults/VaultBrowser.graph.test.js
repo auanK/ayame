@@ -735,6 +735,8 @@ describe('VaultBrowser global graph integration', () => {
     const vaultASnapshotBefore = localStorage.getItem(`ayame:graph-settings:${VAULT_A.directory}`)
     await reloaded.setProps({ vault: VAULT_B })
     await flushPromises()
+    await reloaded.find('[data-file-path="Outro.md"]').trigger('click')
+    await flushPromises()
     await reloaded.find('[data-testid="open-graph-button"]').trigger('click')
     await nextTick()
 
@@ -754,8 +756,8 @@ describe('VaultBrowser global graph integration', () => {
 
     // Live note save still updates global graph view cleanly without restarting simulation unnecessarily
     reloaded.findComponent({ name: 'MarkdownViewer' }).vm.$emit('content-saved', {
-      path: 'Alpha.md',
-      content: '#updated\nLink para [[Beta]].\n',
+      path: 'Outro.md',
+      content: '# Outro\nLink para [[NovaNota]].\n',
       mtimeMs: 3000,
     })
     await nextTick()

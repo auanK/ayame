@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, computed } from 'vue'
+import { ref, computed } from 'vue'
 import { createDefaultGraphFilters } from './graphSelection.js'
 import {
   GRAPH_DISPLAY_LIMITS,
@@ -45,18 +45,17 @@ const emit = defineEmits([
   'update:forces',
   'restore-defaults',
   'reset-groups',
+  'close',
 ])
 
-const openSections = reactive({
-  filters: true,
-  groups: false,
-  display: false,
-  forces: false,
-})
+const CONTROL_TABS = [
+  { id: 'filters', label: 'Filters', testid: 'graph-section-filters' },
+  { id: 'groups', label: 'Groups', testid: 'graph-section-groups' },
+  { id: 'display', label: 'Display', testid: 'graph-section-display' },
+  { id: 'forces', label: 'Forces', testid: 'graph-section-forces' },
+]
 
-const toggleSection = (key) => {
-  openSections[key] = !openSections[key]
-}
+const activeTab = ref('filters')
 
 const DISPLAY_SLIDERS = [
   {
@@ -190,21 +189,48 @@ const handleMoveGroup = (groupId, delta) => {
     data-testid="graph-filters-panel"
     role="region"
     aria-label="Graph settings"
+    @keydown.esc.stop.prevent="emit('close')"
   >
-    <!-- Filters Section -->
-    <section class="graph-control-section">
+    <div class="graph-tabs-bar" role="tablist" aria-label="Graph settings categories">
       <button
+        v-for="tab in CONTROL_TABS"
+        :key="tab.id"
         type="button"
-        class="graph-section-header"
-        data-testid="graph-section-filters"
-        :aria-expanded="openSections.filters ? 'true' : 'false'"
-        @click="toggleSection('filters')"
+        role="tab"
+        class="graph-tab-btn"
+        :class="{ 'graph-tab-btn--active': activeTab === tab.id }"
+        :data-testid="tab.testid"
+        :aria-selected="activeTab === tab.id ? 'true' : 'false'"
+        @click="activeTab = tab.id"
       >
-        <span>Filters</span>
-        <span class="graph-section-indicator" aria-hidden="true">{{ openSections.filters ? '-' : '+' }}</span>
+        <span>{{ tab.label }}</span>
+        <span v-if="tab.id === 'groups' && groups.length > 0" class="graph-tab-count">
+          ({{ groups.length }})
+        </span>
       </button>
+    </div>
 
-      <div v-if="openSections.filters" class="graph-section-body">
+    <div class="graph-tab-body">
+      <!-- Filters Tab -->
+      <section
+        v-if="activeTab === 'filters'"
+        class="graph-tab-pane"
+        data-testid="graph-tab-pane-filters"
+        role="tabpanel"
+      >
+        <div class="graph-pane-header">
+          <span class="graph-pane-title">Filters</span>
+          <button
+            v-if="hasActiveFilters"
+            type="button"
+            class="graph-inline-link"
+            data-testid="graph-filters-reset"
+            @click="resetFilters"
+          >
+            Reset filters
+          </button>
+        </div>
+
         <div class="graph-filter-field">
           <label class="graph-filter-label">
             <span>Search files</span>
@@ -223,9 +249,10 @@ const handleMoveGroup = (groupId, delta) => {
                 class="graph-filter-clear"
                 data-testid="graph-filter-search-clear"
                 aria-label="Clear search filter"
+                title="Clear search filter"
                 @click="updateFilter({ searchQuery: '' })"
               >
-                Clear
+                ×
               </button>
             </div>
           </label>
@@ -270,35 +297,33 @@ const handleMoveGroup = (groupId, delta) => {
             <span>Orphans</span>
           </label>
         </div>
+      </section>
 
-        <div v-if="hasActiveFilters" class="graph-filter-actions">
+      <!-- Groups Tab -->
+      <section
+        v-else-if="activeTab === 'groups'"
+        class="graph-tab-pane"
+        data-testid="graph-tab-pane-groups"
+        role="tabpanel"
+      >
+        <div class="graph-pane-header">
+          <span class="graph-pane-title">Color groups</span>
           <button
+            v-if="groups.length > 0"
             type="button"
-            class="btn-secondary btn-compact"
-            data-testid="graph-filters-reset"
-            @click="resetFilters"
+            class="graph-inline-link"
+            data-testid="graph-groups-reset"
+            @click="emit('reset-groups')"
           >
-            Reset filters
+            Clear groups
           </button>
         </div>
-      </div>
-    </section>
 
-    <!-- Groups Section -->
-    <section class="graph-control-section">
-      <button
-        type="button"
-        class="graph-section-header"
-        data-testid="graph-section-groups"
-        :aria-expanded="openSections.groups ? 'true' : 'false'"
-        @click="toggleSection('groups')"
-      >
-        <span>Groups{{ groups.length > 0 ? ` (${groups.length})` : '' }}</span>
-        <span class="graph-section-indicator" aria-hidden="true">{{ openSections.groups ? '-' : '+' }}</span>
-      </button>
+        <p v-if="groups.length === 0" class="graph-empty-hint">
+          No color rules yet. Add a group by text, path:, file:, or tag:.
+        </p>
 
-      <div v-if="openSections.groups" class="graph-section-body">
-        <div v-if="groups.length > 0" class="graph-groups-list">
+        <div v-else class="graph-groups-list">
           <div
             v-for="(group, idx) in groups"
             :key="group.id"
@@ -330,9 +355,10 @@ const handleMoveGroup = (groupId, delta) => {
                   :data-testid="`graph-group-up-${group.id}`"
                   :disabled="idx === 0"
                   aria-label="Move group up"
+                  title="Move up"
                   @click="handleMoveGroup(group.id, -1)"
                 >
-                  Up
+                  ↑
                 </button>
                 <button
                   type="button"
@@ -340,18 +366,20 @@ const handleMoveGroup = (groupId, delta) => {
                   :data-testid="`graph-group-down-${group.id}`"
                   :disabled="idx === groups.length - 1"
                   aria-label="Move group down"
+                  title="Move down"
                   @click="handleMoveGroup(group.id, 1)"
                 >
-                  Down
+                  ↓
                 </button>
                 <button
                   type="button"
                   class="graph-group-btn graph-group-btn--remove"
                   :data-testid="`graph-group-remove-${group.id}`"
                   aria-label="Remove group"
+                  title="Remove group"
                   @click="handleRemoveGroup(group.id)"
                 >
-                  Remove
+                  ×
                 </button>
               </div>
             </div>
@@ -369,39 +397,22 @@ const handleMoveGroup = (groupId, delta) => {
         <div class="graph-group-footer">
           <button
             type="button"
-            class="btn-secondary btn-compact"
+            class="graph-inline-link graph-inline-link--accent"
             data-testid="graph-group-add"
             @click="handleAddGroup"
           >
-            New group
-          </button>
-          <button
-            v-if="groups.length > 0"
-            type="button"
-            class="graph-filter-clear"
-            data-testid="graph-groups-reset"
-            @click="emit('reset-groups')"
-          >
-            Reset groups
+            + New group
           </button>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- Display Section -->
-    <section class="graph-control-section">
-      <button
-        type="button"
-        class="graph-section-header"
-        data-testid="graph-section-display"
-        :aria-expanded="openSections.display ? 'true' : 'false'"
-        @click="toggleSection('display')"
+      <!-- Display Tab -->
+      <section
+        v-else-if="activeTab === 'display'"
+        class="graph-tab-pane"
+        data-testid="graph-tab-pane-display"
+        role="tabpanel"
       >
-        <span>Display</span>
-        <span class="graph-section-indicator" aria-hidden="true">{{ openSections.display ? '-' : '+' }}</span>
-      </button>
-
-      <div v-if="openSections.display" class="graph-section-body">
         <label class="graph-filter-toggle">
           <input
             type="checkbox"
@@ -433,23 +444,15 @@ const handleMoveGroup = (groupId, delta) => {
             @input="handleRangeInput('display', slider.key, $event)"
           />
         </label>
-      </div>
-    </section>
+      </section>
 
-    <!-- Forces Section -->
-    <section class="graph-control-section">
-      <button
-        type="button"
-        class="graph-section-header"
-        data-testid="graph-section-forces"
-        :aria-expanded="openSections.forces ? 'true' : 'false'"
-        @click="toggleSection('forces')"
+      <!-- Forces Tab -->
+      <section
+        v-else
+        class="graph-tab-pane"
+        data-testid="graph-tab-pane-forces"
+        role="tabpanel"
       >
-        <span>Forces</span>
-        <span class="graph-section-indicator" aria-hidden="true">{{ openSections.forces ? '-' : '+' }}</span>
-      </button>
-
-      <div v-if="openSections.forces" class="graph-section-body">
         <label
           v-for="slider in FORCE_SLIDERS"
           :key="slider.key"
@@ -471,13 +474,13 @@ const handleMoveGroup = (groupId, delta) => {
             @input="handleRangeInput('forces', slider.key, $event)"
           />
         </label>
-      </div>
-    </section>
+      </section>
+    </div>
 
     <div class="graph-panel-footer">
       <button
         type="button"
-        class="btn-secondary btn-compact"
+        class="graph-inline-link graph-restore-link"
         data-testid="graph-restore-defaults"
         @click="emit('restore-defaults')"
       >
@@ -491,64 +494,128 @@ const handleMoveGroup = (groupId, delta) => {
 .graph-filters-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.45rem 0.55rem;
-  background: var(--ayame-surface, #1b1c25);
-  border-bottom: 1px solid var(--ayame-border, #34323f);
+  width: min(308px, calc(100vw - 2rem));
+  max-height: min(62vh, 390px);
+  background: rgba(24, 25, 34, 0.96);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--ayame-border, #34323f);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.42);
   font-size: 0.76rem;
   color: var(--ayame-text, #eeeaf3);
-  max-height: min(55vh, 360px);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.graph-tabs-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.2rem;
+  padding: 0.35rem 0.4rem;
+  background: rgba(17, 18, 24, 0.7);
+  border-bottom: 1px solid var(--ayame-border, #2b2936);
+}
+
+.graph-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.18rem;
+  padding: 0.3rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.graph-tab-btn:hover {
+  color: var(--ayame-text, #eeeaf3);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.graph-tab-btn--active {
+  color: var(--ayame-text, #eeeaf3);
+  background: var(--ayame-hover, #282737);
+  border-color: rgba(169, 154, 202, 0.32);
+  font-weight: 600;
+}
+
+.graph-tab-count {
+  color: var(--ayame-primary, #a99aca);
+  font-size: 0.68rem;
+}
+
+.graph-tab-body {
+  padding: 0.65rem 0.75rem 0.55rem;
   overflow-y: auto;
   overflow-x: hidden;
-  flex-shrink: 0;
-  min-width: 0;
+  min-height: 0;
 }
 
-.graph-control-section {
+.graph-tab-pane {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--ayame-border, #2b2936);
-  padding-bottom: 0.3rem;
+  gap: 0.6rem;
   min-width: 0;
 }
 
-.graph-section-header {
+.graph-pane-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  width: 100%;
-  padding: 0.2rem 0.1rem;
-  background: transparent;
-  border: none;
-  color: var(--ayame-text, #eeeaf3);
-  font-size: 0.74rem;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: left;
+  gap: 0.5rem;
+  min-height: 1.15rem;
 }
 
-.graph-section-header:hover {
+.graph-pane-title {
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.graph-inline-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.graph-inline-link:hover {
+  color: var(--ayame-lavender, #d4cbe4);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.graph-inline-link--accent {
   color: var(--ayame-primary, #a99aca);
 }
 
-.graph-section-indicator {
-  color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.8rem;
+.graph-restore-link {
+  font-size: 0.7rem;
 }
 
-.graph-section-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.3rem 0.05rem 0.15rem;
-  min-width: 0;
+.graph-empty-hint {
+  margin: 0;
+  color: var(--ayame-text-muted, #9893a8);
+  font-size: 0.72rem;
+  line-height: 1.4;
 }
 
 .graph-filter-field,
 .graph-slider-field {
   display: flex;
   flex-direction: column;
-  gap: 0.22rem;
+  gap: 0.25rem;
   min-width: 0;
 }
 
@@ -556,7 +623,7 @@ const handleMoveGroup = (groupId, delta) => {
 .graph-slider-header {
   display: flex;
   flex-direction: column;
-  gap: 0.22rem;
+  gap: 0.24rem;
   font-size: 0.72rem;
   color: var(--ayame-text-muted, #aaa6b8);
 }
@@ -581,19 +648,20 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-filter-search-row {
   display: flex;
-  gap: 0.3rem;
+  align-items: center;
+  gap: 0.25rem;
   min-width: 0;
 }
 
 .graph-filter-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 0.24rem 0.4rem;
+  padding: 0.28rem 0.45rem;
   background: var(--ayame-background, #111218);
   color: var(--ayame-text, #eeeaf3);
   border: 1px solid var(--ayame-border, #34323f);
-  border-radius: 4px;
-  font-size: 0.75rem;
+  border-radius: 5px;
+  font-size: 0.74rem;
 }
 
 .graph-filter-input:focus-visible {
@@ -607,8 +675,9 @@ const handleMoveGroup = (groupId, delta) => {
   border: 1px solid var(--ayame-border, #34323f);
   border-radius: 4px;
   color: var(--ayame-text-muted, #aaa6b8);
-  font-size: 0.68rem;
-  padding: 0.14rem 0.35rem;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.22rem 0.38rem;
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -619,8 +688,13 @@ const handleMoveGroup = (groupId, delta) => {
   background: var(--ayame-hover, #242530);
 }
 
+.graph-group-btn--remove:hover:not(:disabled) {
+  color: var(--ayame-danger, #e58b95);
+  border-color: rgba(229, 139, 149, 0.45);
+}
+
 .graph-group-btn:disabled {
-  opacity: 0.45;
+  opacity: 0.35;
   cursor: default;
 }
 
@@ -634,22 +708,23 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-filter-toggles {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.7rem;
+  flex-direction: column;
+  gap: 0.42rem;
 }
 
 .graph-filter-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.45rem;
   cursor: pointer;
   user-select: none;
+  font-size: 0.75rem;
 }
 
 .graph-groups-list {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.4rem;
   min-width: 0;
 }
 
@@ -662,9 +737,8 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-group-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.28rem;
   min-width: 0;
 }
 
@@ -680,28 +754,29 @@ const handleMoveGroup = (groupId, delta) => {
 }
 
 .graph-group-query {
-  min-width: 72px;
+  min-width: 0;
 }
 
 .graph-group-actions {
   display: flex;
   align-items: center;
-  gap: 0.2rem;
+  gap: 0.16rem;
   flex-shrink: 0;
 }
 
-.graph-group-footer,
-.graph-filter-actions,
-.graph-panel-footer {
+.graph-group-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.4rem;
-  padding-top: 0.15rem;
-  flex-wrap: wrap;
+  justify-content: flex-start;
+  padding-top: 0.1rem;
 }
 
 .graph-panel-footer {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid var(--ayame-border, #2b2936);
+  background: rgba(17, 18, 24, 0.45);
 }
 </style>
