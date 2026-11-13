@@ -17,6 +17,8 @@ import {
   resolveLabelOpacity,
   computeArrowGeometry,
   applySimulationForces,
+  stepExponentialZoom,
+  anchorViewportOffset,
 } from './graphSettings.js'
 
 let graphLocatorInstanceSeq = 0
@@ -103,6 +105,7 @@ const emit = defineEmits([
 
 const MIN_SCALE = 0.15
 const MAX_SCALE = 6
+const ZOOM_TAU_MS = 100
 const DRAG_THRESHOLD_PX = 4
 const LOCATOR_LIMIT = 12
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
@@ -129,6 +132,16 @@ const viewport = {
   panning: false,
 }
 
+const cameraTarget = {
+  animating: false,
+  scale: 1,
+  anchorSx: 0,
+  anchorSy: 0,
+  anchorWx: 0,
+  anchorWy: 0,
+  lastTimestamp: null,
+}
+
 let isUnmounted = false
 let simulation = null
 let simNodes = []
@@ -153,8 +166,20 @@ let resizeObserver = null
 
 let pointerDownPos = null
 let panOrigin = null
+let dragOffset = null
 let didDrag = false
 let activePointerId = null
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+const cancelCameraAnimation = () => {
+  cameraTarget.animating = false
+  cameraTarget.lastTimestamp = null
+  cameraTarget.scale = viewport.scale
+}
 
 const isLocalMode = computed(() => props.mode === 'local')
 const effectiveCenterPath = computed(() => props.centerPath || props.graph?.centerPath || null)
@@ -525,10 +550,54 @@ const draw = () => {
   }
 }
 
+const renderFrame = (timestamp) => {
+  rafId = null
+  if (isUnmounted) return
+
+  if (cameraTarget.animating) {
+    const hasPrev = cameraTarget.lastTimestamp !== null && typeof timestamp === 'number'
+    const rawDt = hasPrev ? timestamp - cameraTarget.lastTimestamp : 16
+    const dtMs = Number.isFinite(rawDt) && rawDt > 0 ? Math.min(rawDt, 100) : 16
+    cameraTarget.lastTimestamp = typeof timestamp === 'number' ? timestamp : null
+
+    const step = stepExponentialZoom({
+      currentScale: viewport.scale,
+      targetScale: cameraTarget.scale,
+      dtMs,
+      tauMs: ZOOM_TAU_MS,
+      minScale: MIN_SCALE,
+      maxScale: MAX_SCALE,
+    })
+    viewport.scale = step.scale
+    const anchored = anchorViewportOffset({
+      scale: viewport.scale,
+      anchorScreenX: cameraTarget.anchorSx,
+      anchorScreenY: cameraTarget.anchorSy,
+      anchorWorldX: cameraTarget.anchorWx,
+      anchorWorldY: cameraTarget.anchorWy,
+      viewWidth,
+      viewHeight,
+    })
+    viewport.offsetX = anchored.offsetX
+    viewport.offsetY = anchored.offsetY
+
+    if (step.done) {
+      cameraTarget.animating = false
+      cameraTarget.lastTimestamp = null
+    }
+  }
+
+  draw()
+
+  if (cameraTarget.animating && !isUnmounted) {
+    scheduleDraw()
+  }
+}
+
 const scheduleDraw = () => {
   if (isUnmounted || rafId !== null) return
   if (typeof requestAnimationFrame !== 'function') return
-  rafId = requestAnimationFrame(draw)
+  rafId = requestAnimationFrame(renderFrame)
 }
 
 const stopSimulation = () => {
@@ -545,6 +614,9 @@ const syncSimulationWithModel = (graph) => {
   const vaultChanged = currentVaultKey !== props.vaultDirectory
   if (vaultChanged) {
     currentVaultKey = props.vaultDirectory
+    cancelActiveInteraction()
+    cancelCameraAnimation()
+    cancelPendingDraw()
     stopSimulation()
     simNodes = []
     simLinks = []
@@ -554,16 +626,16 @@ const syncSimulationWithModel = (graph) => {
     viewport.scale = 1
     viewport.offsetX = 0
     viewport.offsetY = 0
+    cameraTarget.scale = 1
     updateHoveredNode(null)
-    viewport.draggingNodeId = null
-    viewport.panning = false
-    isGrabbing.value = false
   }
 
   const rawNodes = Array.isArray(graph?.nodes) ? graph.nodes : []
   const rawEdges = Array.isArray(graph?.edges) ? graph.edges : []
 
   if (rawNodes.length === 0) {
+    cancelActiveInteraction()
+    cancelCameraAnimation()
     stopSimulation()
     simNodes = []
     simLinks = []
@@ -682,8 +754,9 @@ const syncSimulationWithModel = (graph) => {
       .force('center', forceCenter(0, 0))
       .force('x', forceX(0).strength(0.055))
       .force('y', forceY(0).strength(0.055))
-      .alphaDecay(0.028)
-      .velocityDecay(0.42)
+      .alphaDecay(0.032)
+      .alphaMin(0.002)
+      .velocityDecay(0.46)
       .on('tick', scheduleDraw)
       .on('end', scheduleDraw)
     applySimulationForces(simulation, props.forces, { restart: false })
@@ -692,7 +765,7 @@ const syncSimulationWithModel = (graph) => {
     const linkForce = simulation.force('link')
     if (linkForce) linkForce.links(simLinks)
     applySimulationForces(simulation, props.forces, { restart: false })
-    simulation.alpha(hadExistingNodes ? 0.35 : 0.9).restart()
+    simulation.alpha(hadExistingNodes ? 0.25 : 0.85).restart()
   }
   appliedForcesKey = computeForcesKey(props.forces)
 
@@ -732,46 +805,77 @@ const getCanvasRelativeCoords = (event) => {
   }
 }
 
+const normalizePointerId = (event) => (event?.pointerId !== undefined && event?.pointerId !== null ? event.pointerId : 'mouse')
+
+const applyImmediateScale = (nextScale, sx, sy, wx, wy) => {
+  cancelCameraAnimation()
+  viewport.scale = clamp(nextScale, MIN_SCALE, MAX_SCALE)
+  cameraTarget.scale = viewport.scale
+  const anchored = anchorViewportOffset({
+    scale: viewport.scale,
+    anchorScreenX: sx,
+    anchorScreenY: sy,
+    anchorWorldX: wx,
+    anchorWorldY: wy,
+    viewWidth,
+    viewHeight,
+  })
+  viewport.offsetX = anchored.offsetX
+  viewport.offsetY = anchored.offsetY
+  scheduleDraw()
+}
+
 const handleWheel = (event) => {
   if (!hasNodes.value) return
   const { sx, sy } = getCanvasRelativeCoords(event)
   const rawDelta = clamp(event.deltaY, -240, 240)
   const factor = Math.exp(-rawDelta * 0.0018)
-  const nextScale = clamp(viewport.scale * factor, MIN_SCALE, MAX_SCALE)
-  if (nextScale === viewport.scale) return
-
+  const baseScale = cameraTarget.animating ? cameraTarget.scale : viewport.scale
+  const nextTarget = clamp(baseScale * factor, MIN_SCALE, MAX_SCALE)
   const world = screenToWorld(sx, sy)
-  viewport.scale = nextScale
-  viewport.offsetX = sx - viewWidth / 2 - world.x * nextScale
-  viewport.offsetY = sy - viewHeight / 2 - world.y * nextScale
+
+  if (prefersReducedMotion()) {
+    if (nextTarget === viewport.scale) return
+    applyImmediateScale(nextTarget, sx, sy, world.x, world.y)
+    return
+  }
+
+  if (Math.abs(nextTarget - viewport.scale) <= 1e-6 && !cameraTarget.animating) return
+  cameraTarget.scale = nextTarget
+  cameraTarget.anchorSx = sx
+  cameraTarget.anchorSy = sy
+  cameraTarget.anchorWx = world.x
+  cameraTarget.anchorWy = world.y
+  cameraTarget.animating = true
   scheduleDraw()
 }
 
 const handlePointerDown = (event) => {
   if (event.button !== 0 || !hasNodes.value) return
+  if (activePointerId !== null) return
   const canvas = canvasRef.value
   const { sx, sy } = getCanvasRelativeCoords(event)
   const hit = findNodeAtScreen(sx, sy)
 
+  activePointerId = normalizePointerId(event)
   pointerDownPos = { x: sx, y: sy }
   didDrag = false
-  activePointerId = event.pointerId
 
-  if (canvas && typeof canvas.setPointerCapture === 'function') {
+  if (canvas && event.pointerId !== undefined && typeof canvas.setPointerCapture === 'function') {
     try {
       canvas.setPointerCapture(event.pointerId)
     } catch {}
   }
 
   if (hit) {
+    const { x: wx, y: wy } = screenToWorld(sx, sy)
+    dragOffset = { x: (hit.x || 0) - wx, y: (hit.y || 0) - wy }
     viewport.draggingNodeId = hit.id
     isGrabbing.value = true
     updateHoveredNode(hit)
-    const { x: wx, y: wy } = screenToWorld(sx, sy)
-    hit.fx = wx
-    hit.fy = wy
     scheduleDraw()
   } else {
+    cancelCameraAnimation()
     viewport.panning = true
     isGrabbing.value = true
     panOrigin = { x: sx, y: sy, offsetX: viewport.offsetX, offsetY: viewport.offsetY }
@@ -780,9 +884,11 @@ const handlePointerDown = (event) => {
 
 const handlePointerMove = (event) => {
   if (!hasNodes.value) return
+  const pointerId = normalizePointerId(event)
   const { sx, sy } = getCanvasRelativeCoords(event)
 
   if (viewport.draggingNodeId) {
+    if (activePointerId !== null && pointerId !== activePointerId) return
     const draggedNode = simNodesById.get(viewport.draggingNodeId)
     if (!draggedNode) return
     if (
@@ -795,14 +901,17 @@ const handlePointerMove = (event) => {
     }
     if (didDrag) {
       const { x: wx, y: wy } = screenToWorld(sx, sy)
-      draggedNode.fx = wx
-      draggedNode.fy = wy
+      const ox = dragOffset ? dragOffset.x : 0
+      const oy = dragOffset ? dragOffset.y : 0
+      draggedNode.fx = wx + ox
+      draggedNode.fy = wy + oy
       scheduleDraw()
     }
     return
   }
 
   if (viewport.panning && panOrigin) {
+    if (activePointerId !== null && pointerId !== activePointerId) return
     const dx = sx - panOrigin.x
     const dy = sy - panOrigin.y
     if (!didDrag && Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) {
@@ -822,11 +931,18 @@ const handlePointerMove = (event) => {
   }
 }
 
-const finishPointerInteraction = (event, allowClick) => {
+function finishPointerInteraction(event, allowClick, force = false) {
+  if (!force) {
+    if (activePointerId === null) return
+    const pointerId = normalizePointerId(event)
+    if (pointerId !== activePointerId) return
+  }
+
   const canvas = canvasRef.value
   if (
     canvas &&
     activePointerId !== null &&
+    activePointerId !== 'mouse' &&
     typeof canvas.hasPointerCapture === 'function' &&
     canvas.hasPointerCapture(activePointerId)
   ) {
@@ -856,11 +972,28 @@ const finishPointerInteraction = (event, allowClick) => {
 
   isGrabbing.value = false
   pointerDownPos = null
+  dragOffset = null
   didDrag = false
+}
+
+function cancelActiveInteraction() {
+  finishPointerInteraction(null, false, true)
 }
 
 const handlePointerUp = (event) => finishPointerInteraction(event, true)
 const handlePointerCancel = (event) => finishPointerInteraction(event, false)
+
+const handleWindowBlur = () => {
+  cancelActiveInteraction()
+  cancelCameraAnimation()
+}
+
+const handleVisibilityChange = () => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    cancelActiveInteraction()
+    cancelCameraAnimation()
+  }
+}
 
 const handlePointerLeave = () => {
   if (viewport.draggingNodeId || viewport.panning) return
@@ -873,33 +1006,43 @@ const handleCanvasKeydown = (event) => {
   const step = event.shiftKey ? 80 : 36
   if (event.key === 'ArrowLeft') {
     event.preventDefault()
+    cancelCameraAnimation()
     viewport.offsetX += step
     scheduleDraw()
   } else if (event.key === 'ArrowRight') {
     event.preventDefault()
+    cancelCameraAnimation()
     viewport.offsetX -= step
     scheduleDraw()
   } else if (event.key === 'ArrowUp') {
     event.preventDefault()
+    cancelCameraAnimation()
     viewport.offsetY += step
     scheduleDraw()
   } else if (event.key === 'ArrowDown') {
     event.preventDefault()
+    cancelCameraAnimation()
     viewport.offsetY -= step
     scheduleDraw()
   } else if (event.key === '+' || event.key === '=') {
     event.preventDefault()
+    cancelCameraAnimation()
     viewport.scale = clamp(viewport.scale * 1.18, MIN_SCALE, MAX_SCALE)
+    cameraTarget.scale = viewport.scale
     scheduleDraw()
   } else if (event.key === '-') {
     event.preventDefault()
+    cancelCameraAnimation()
     viewport.scale = clamp(viewport.scale / 1.18, MIN_SCALE, MAX_SCALE)
+    cameraTarget.scale = viewport.scale
     scheduleDraw()
   } else if (event.key === '0') {
     event.preventDefault()
+    cancelCameraAnimation()
     viewport.scale = 1
     viewport.offsetX = 0
     viewport.offsetY = 0
+    cameraTarget.scale = 1
     scheduleDraw()
   }
 }
@@ -1011,11 +1154,15 @@ onMounted(() => {
     resizeObserver.observe(resizeTarget)
   }
   window.addEventListener('resize', updateCanvasSize)
+  window.addEventListener('blur', handleWindowBlur)
   document.addEventListener('pointerdown', handleDocumentPointerDown)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onUnmounted(() => {
   isUnmounted = true
+  cancelActiveInteraction()
+  cancelCameraAnimation()
   cancelPendingDraw()
   stopSimulation()
   if (resizeObserver) {
@@ -1023,7 +1170,9 @@ onUnmounted(() => {
     resizeObserver = null
   }
   window.removeEventListener('resize', updateCanvasSize)
+  window.removeEventListener('blur', handleWindowBlur)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   simNodes = []
   simLinks = []
   simNodesById.clear()

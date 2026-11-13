@@ -1086,13 +1086,13 @@ describe('VaultBrowser global graph integration', () => {
     await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
     await flushPromises()
     const viewer = wrapper.findComponent({ name: 'MarkdownViewer' })
-    const viewerInstanceBefore = viewer.vm
+    const viewerElementBefore = viewer.element
     viewer.vm.$emit('state', { dirty: true, saving: false, saveState: 'idle' })
     await nextTick()
 
     await globalBtn.trigger('click')
     await nextTick()
-    expect(wrapper.findComponent({ name: 'MarkdownViewer' }).vm).toBe(viewerInstanceBefore)
+    expect(wrapper.findComponent({ name: 'MarkdownViewer' }).element).toBe(viewerElementBefore)
 
     // Right panel is collapsed initially -> clicking primary Local Graph expands panel, selects tab, and scrolls it horizontally into view!
     expect(wrapper.find('[data-testid="workspace-right-panel"]').classes()).toContain(

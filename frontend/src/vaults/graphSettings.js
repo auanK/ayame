@@ -470,3 +470,59 @@ export const applySimulationForces = (simulation, rawForces, { restart = true } 
     simulation.alpha?.(0.32)?.restart?.()
   }
 }
+
+const clampValue = (value, min, max) => Math.max(min, Math.min(max, value))
+
+/** Advance exponential zoom interpolation over elapsed frame time without overshoot. */
+export const stepExponentialZoom = ({
+  currentScale,
+  targetScale,
+  dtMs = 16,
+  tauMs = 100,
+  minScale = 0.15,
+  maxScale = 6,
+  epsilon = 0.0005,
+}) => {
+  const safeTarget = Number.isFinite(targetScale)
+    ? clampValue(targetScale, minScale, maxScale)
+    : clampValue(currentScale || 1, minScale, maxScale)
+  const safeCurrent = Number.isFinite(currentScale)
+    ? clampValue(currentScale, minScale, maxScale)
+    : safeTarget
+  const safeDt = Number.isFinite(dtMs) && dtMs > 0 ? Math.min(dtMs, 100) : 16
+  const factor = 1 - Math.exp(-safeDt / Math.max(1, tauMs))
+  const nextScale = clampValue(safeCurrent + (safeTarget - safeCurrent) * factor, minScale, maxScale)
+
+  const delta = Math.abs(safeTarget - nextScale)
+  if (delta <= epsilon || delta / Math.max(safeTarget, 1e-4) <= epsilon) {
+    return { scale: safeTarget, done: true }
+  }
+  return { scale: nextScale, done: false }
+}
+
+/** Compute viewport pan offsets so a world coordinate remains fixed under a screen cursor. */
+export const anchorViewportOffset = ({
+  scale,
+  anchorScreenX,
+  anchorScreenY,
+  anchorWorldX,
+  anchorWorldY,
+  viewWidth,
+  viewHeight,
+}) => {
+  if (
+    !Number.isFinite(scale) ||
+    !Number.isFinite(anchorScreenX) ||
+    !Number.isFinite(anchorScreenY) ||
+    !Number.isFinite(anchorWorldX) ||
+    !Number.isFinite(anchorWorldY) ||
+    !Number.isFinite(viewWidth) ||
+    !Number.isFinite(viewHeight)
+  ) {
+    return { offsetX: 0, offsetY: 0 }
+  }
+  return {
+    offsetX: anchorScreenX - viewWidth / 2 - anchorWorldX * scale,
+    offsetY: anchorScreenY - viewHeight / 2 - anchorWorldY * scale,
+  }
+}

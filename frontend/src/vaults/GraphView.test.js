@@ -1158,14 +1158,16 @@ describe('GraphView.vue', () => {
     // World x separation between Isolada (-60) and Heroi (40) = 100 -> clamped at MAX_SCALE=6 => <= 600px (with other nodes inside)
     expect(maxSpan).toBeLessThanOrEqual(600.1)
 
-    // Vault switch cancels pending animation cleanly
+    // Vault switch cancels pending zoom animation immediately; flushing the new vault's single initial draw leaves zero animation loops
     canvasEl.dispatchEvent(
       new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: anchorSx, clientY: anchorSy, deltaY: 120 })
     )
     expect(rafQueue.size).toBe(1)
+    const cancelCallsBeforeSwitch = globalThis.cancelAnimationFrame.mock.calls.length
     await wrapper.setProps({ vaultDirectory: 'C:/vaults/other' })
     await nextTick()
-    expect(globalThis.cancelAnimationFrame).toHaveBeenCalled()
+    expect(globalThis.cancelAnimationFrame.mock.calls.length).toBeGreaterThan(cancelCallsBeforeSwitch)
+    stepNextRaf(canvasEl, 4000)
     expect(rafQueue.size).toBe(0)
 
     // prefers-reduced-motion: reduce applies zoom immediately without queuing a multi-frame animation loop
@@ -1188,6 +1190,12 @@ describe('GraphView.vue', () => {
       window.matchMedia = origMatchMedia
     }
 
+    // Unmount cancels any active wheel zoom loop immediately
+    canvasEl.dispatchEvent(
+      new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY: -120 })
+    )
+    expect(rafQueue.size).toBe(1)
     wrapper.unmount()
+    expect(rafQueue.size).toBe(0)
   })
 })

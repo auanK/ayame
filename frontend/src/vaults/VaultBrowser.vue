@@ -234,6 +234,7 @@ const stale = ref(false)
 const hasLoadedRoot = ref(false)
 
 const rightPanelTab = ref('backlinks')
+const rightPanelTabsRef = ref(null)
 
 const selectedFolderPath = ref('')
 const selectedFile = ref(null)
@@ -507,6 +508,58 @@ const activeOutgoingLinks = computed(() =>
     ? getOutgoingLinksForNote(vaultIndexData.value, selectedFile.value)
     : { resolved: [], unresolved: [] }
 )
+
+const RIGHT_PANEL_TAB_ORDER = ['backlinks', 'outgoing', 'outline', 'tags', 'search', 'local-graph']
+
+const rightPanelTabs = computed(() => [
+  { id: 'backlinks', testid: 'panel-tab-backlinks', label: `Backlinks (${activeBacklinks.value.linked.length})` },
+  {
+    id: 'outgoing',
+    testid: 'panel-tab-outgoing',
+    label: `Outgoing (${activeOutgoingLinks.value.resolved.length + activeOutgoingLinks.value.unresolved.length})`,
+  },
+  { id: 'outline', testid: 'panel-tab-outline', label: 'Outline' },
+  { id: 'tags', testid: 'panel-tab-tags', label: 'Tags' },
+  { id: 'search', testid: 'panel-tab-search', label: 'Search' },
+  { id: 'local-graph', testid: 'panel-tab-local-graph', label: 'Local Graph' },
+])
+
+const ensureRightPanelTabVisible = (tabId) => {
+  const navEl = rightPanelTabsRef.value
+  if (!navEl || !tabId) return
+  const tabEl = navEl.querySelector(`[data-panel-tab="${tabId}"]`)
+  if (!tabEl) return
+
+  const navRect = navEl.getBoundingClientRect?.()
+  const tabRect = tabEl.getBoundingClientRect?.()
+  const hasMeasurements = Boolean(navRect && tabRect && navRect.width > 0 && tabRect.width > 0)
+  if (hasMeasurements && tabRect.left >= navRect.left && tabRect.right <= navRect.right) {
+    return
+  }
+
+  if (typeof tabEl.scrollIntoView === 'function') {
+    tabEl.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }
+}
+
+const handleRightPanelTabsKeydown = async (event) => {
+  const currentIdx = RIGHT_PANEL_TAB_ORDER.indexOf(rightPanelTab.value)
+  if (currentIdx === -1) return
+  let nextIdx = -1
+  if (event.key === 'ArrowRight') nextIdx = (currentIdx + 1) % RIGHT_PANEL_TAB_ORDER.length
+  else if (event.key === 'ArrowLeft')
+    nextIdx = (currentIdx - 1 + RIGHT_PANEL_TAB_ORDER.length) % RIGHT_PANEL_TAB_ORDER.length
+  else if (event.key === 'Home') nextIdx = 0
+  else if (event.key === 'End') nextIdx = RIGHT_PANEL_TAB_ORDER.length - 1
+  if (nextIdx === -1) return
+
+  event.preventDefault()
+  const nextTabId = RIGHT_PANEL_TAB_ORDER[nextIdx]
+  rightPanelTab.value = nextTabId
+  await nextTick()
+  const btn = rightPanelTabsRef.value?.querySelector(`[data-panel-tab="${nextTabId}"]`)
+  btn?.focus?.()
+}
 
 const activeOutline = computed(() =>
   selectedFile.value ? vaultIndexData.value.headingsByFile?.[selectedFile.value] || [] : []
@@ -2435,6 +2488,9 @@ watch(
   () => [layout.value.contextOpen, rightPanelTab.value, activeWorkspaceView.value],
   async ([contextOpen, panelTab, wsView]) => {
     await nextTick()
+    if (contextOpen) {
+      ensureRightPanelTabVisible(panelTab)
+    }
     if (wsView === 'graph' && graphTabOpen.value) {
       globalGraphRef.value?.updateCanvasSize?.()
     }
@@ -2679,17 +2735,64 @@ defineExpose({
       </div>
       <div v-else class="workspace-tabs-spacer" aria-hidden="true" />
 
-      <div class="workspace-topbar-actions">
+      <nav
+        class="workspace-graph-nav"
+        data-testid="workspace-graph-nav"
+        aria-label="Graph navigation"
+      >
         <button
           type="button"
-          class="workspace-text-button"
-          :class="{ 'workspace-text-button--active': activeWorkspaceView === 'graph' && graphTabOpen }"
+          class="workspace-nav-graph"
+          :class="{ 'workspace-nav-graph--active': activeWorkspaceView === 'graph' && graphTabOpen }"
           data-testid="open-graph-button"
+          :aria-pressed="activeWorkspaceView === 'graph' && graphTabOpen ? 'true' : 'false'"
           title="Open graph view"
           @click="openGraphView"
         >
-          Graph
+          <svg
+            class="workspace-graph-icon"
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path d="M4 11.5L8 4.5L12.5 10.5M4 11.5L12.5 10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="8" cy="4.5" r="1.8" fill="currentColor" />
+            <circle cx="4" cy="11.5" r="1.8" fill="currentColor" />
+            <circle cx="12.5" cy="10.5" r="1.8" fill="currentColor" />
+          </svg>
+          <span>Graph</span>
         </button>
+
+        <button
+          type="button"
+          class="workspace-nav-graph workspace-nav-graph--local"
+          :class="{ 'workspace-nav-graph--active': layout.contextOpen && rightPanelTab === 'local-graph' }"
+          data-testid="open-local-graph-button"
+          :aria-pressed="layout.contextOpen && rightPanelTab === 'local-graph' ? 'true' : 'false'"
+          title="Open local graph"
+          @click="openLocalGraphView"
+        >
+          <svg
+            class="workspace-graph-icon"
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path d="M8 8L3.5 4.5M8 8L12.5 5M8 8L5.5 12.5" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" />
+            <circle cx="8" cy="8" r="2.1" fill="currentColor" />
+            <circle cx="3.5" cy="4.5" r="1.4" fill="currentColor" />
+            <circle cx="12.5" cy="5" r="1.4" fill="currentColor" />
+            <circle cx="5.5" cy="12.5" r="1.4" fill="currentColor" />
+          </svg>
+          <span>Local Graph</span>
+        </button>
+      </nav>
+
+      <div class="workspace-topbar-actions">
         <button
           type="button"
           class="workspace-text-button"
@@ -3384,60 +3487,26 @@ defineExpose({
         :style="{ width: `${layout.contextWidth}px` }"
         data-testid="workspace-right-panel"
       >
-        <nav class="right-panel-tabs" role="tablist">
+        <nav
+          ref="rightPanelTabsRef"
+          class="right-panel-tabs"
+          role="tablist"
+          aria-label="Contextual panel views"
+          @keydown="handleRightPanelTabsKeydown"
+        >
           <button
+            v-for="tab in rightPanelTabs"
+            :key="tab.id"
             type="button"
             class="right-panel-tab"
-            :class="{ 'right-panel-tab--active': rightPanelTab === 'backlinks' }"
-            data-testid="panel-tab-backlinks"
-            @click="rightPanelTab = 'backlinks'"
+            :class="{ 'right-panel-tab--active': rightPanelTab === tab.id }"
+            role="tab"
+            :aria-selected="rightPanelTab === tab.id ? 'true' : 'false'"
+            :data-testid="tab.testid"
+            :data-panel-tab="tab.id"
+            @click="rightPanelTab = tab.id"
           >
-            Backlinks ({{ activeBacklinks.linked.length }})
-          </button>
-          <button
-            type="button"
-            class="right-panel-tab"
-            :class="{ 'right-panel-tab--active': rightPanelTab === 'outgoing' }"
-            data-testid="panel-tab-outgoing"
-            @click="rightPanelTab = 'outgoing'"
-          >
-            Outgoing ({{ activeOutgoingLinks.resolved.length + activeOutgoingLinks.unresolved.length }})
-          </button>
-          <button
-            type="button"
-            class="right-panel-tab"
-            :class="{ 'right-panel-tab--active': rightPanelTab === 'outline' }"
-            data-testid="panel-tab-outline"
-            @click="rightPanelTab = 'outline'"
-          >
-            Outline
-          </button>
-          <button
-            type="button"
-            class="right-panel-tab"
-            :class="{ 'right-panel-tab--active': rightPanelTab === 'tags' }"
-            data-testid="panel-tab-tags"
-            @click="rightPanelTab = 'tags'"
-          >
-            Tags
-          </button>
-          <button
-            type="button"
-            class="right-panel-tab"
-            :class="{ 'right-panel-tab--active': rightPanelTab === 'search' }"
-            data-testid="panel-tab-search"
-            @click="rightPanelTab = 'search'"
-          >
-            Search
-          </button>
-          <button
-            type="button"
-            class="right-panel-tab"
-            :class="{ 'right-panel-tab--active': rightPanelTab === 'local-graph' }"
-            data-testid="panel-tab-local-graph"
-            @click="rightPanelTab = 'local-graph'"
-          >
-            Local Graph
+            {{ tab.label }}
           </button>
         </nav>
 
@@ -4180,10 +4249,62 @@ defineExpose({
   gap: 2px;
 }
 
+.workspace-graph-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  padding-right: 0.25rem;
+  border-right: 1px solid var(--ayame-border, #34323f);
+}
+
+.workspace-nav-graph {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 0.6rem;
+  background: rgba(169, 154, 202, 0.08);
+  border: 1px solid var(--ayame-border, #34323f);
+  border-radius: 5px;
+  color: var(--ayame-text, #eeeaf3);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: all 0.12s ease;
+}
+
+.workspace-nav-graph--local {
+  background: transparent;
+  color: var(--ayame-text-muted, #aaa6b8);
+}
+
+.workspace-nav-graph:hover,
+.workspace-nav-graph:focus-visible {
+  background: var(--ayame-hover, #242530);
+  color: var(--ayame-text, #eeeaf3);
+  border-color: var(--ayame-primary, #a99aca);
+  outline: none;
+}
+
+.workspace-nav-graph--active {
+  background: rgba(169, 154, 202, 0.18);
+  color: var(--ayame-lavender, #d4cbe4);
+  border-color: var(--ayame-primary, #a99aca);
+}
+
+.workspace-graph-icon {
+  flex-shrink: 0;
+}
+
 .workspace-topbar-actions {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  flex-shrink: 0;
 }
 
 .dropdown-menu-item {
@@ -4793,11 +4914,17 @@ defineExpose({
   padding: 0.35rem 0.45rem;
   border-bottom: 1px solid var(--ayame-border, #34323f);
   overflow-x: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ayame-border, #34323f) transparent;
 }
 
 .right-panel-tabs::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+}
+
+.right-panel-tabs::-webkit-scrollbar-thumb {
+  background: var(--ayame-border, #34323f);
+  border-radius: 999px;
 }
 
 .right-panel-tab {
