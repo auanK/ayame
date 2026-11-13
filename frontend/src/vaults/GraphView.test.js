@@ -418,4 +418,62 @@ describe('GraphView.vue', () => {
     expect(removeWindowListener).toHaveBeenCalledWith('resize', expect.any(Function))
     expect(removeDocListener).toHaveBeenCalledWith('pointerdown', expect.any(Function))
   })
+
+  it('keeps the canvas interactive and exposes an accessible retry notice when refresh fails with existing nodes', async () => {
+    const graph = buildGraphModel(sampleIndex())
+    const wrapper = mount(GraphView, {
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+        loading: false,
+        error: false,
+      },
+    })
+
+    expect(simulationRecords).toHaveLength(1)
+    const sim = simulationRecords[0]
+    sim.tick(4)
+    const targetNode = sim.nodes().find((n) => n.path === 'Personagens/Heroi.md')
+    expect(targetNode).toBeTruthy()
+
+    // Refresh fails while graph already has nodes: canvas stays mounted and error notice appears
+    await wrapper.setProps({ error: true })
+    expect(wrapper.find('[data-testid="graph-canvas"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="graph-error-state"]').exists()).toBe(false)
+
+    const notice = wrapper.find('[data-testid="graph-refresh-error-notice"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.attributes('role')).toBe('alert')
+
+    // Graph interactions (e.g. clicking a node on canvas) stay active despite refresh error
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+    const clickX = 400 + targetNode.x
+    const clickY = 300 + targetNode.y
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: clickX, clientY: clickY }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: clickX, clientY: clickY }))
+    expect(wrapper.emitted('open-note')).toEqual([['Personagens/Heroi.md']])
+
+    // Clicking Try again emits retry; while retry is loading, notice remains and extra clicks do not re-emit
+    await notice.find('[data-testid="graph-retry-button"]').trigger('click')
+    expect(wrapper.emitted('retry')).toHaveLength(1)
+
+    await wrapper.setProps({ loading: true, error: true })
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="graph-retry-button"]').trigger('click')
+    expect(wrapper.emitted('retry')).toHaveLength(1)
+
+    // Repeated failure keeps notice and allows trying again
+    await wrapper.setProps({ loading: false, error: true })
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="graph-retry-button"]').trigger('click')
+    expect(wrapper.emitted('retry')).toHaveLength(2)
+
+    // Successful retry clears notice and preserves canvas & simulation
+    await wrapper.setProps({ loading: false, error: false })
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-canvas"]').exists()).toBe(true)
+    expect(simulationRecords).toHaveLength(1)
+
+    wrapper.unmount()
+  })
 })

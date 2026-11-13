@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import * as vaultApi from './api.js'
+import MarkdownEditor from '../markdown/MarkdownEditor.vue'
 import VaultBrowser from './VaultBrowser.vue'
 
 vi.mock('./api.js', async (importOriginal) => {
@@ -188,6 +189,7 @@ describe('VaultBrowser global graph integration', () => {
         path: found.path,
         name: found.path.split('/').pop(),
         content: found.content,
+        revision: found.revision || 'a'.repeat(64),
         mtimeMs: found.mtimeMs,
         writable: true,
       }
@@ -197,10 +199,12 @@ describe('VaultBrowser global graph integration', () => {
       dir === VAULT_A.directory ? storyRawIndex() : otherRawIndex()
     )
 
-    vaultApi.saveVaultMarkdown.mockImplementation(async (dir, path, content) => ({
+    let saveSeq = 1
+    vaultApi.saveVaultMarkdown.mockImplementation(async (dir, path, payload) => ({
       directory: dir,
       path,
-      content,
+      content: typeof payload === 'string' ? payload : payload?.content,
+      revision: (saveSeq++).toString(16).padStart(64, '0'),
       mtimeMs: Date.now(),
     }))
   })
@@ -397,6 +401,237 @@ describe('VaultBrowser global graph integration', () => {
     await nextTick()
     expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
       'Global graph with 3 notes and 3 connections'
+    )
+
+    wrapper.unmount()
+  })
+
+  const extendedStoryRawIndex = () => ({
+    directory: VAULT_A.directory,
+    complete: true,
+    failures: [],
+    folders: ['Personagens'],
+    files: ['Historia.md', 'Personagens/Heroi.md', 'Final.md', 'Apendice.md'],
+    notes: [
+      {
+        path: 'Historia.md',
+        content: '---\nchapter: 1\n---\n# Historia\nVeja [[Personagens/Heroi]].\n',
+        revision: 'old-h-rev',
+        mtimeMs: 1000,
+      },
+      {
+        path: 'Personagens/Heroi.md',
+        content: '# Heroi\nParte de [[Historia]].\n',
+        revision: 'old-heroi-rev',
+        mtimeMs: 1000,
+      },
+      {
+        path: 'Final.md',
+        content: '# Final\nSem links.\n',
+        revision: 'old-f-rev',
+        mtimeMs: 1000,
+      },
+      {
+        path: 'Apendice.md',
+        content: '# Apendice\nNotas extras.\n',
+        revision: 'old-a-rev',
+        mtimeMs: 1000,
+      },
+    ],
+  })
+
+  const editAndSaveActiveNote = async (wrapper, nextText) => {
+    const editor = wrapper.findComponent(MarkdownEditor)
+    editor.vm.setText(nextText)
+    await nextTick()
+    const viewer = wrapper.findComponent({ name: 'MarkdownViewer' })
+    await viewer.vm.flushPendingSave()
+    await flushPromises()
+  }
+
+  it('preserves confirmed note save and finishes full index loading when initial getVaultIndex resolves late with pre-save data', async () => {
+    const staleInitialFetch = deferred()
+    vaultApi.getVaultIndex.mockImplementationOnce(() => staleInitialFetch.promise)
+
+    const wrapper = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+
+    // Save Historia.md while initial getVaultIndex() is still pending: drop [[Personagens/Heroi]] and link [[Final]] + [[Apendice]]
+    await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
+    await flushPromises()
+    await editAndSaveActiveNote(
+      wrapper,
+      '---\nchapter: 1\n---\n# Historia\nConectado a [[Final]] e [[Apendice]].\n'
+    )
+
+    // Open Graph before initial load completes: loading is still active until full index finishes
+    await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-canvas"]').exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'GraphView' }).props('loading')).toBe(true)
+
+    // Stale pre-save snapshot resolves later: Historia must keep its confirmed links AND Apendice.md/Heroi.md must be recovered
+    staleInitialFetch.resolve(extendedStoryRawIndex())
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'GraphView' }).props('loading')).toBe(false)
+    expect(wrapper.find('[data-testid="graph-loading-state"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-incomplete-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 4 notes and 3 connections'
+    )
+
+    // Verify graph locator actually contains recovered Apendice.md and Personagens/Heroi.md
+    const locator = wrapper.find('[data-testid="graph-node-locator"]')
+    await locator.trigger('focus')
+    await locator.setValue('Apendice')
+    await nextTick()
+    expect(
+      wrapper.find('[data-testid="graph-locator-item"][data-note-path="Apendice.md"]').exists()
+    ).toBe(true)
+
+    // Verify confirmed save content was NOT overwritten in Graph links (Final.md connects from Historia)
+    wrapper
+      .findComponent({ name: 'GraphView' })
+      .vm.$emit('open-note', 'Historia.md')
+    await flushPromises()
+    expect(wrapper.findComponent(MarkdownEditor).vm.getText()).toContain('[[Final]]')
+
+    wrapper.unmount()
+  })
+
+  it('preserves multiple successive saves during pending index loading and recovers remaining vault notes', async () => {
+    const pendingFetch = deferred()
+    vaultApi.getVaultIndex.mockImplementationOnce(() => pendingFetch.promise)
+
+    const wrapper = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+
+    // First save during pending load
+    await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
+    await flushPromises()
+    await editAndSaveActiveNote(wrapper, '# Historia\nLigado ao [[Apendice]].\n')
+
+    // Second consecutive save during pending load
+    await wrapper.find('[data-file-path="Final.md"]').trigger('click')
+    await flushPromises()
+    await editAndSaveActiveNote(wrapper, '# Final\nLigado a [[Personagens/Heroi]].\n')
+
+    // Pre-save index resolves late: both Historia -> Apendice and Final -> Heroi survive alongside Heroi -> Historia
+    pendingFetch.resolve(extendedStoryRawIndex())
+    await flushPromises()
+
+    await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 4 notes and 3 connections'
+    )
+
+    wrapper.unmount()
+  })
+
+  it('ignores late errors from a previous vault after switching vaults', async () => {
+    const vaultAFetch = deferred()
+    vaultApi.getVaultIndex.mockImplementationOnce(() => vaultAFetch.promise)
+
+    const wrapper = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+
+    await wrapper.setProps({ vault: VAULT_B })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 1 notes and 0 connections'
+    )
+
+    vaultAFetch.reject(new Error('Vault A index timeout'))
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="graph-error-state"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 1 notes and 0 connections'
+    )
+
+    wrapper.unmount()
+  })
+
+  it('exposes refresh failure while keeping previous graph nodes, ignores redundant retries, preserves indexError across local saves, and clears on recovery', async () => {
+    const wrapper = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 3 notes and 2 connections'
+    )
+
+    // Trigger refresh failure via Command Palette ("Refresh vault")
+    vaultApi.getVaultIndex.mockRejectedValueOnce(new Error('Refresh failed'))
+    await wrapper.find('[data-testid="command-palette-button"]').trigger('click')
+    await nextTick()
+    const refreshCmd = wrapper
+      .findAll('[data-testid="command-palette-modal"] button.panel-list-item')
+      .find((btn) => btn.text().includes('Refresh vault'))
+    expect(refreshCmd).toBeTruthy()
+    await refreshCmd.trigger('click')
+    await flushPromises()
+
+    // Previous graph nodes and canvas remain intact while refresh error notice appears
+    expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 3 notes and 2 connections'
+    )
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(true)
+
+    // Local note save must NOT clear indexError from failed full index refresh
+    wrapper
+      .findComponent({ name: 'GraphView' })
+      .vm.$emit('open-note', 'Final.md')
+    await flushPromises()
+    await editAndSaveActiveNote(wrapper, '# Final\nAgora conecta com [[Historia]].\n')
+
+    await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 3 notes and 3 connections'
+    )
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(true)
+
+    // Retry once while pending: notice stays visible and repeated click does not fire duplicate request
+    const retryDeferred = deferred()
+    vaultApi.getVaultIndex.mockImplementationOnce(() => retryDeferred.promise)
+    const callsBeforeRetry = vaultApi.getVaultIndex.mock.calls.length
+
+    await wrapper.find('[data-testid="graph-retry-button"]').trigger('click')
+    await nextTick()
+    expect(vaultApi.getVaultIndex).toHaveBeenCalledTimes(callsBeforeRetry + 1)
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="graph-retry-button"]').trigger('click')
+    await nextTick()
+    expect(vaultApi.getVaultIndex).toHaveBeenCalledTimes(callsBeforeRetry + 1)
+
+    // If retry fails again, notice remains visible and retryable
+    retryDeferred.reject(new Error('Still offline'))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(true)
+
+    // Subsequent retry succeeds: clears error notice and loads updated vault graph
+    const recoveredIndex = extendedStoryRawIndex()
+    recoveredIndex.notes = recoveredIndex.notes.map((n) =>
+      n.path === 'Final.md'
+        ? { ...n, content: '# Final\nAgora conecta com [[Historia]].\n', revision: 'f'.repeat(64) }
+        : n
+    )
+    vaultApi.getVaultIndex.mockResolvedValueOnce(recoveredIndex)
+    await wrapper.find('[data-testid="graph-retry-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 4 notes and 3 connections'
     )
 
     wrapper.unmount()
