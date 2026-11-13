@@ -27,15 +27,15 @@ const sampleNodes = [
   { id: 'note:Projects/Alpha.md', type: 'note', path: 'Projects/Alpha.md', label: 'Alpha', degree: 3 },
   { id: 'note:Projects/Sub/Beta.md', type: 'note', path: 'Projects/Sub/Beta.md', label: 'Beta', degree: 1 },
   { id: 'note:Notes/Reading.md', type: 'note', path: 'Notes/Reading.md', label: 'Reading', degree: 2 },
-  { id: 'note:Daily/PlainTagMention.md', type: 'note', path: 'Daily/PlainTagMention.md', label: 'PlainTagMention', degree: 0 },
+  { id: 'note:Daily/PlainTagMention.md', type: 'note', path: 'Daily/PlainTagMention.md', label: '#project note' },
   { id: 'tag:#project', type: 'tag', path: null, label: '#project', degree: 1 },
   { id: 'unresolved:future.md', type: 'unresolved', path: 'Future.md', label: 'Future', degree: 1 },
 ]
 
 const sampleTagsByFile = {
-  'Projects/Alpha.md': ['#project/active'],
-  'Projects/Sub/Beta.md': ['#project'],
-  'Notes/Reading.md': ['#book', '#literature'],
+  'Projects/Alpha.md': ['project/active'],
+  'Projects/Sub/Beta.md': ['project'],
+  'Notes/Reading.md': ['book', 'literature'],
   'Daily/PlainTagMention.md': [],
 }
 
