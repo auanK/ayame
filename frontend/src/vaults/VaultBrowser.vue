@@ -17,7 +17,9 @@ import {
 } from './vaultIndex.js'
 import { calculateContextMenuPosition } from './contextMenuPosition.js'
 import { useAyameRouter, validateNoteQueryParam } from '../router/index.js'
+import { buildGraphModel } from './graphModel.js'
 import MarkdownViewer from '../markdown/MarkdownViewer.vue'
+import GraphView from './GraphView.vue'
 
 const isTestEnv = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test'
 
@@ -230,6 +232,8 @@ const initialDocument = ref(null)
 
 // Tabs & Navigation History
 const openTabs = ref([])
+const graphTabOpen = ref(false)
+const activeWorkspaceView = ref('note') // 'note' | 'graph'
 const navHistory = ref([])
 const navHistoryIndex = ref(-1)
 let navigatingHistory = false
@@ -238,6 +242,9 @@ let navigatingHistory = false
 const vaultIndexData = ref(
   buildVaultIndex({ directory: '', complete: false, folders: [], files: [], notes: [] })
 )
+const indexLoading = ref(false)
+const indexError = ref(false)
+const graphModel = computed(() => buildGraphModel(vaultIndexData.value))
 
 // Vault Settings & Modals
 const vaultSettings = ref({
@@ -429,6 +436,7 @@ const availableCommands = computed(() => {
     { id: 'new-folder', label: 'New folder', run: () => startCreate('folder') },
     { id: 'toggle-explorer', label: 'Toggle file explorer', run: () => { explorerCollapsed.value = !explorerCollapsed.value } },
     { id: 'toggle-right-panel', label: 'Toggle contextual panel', run: () => { rightPanelCollapsed.value = !rightPanelCollapsed.value } },
+    { id: 'open-graph', label: 'Open graph view', run: () => openGraphView() },
     { id: 'toggle-properties', label: 'Toggle properties (Hidden / Visible / Source)', run: () => viewerRef.value?.cyclePropertiesMode?.() },
     { id: 'toggle-readable-line', label: 'Toggle readable line length', run: () => viewerRef.value?.toggleReadableLineLength?.() },
     { id: 'reveal-active', label: 'Reveal active note in explorer', run: () => revealActiveFile() },
@@ -481,17 +489,37 @@ const fetchVaultIndexSafe = async () => {
   const isCurrent = () =>
     isMounted && generation === indexRequestGeneration && directory === props.vault.directory
 
+  indexLoading.value = true
+  indexError.value = false
+
   try {
-    if (!('getVaultIndex' in vaultApi) || typeof vaultApi.getVaultIndex !== 'function') return false
+    if (!('getVaultIndex' in vaultApi) || typeof vaultApi.getVaultIndex !== 'function') {
+      if (isCurrent()) indexLoading.value = false
+      return false
+    }
     const raw = await vaultApi.getVaultIndex(directory)
-    if (!isCurrent() || !raw || raw.directory !== directory) return false
+    if (!isCurrent()) return false
+    if (!raw) {
+      indexLoading.value = false
+      return false
+    }
+    if (raw.directory !== directory) {
+      indexLoading.value = false
+      indexError.value = true
+      return false
+    }
     vaultIndexData.value = buildVaultIndex(raw)
+    indexLoading.value = false
+    indexError.value = false
     return true
   } catch (err) {
     if (!isCurrent()) return false
+    indexLoading.value = false
     if (err?.code === 'UNAUTHORIZED') {
       emit('unauthorized')
+      return false
     }
+    indexError.value = true
     return false
   }
 }
@@ -733,10 +761,31 @@ const ensureTabOpen = (filePath) => {
   }
 }
 
+const openGraphView = () => {
+  graphTabOpen.value = true
+  activeWorkspaceView.value = 'graph'
+}
+
+const closeGraphTab = () => {
+  graphTabOpen.value = false
+  if (activeWorkspaceView.value === 'graph') {
+    activeWorkspaceView.value = 'note'
+  }
+}
+
+const openNoteFromGraph = async (notePath) => {
+  if (!notePath) return
+  await selectNote(notePath)
+  if (selectedFile.value === notePath) {
+    await expandAncestors(notePath)
+  }
+}
+
 const closeTab = async (tabPath) => {
   if (relocateState.value?.loading || relocateState.value?.stage === 'uncertain') return
   if (relocateState.value?.stage === 'confirm' && tabPath === selectedFile.value) cancelRelocate()
   if (selectedFile.value === tabPath) {
+    const wasViewingGraph = activeWorkspaceView.value === 'graph'
     if (viewerRef.value) {
       if (
         viewerState.value.dirty &&
@@ -754,9 +803,12 @@ const closeTab = async (tabPath) => {
     const nextTabs = openTabs.value.filter((t) => t !== tabPath)
     openTabs.value = nextTabs
     if (nextTabs.length > 0) {
-      await selectNote(nextTabs[nextTabs.length - 1])
+      await selectNote(nextTabs[nextTabs.length - 1], { activateView: !wasViewingGraph })
     } else {
       await closeNote()
+      if (graphTabOpen.value && selectedFile.value === null) {
+        activeWorkspaceView.value = 'graph'
+      }
     }
   } else {
     openTabs.value = openTabs.value.filter((t) => t !== tabPath)
@@ -768,7 +820,10 @@ const openFileInNewTab = async (filePath) => {
   await selectNote(filePath, { newTab: true })
 }
 
-const selectNote = async (filePath, { anchor = null, initialDoc = null, newTab = false } = {}) => {
+const selectNote = async (
+  filePath,
+  { anchor = null, initialDoc = null, newTab = false, activateView = true } = {}
+) => {
   if (relocateState.value?.loading || relocateState.value?.stage === 'uncertain') {
     workspaceNotice.value = 'Wait for the move to be reconciled before navigating.'
     return
@@ -778,6 +833,9 @@ const selectNote = async (filePath, { anchor = null, initialDoc = null, newTab =
   }
   linkNotice.value = null
   if (selectedFile.value === filePath) {
+    if (activateView) {
+      activeWorkspaceView.value = 'note'
+    }
     if (anchor) {
       selectedAnchor.value = anchor
     }
@@ -801,6 +859,9 @@ const selectNote = async (filePath, { anchor = null, initialDoc = null, newTab =
   }
 
   pendingNavigation.value = null
+  if (activateView) {
+    activeWorkspaceView.value = 'note'
+  }
   initialDocument.value = initialDoc
   selectedAnchor.value = anchor
   const prevActive = selectedFile.value
@@ -943,6 +1004,7 @@ const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
   if (!check.present) {
     if (selectedFile.value !== null) {
       pendingNavigation.value = null
+      activeWorkspaceView.value = 'note'
       selectedFile.value = null
       selectedAnchor.value = null
       initialDocument.value = null
@@ -954,6 +1016,7 @@ const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
 
   if (!check.valid) {
     pendingNavigation.value = null
+    activeWorkspaceView.value = 'note'
     selectedFile.value = null
     selectedAnchor.value = null
     initialDocument.value = null
@@ -970,6 +1033,7 @@ const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
   }
 
   pendingNavigation.value = null
+  activeWorkspaceView.value = 'note'
   linkNotice.value = null
   initialDocument.value = null
   selectedAnchor.value = null
@@ -1080,6 +1144,7 @@ const handleContentSaved = (savedDoc) => {
   if (!savedDoc?.path) return
   invalidateVaultIndexRequest()
   vaultIndexData.value = updateNoteInVaultIndex(vaultIndexData.value, savedDoc)
+  indexError.value = false
 }
 
 const handleOpenLink = async (linkPayload) => {
@@ -2202,6 +2267,10 @@ watch(
     selectedAnchor.value = null
     initialDocument.value = null
     openTabs.value = []
+    graphTabOpen.value = false
+    activeWorkspaceView.value = 'note'
+    indexLoading.value = false
+    indexError.value = false
     navHistory.value = []
     navHistoryIndex.value = -1
     hasLoadedRoot.value = false
@@ -2397,7 +2466,7 @@ defineExpose({
 
       <!-- Discreet Tabs Bar (Center) -->
       <div
-        v-if="openTabs.length > 0"
+        v-if="openTabs.length > 0 || graphTabOpen"
         class="workspace-tabs-bar"
         data-testid="workspace-tabs"
         role="tablist"
@@ -2406,12 +2475,12 @@ defineExpose({
           v-for="tabPath in openTabs"
           :key="tabPath"
           class="workspace-tab-item"
-          :class="{ 'workspace-tab-item--active': selectedFile === tabPath }"
+          :class="{ 'workspace-tab-item--active': activeWorkspaceView === 'note' && selectedFile === tabPath }"
         >
           <button
             type="button"
             class="workspace-tab-btn"
-            :class="{ 'workspace-tab--active': selectedFile === tabPath }"
+            :class="{ 'workspace-tab--active': activeWorkspaceView === 'note' && selectedFile === tabPath }"
             data-testid="workspace-tab"
             :data-tab-path="tabPath"
             @click="selectNote(tabPath)"
@@ -2429,10 +2498,47 @@ defineExpose({
             ×
           </button>
         </div>
+        <div
+          v-if="graphTabOpen"
+          class="workspace-tab-item"
+          :class="{ 'workspace-tab-item--active': activeWorkspaceView === 'graph' }"
+          data-testid="workspace-graph-tab-item"
+        >
+          <button
+            type="button"
+            class="workspace-tab-btn"
+            :class="{ 'workspace-tab--active': activeWorkspaceView === 'graph' }"
+            data-testid="workspace-graph-tab"
+            role="tab"
+            :aria-selected="activeWorkspaceView === 'graph' ? 'true' : 'false'"
+            @click="openGraphView"
+          >
+            Graph
+          </button>
+          <button
+            type="button"
+            class="workspace-tab-close"
+            data-testid="close-graph-tab-button"
+            aria-label="Close graph tab"
+            @click.stop="closeGraphTab"
+          >
+            ×
+          </button>
+        </div>
       </div>
       <div v-else class="workspace-tabs-spacer" aria-hidden="true" />
 
       <div class="workspace-topbar-actions">
+        <button
+          type="button"
+          class="workspace-text-button"
+          :class="{ 'workspace-text-button--active': activeWorkspaceView === 'graph' && graphTabOpen }"
+          data-testid="open-graph-button"
+          title="Open graph view"
+          @click="openGraphView"
+        >
+          Graph
+        </button>
         <button
           type="button"
           class="workspace-text-button"
@@ -2987,7 +3093,7 @@ defineExpose({
       >
         <!-- Pending Link Notice -->
         <div
-          v-if="linkNotice"
+          v-if="linkNotice && activeWorkspaceView === 'note'"
           class="browser-alert workspace-link-notice"
           data-testid="workspace-link-notice"
           role="status"
@@ -3030,9 +3136,10 @@ defineExpose({
           </div>
         </div>
 
-        <!-- Markdown Document View/Edit Surface -->
+        <!-- Markdown Document View/Edit Surface (preserved via v-show so unsaved drafts stay intact while viewing Graph) -->
         <MarkdownViewer
           v-if="selectedFile !== null"
+          v-show="activeWorkspaceView === 'note'"
           ref="viewerRef"
           :directory="vault.directory"
           :path="selectedFile"
@@ -3054,8 +3161,21 @@ defineExpose({
           @unauthorized="emit('unauthorized')"
         />
 
+        <!-- Global Graph View Surface (preserved via v-show while Graph tab remains open) -->
+        <GraphView
+          v-if="graphTabOpen"
+          v-show="activeWorkspaceView === 'graph'"
+          :graph="graphModel"
+          :vault-directory="vault.directory"
+          :loading="indexLoading"
+          :error="indexError"
+          :active-note-path="selectedFile"
+          @open-note="openNoteFromGraph"
+          @retry="fetchVaultIndexSafe"
+        />
+
         <div
-          v-else
+          v-if="selectedFile === null && activeWorkspaceView === 'note'"
           class="workspace-empty-state"
           data-testid="workspace-empty-state"
         >
