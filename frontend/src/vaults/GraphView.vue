@@ -731,6 +731,10 @@ const syncSimulationWithModel = (graph) => {
     }
   }
 
+  if (viewport.draggingNodeId && !nextNodesById.has(viewport.draggingNodeId)) {
+    cancelActiveInteraction()
+  }
+
   simNodes = nextNodes
   simLinks = nextLinks
   simNodesById = nextNodesById
@@ -896,7 +900,10 @@ const handlePointerMove = (event) => {
   if (viewport.draggingNodeId) {
     if (activePointerId !== null && pointerId !== activePointerId) return
     const draggedNode = simNodesById.get(viewport.draggingNodeId)
-    if (!draggedNode) return
+    if (!draggedNode) {
+      cancelActiveInteraction()
+      return
+    }
     if (
       !didDrag &&
       pointerDownPos &&
@@ -971,11 +978,13 @@ function finishPointerInteraction(event, allowClick, force = false) {
   if (viewport.draggingNodeId) {
     const draggedNode = simNodesById.get(viewport.draggingNodeId)
     viewport.draggingNodeId = null
+    if (didDrag) {
+      simulation?.alphaTarget(0)
+    }
     if (draggedNode) {
       if (didDrag) {
         if (Number.isFinite(draggedNode.fx)) draggedNode.x = draggedNode.fx
         if (Number.isFinite(draggedNode.fy)) draggedNode.y = draggedNode.fy
-        simulation?.alphaTarget(0)
       } else if (allowClick && (draggedNode.type === 'note' || !draggedNode.type) && draggedNode.path) {
         emit('open-note', draggedNode.path)
       }
@@ -1131,6 +1140,9 @@ watch(viewStatus, async (status) => {
     await nextTick()
     updateCanvasSize()
     scheduleDraw()
+  } else {
+    cancelActiveInteraction()
+    cancelCameraAnimation()
   }
 })
 

@@ -1520,6 +1520,7 @@ describe('GraphView.vue', () => {
     await nextTick()
 
     // Removal itself cancels the active drag immediately even before pointerup arrives
+    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
     expect(sim.alphaTarget()).toBe(0)
     expect(canvas.classes()).not.toContain('graph-canvas--grabbing')
 
@@ -1528,12 +1529,13 @@ describe('GraphView.vue', () => {
     canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: isoladaSx + 48, clientY: isoladaSy + 20, pointerId: 1 }))
 
     // 5-6: Delayed pointerup (+ duplicate pointerup) arrives after dragged node disappeared
+    const alphaTargetCallsBeforeUp = sim.alphaTarget.mock.calls.length
     canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: isoladaSx + 48, clientY: isoladaSy + 20, pointerId: 1 }))
     canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: isoladaSx + 48, clientY: isoladaSy + 20, pointerId: 1 }))
     await nextTick()
 
+    expect(sim.alphaTarget.mock.calls.length).toBe(alphaTargetCallsBeforeUp)
     expect(sim.alphaTarget()).toBe(0)
-    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
     expect(canvas.classes()).not.toContain('graph-canvas--grabbing')
     expect(wrapper.emitted('open-note')).toBeUndefined()
     for (const node of sim.nodes()) {
@@ -1573,12 +1575,12 @@ describe('GraphView.vue', () => {
 
     await wrapper.setProps({ graph: heroiOnlyGraph, filters: searchFilters })
     await nextTick()
+    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
     canvasEl.dispatchEvent(pointerEvent('pointercancel', { clientX: histSx + 30, clientY: histSy - 15, pointerId: 2 }))
     canvasEl.dispatchEvent(pointerEvent('pointercancel', { clientX: histSx + 30, clientY: histSy - 15, pointerId: 2 }))
     await nextTick()
 
     expect(sim.alphaTarget()).toBe(0)
-    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
     for (const node of sim.nodes()) {
       expect(node.fx).toBeNull()
       expect(node.fy).toBeNull()
