@@ -8,11 +8,23 @@ import {
   forceX,
   forceY,
 } from 'd3-force'
+import GraphControls from './GraphControls.vue'
+import { createDefaultGraphFilters } from './graphSelection.js'
+
+let graphLocatorInstanceSeq = 0
 
 const props = defineProps({
   graph: {
     type: Object,
     required: true,
+  },
+  mode: {
+    type: String,
+    default: 'global',
+  },
+  centerPath: {
+    type: String,
+    default: null,
   },
   vaultDirectory: {
     type: String,
@@ -30,23 +42,44 @@ const props = defineProps({
     type: String,
     default: null,
   },
+  filters: {
+    type: Object,
+    default: () => createDefaultGraphFilters(),
+  },
+  localDepth: {
+    type: Number,
+    default: 1,
+  },
+  localDirection: {
+    type: String,
+    default: 'both',
+  },
 })
 
-const emit = defineEmits(['open-note', 'retry'])
+const emit = defineEmits([
+  'open-note',
+  'retry',
+  'update:filters',
+  'update:local-depth',
+  'update:local-direction',
+])
 
 const MIN_SCALE = 0.15
 const MAX_SCALE = 6
 const DRAG_THRESHOLD_PX = 4
 const LOCATOR_LIMIT = 12
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
+const locatorListId = `graph-locator-results-${++graphLocatorInstanceSeq}`
 
 const containerRef = ref(null)
+const stageRef = ref(null)
 const canvasRef = ref(null)
 const locatorRef = ref(null)
 
 const locatorQuery = ref('')
 const locatorOpen = ref(false)
 const locatorActiveIndex = ref(0)
+const filtersOpen = ref(false)
 const hoveredNodeInfo = ref(null)
 const isGrabbing = ref(false)
 
@@ -80,34 +113,83 @@ let panOrigin = null
 let didDrag = false
 let activePointerId = null
 
+const isLocalMode = computed(() => props.mode === 'local')
+const effectiveCenterPath = computed(() => props.centerPath || props.graph?.centerPath || null)
+const centerDisplayLabel = computed(() => {
+  const path = effectiveCenterPath.value
+  if (!path) return 'No note open'
+  const base = path.split('/').pop() || path
+  return base.replace(/\.(md|markdown)$/i, '')
+})
+
 const hasNodes = computed(() => Array.isArray(props.graph?.nodes) && props.graph.nodes.length > 0)
 const hasFailures = computed(
   () => Array.isArray(props.graph?.failures) && props.graph.failures.length > 0
 )
 const isIncomplete = computed(() => Boolean(props.graph && !props.graph.complete && hasFailures.value))
 const hasRefreshError = computed(() => Boolean(props.error && hasNodes.value))
+const hasFiltersRemovedOthers = computed(() => Boolean(props.graph?.filtersRemovedOthers))
+const queryError = computed(() =>
+  props.graph?.queryValid === false ? props.graph.queryError || 'Invalid search filter.' : ''
+)
+const hasActiveFilters = computed(
+  () =>
+    Boolean(props.filters?.searchQuery?.trim()) ||
+    Boolean(props.filters?.showTags) ||
+    props.filters?.existingFilesOnly === false ||
+    props.filters?.showOrphans === false
+)
 
 const handleRetry = () => {
   if (props.loading) return
   emit('retry')
 }
 
+const clearFilters = () => {
+  emit('update:filters', createDefaultGraphFilters())
+}
+
+const handleDepthInput = (event) => {
+  const next = Number(event?.target?.value)
+  if (Number.isFinite(next) && next !== props.localDepth) {
+    emit('update:local-depth', next)
+  }
+}
+
+const handleDirectionSelect = (dir) => {
+  if (dir !== props.localDirection) {
+    emit('update:local-direction', dir)
+  }
+}
+
 const viewStatus = computed(() => {
+  if (isLocalMode.value && !effectiveCenterPath.value) return 'no-center'
   if (props.loading && !hasNodes.value) return 'loading'
   if (props.error && !hasNodes.value) return 'error'
+  if (isLocalMode.value && props.graph?.centerMissing) return 'center-missing'
+  if (!hasNodes.value && props.graph?.filteredOut) return 'filtered-empty'
   if (!hasNodes.value && hasFailures.value) return 'incomplete-empty'
   if (!hasNodes.value) return 'empty'
   return 'ready'
 })
 
+const showHeaderBar = computed(
+  () => isLocalMode.value || viewStatus.value === 'ready' || viewStatus.value === 'filtered-empty'
+)
+
 const canvasAriaLabel = computed(() => {
   const nodesCount = props.graph?.nodes?.length || 0
   const edgesCount = props.graph?.edges?.length || 0
+  if (isLocalMode.value) {
+    return `Local graph with ${nodesCount} nodes and ${edgesCount} connections`
+  }
   return `Global graph with ${nodesCount} notes and ${edgesCount} connections`
 })
 
 const locatorMatches = computed(() => {
-  const nodes = Array.isArray(props.graph?.nodes) ? props.graph.nodes : []
+  const nodes = (Array.isArray(props.graph?.nodes) ? props.graph.nodes : []).filter(
+    (n) => (n?.type === 'note' || !n?.type) && typeof n?.path === 'string' && n.path
+  )
   const q = locatorQuery.value.trim().toLowerCase()
   const filtered = q
     ? nodes.filter(
@@ -120,8 +202,10 @@ const locatorMatches = computed(() => {
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 
 const computeStructureKey = (graph) => {
-  const nodeIds = (graph?.nodes || []).map((n) => n.id).join('\n')
-  const edgeKeys = (graph?.edges || []).map((e) => `${e.source}->${e.target}`).join('\n')
+  const nodeIds = (graph?.nodes || []).map((n) => `${n.id}:${n.type || 'note'}`).join('\n')
+  const edgeKeys = (graph?.edges || [])
+    .map((e) => `${e.source}->${e.target}:${e.type || 'note'}`)
+    .join('\n')
   return `${nodeIds}\0${edgeKeys}`
 }
 
@@ -149,12 +233,32 @@ const findNodeAtScreen = (sx, sy) => {
   return null
 }
 
+const formatHoverCaption = (node) => {
+  if (!node) return ''
+  if (node.type === 'tag') return node.label
+  if (node.type === 'unresolved') {
+    const origins =
+      Array.isArray(node.sourcePaths) && node.sourcePaths.length > 0
+        ? ` — ${node.sourcePaths.join(', ')}`
+        : ''
+    return `${node.label} (unresolved${origins})`
+  }
+  return node.path || node.label
+}
+
 const updateHoveredNode = (node) => {
   const nextId = node ? node.id : null
   if (viewport.hoveredNodeId === nextId) return false
   viewport.hoveredNodeId = nextId
   hoveredNodeInfo.value = node
-    ? { id: node.id, path: node.path, label: node.label, degree: node.degree }
+    ? {
+        id: node.id,
+        path: node.path,
+        label: node.label,
+        type: node.type || 'note',
+        degree: node.degree,
+        caption: formatHoverCaption(node),
+      }
     : null
   return true
 }
@@ -191,6 +295,9 @@ const draw = () => {
 
   const focusedId = viewport.draggingNodeId || viewport.hoveredNodeId
   const focusedNeighbors = focusedId ? neighborsById.get(focusedId) : null
+  const canDash = typeof ctx.setLineDash === 'function'
+  const localCenterId =
+    isLocalMode.value && effectiveCenterPath.value ? `note:${effectiveCenterPath.value}` : null
 
   // Draw edges
   for (let i = 0; i < simLinks.length; i++) {
@@ -200,9 +307,16 @@ const draw = () => {
     if (!s || !t || s === t) continue
 
     const isHighlighted = focusedId && (s.id === focusedId || t.id === focusedId)
+    const linkType = link.type || 'note'
     if (focusedId && !isHighlighted) {
       ctx.strokeStyle = 'rgba(170, 166, 184, 0.08)'
       ctx.lineWidth = 0.8
+    } else if (linkType === 'tag') {
+      ctx.strokeStyle = isHighlighted ? 'rgba(110, 196, 159, 0.78)' : 'rgba(110, 196, 159, 0.28)'
+      ctx.lineWidth = isHighlighted ? 1.3 : 0.9
+    } else if (linkType === 'unresolved') {
+      ctx.strokeStyle = isHighlighted ? 'rgba(170, 166, 184, 0.55)' : 'rgba(170, 166, 184, 0.18)'
+      ctx.lineWidth = isHighlighted ? 1.1 : 0.85
     } else if (isHighlighted) {
       ctx.strokeStyle = 'rgba(169, 154, 202, 0.88)'
       ctx.lineWidth = 1.4
@@ -211,22 +325,34 @@ const draw = () => {
       ctx.lineWidth = 1
     }
 
+    if (canDash) {
+      ctx.setLineDash(linkType === 'unresolved' ? [4, 3] : [])
+    }
+
     ctx.beginPath()
     ctx.moveTo(s._sx, s._sy)
     ctx.lineTo(t._sx, t._sy)
     ctx.stroke()
   }
+  if (canDash) ctx.setLineDash([])
 
   // Draw nodes
   for (let i = 0; i < simNodes.length; i++) {
     const n = simNodes[i]
+    const nodeType = n.type || 'note'
     const isFocused = n.id === focusedId
     const isNeighbor = focusedNeighbors ? focusedNeighbors.has(n.id) : false
-    const isActiveNote = props.activeNotePath && n.path === props.activeNotePath
+    const isActiveNote =
+      nodeType === 'note' && Boolean(props.activeNotePath && n.path === props.activeNotePath)
+    const isCenterNode = Boolean(localCenterId && n.id === localCenterId)
 
     if (focusedId && !isFocused && !isNeighbor) {
       ctx.fillStyle = 'rgba(170, 166, 184, 0.2)'
-    } else if (isFocused) {
+    } else if (nodeType === 'tag') {
+      ctx.fillStyle = isFocused ? '#9ae0c1' : '#6ec49f'
+    } else if (nodeType === 'unresolved') {
+      ctx.fillStyle = isFocused ? 'rgba(182, 178, 196, 0.72)' : 'rgba(143, 139, 163, 0.36)'
+    } else if (isFocused || isCenterNode) {
       ctx.fillStyle = '#d4cbe4'
     } else if (isNeighbor || isActiveNote) {
       ctx.fillStyle = '#a99aca'
@@ -238,9 +364,16 @@ const draw = () => {
     ctx.arc(n._sx, n._sy, isFocused ? n._sr + 1.5 : n._sr, 0, Math.PI * 2)
     ctx.fill()
 
-    if (isFocused || isActiveNote) {
-      ctx.strokeStyle = isFocused ? 'rgba(238, 234, 243, 0.85)' : 'rgba(169, 154, 202, 0.65)'
-      ctx.lineWidth = 1.25
+    if (nodeType === 'unresolved') {
+      ctx.strokeStyle = isFocused ? 'rgba(212, 203, 228, 0.75)' : 'rgba(170, 166, 184, 0.5)'
+      ctx.lineWidth = 1
+      if (canDash) ctx.setLineDash([2.5, 2])
+      ctx.stroke()
+      if (canDash) ctx.setLineDash([])
+    } else if (isFocused || isActiveNote || isCenterNode) {
+      ctx.strokeStyle =
+        isFocused || isCenterNode ? 'rgba(238, 234, 243, 0.88)' : 'rgba(169, 154, 202, 0.65)'
+      ctx.lineWidth = isCenterNode ? 1.6 : 1.25
       ctx.stroke()
     }
   }
@@ -271,7 +404,10 @@ const draw = () => {
       if (alpha < 0.05) continue
 
       const showFolderDisambiguator =
-        isFocused && (duplicateLabelCounts.get(n.label) || 0) > 1
+        isFocused &&
+        (n.type === 'note' || !n.type) &&
+        typeof n.path === 'string' &&
+        (duplicateLabelCounts.get(n.label) || 0) > 1
       const text = showFolderDisambiguator ? n.path.replace(/\.(md|markdown)$/i, '') : n.label
 
       ctx.fillStyle = isFocused
@@ -346,7 +482,9 @@ const syncSimulationWithModel = (graph) => {
       if (existing) {
         existing.label = rawNode.label
         existing.degree = rawNode.degree
-        existing.radius = nodeRadiusForDegree(rawNode.degree)
+        existing.sourcePaths = Array.isArray(rawNode.sourcePaths) ? [...rawNode.sourcePaths] : []
+        const nodeType = rawNode.type || 'note'
+        existing.radius = nodeRadiusForDegree(rawNode.degree) * (nodeType === 'note' ? 1 : 0.85)
       }
     }
     scheduleDraw()
@@ -362,13 +500,16 @@ const syncSimulationWithModel = (graph) => {
     const prev = previousNodesById.get(rawNode.id)
     const angle = idx * GOLDEN_ANGLE
     const spread = 18 * Math.sqrt(idx + 1)
+    const nodeType = rawNode.type || 'note'
     const node = {
       id: rawNode.id,
-      path: rawNode.path,
+      path: rawNode.path ?? null,
       label: rawNode.label,
-      type: rawNode.type,
+      type: nodeType,
+      tag: rawNode.tag ?? null,
+      sourcePaths: Array.isArray(rawNode.sourcePaths) ? [...rawNode.sourcePaths] : [],
       degree: rawNode.degree,
-      radius: nodeRadiusForDegree(rawNode.degree),
+      radius: nodeRadiusForDegree(rawNode.degree) * (nodeType === 'note' ? 1 : 0.85),
       x: prev && typeof prev.x === 'number' ? prev.x : Math.cos(angle) * spread,
       y: prev && typeof prev.y === 'number' ? prev.y : Math.sin(angle) * spread,
       vx: prev && typeof prev.vx === 'number' ? prev.vx : 0,
@@ -388,7 +529,7 @@ const syncSimulationWithModel = (graph) => {
     const sourceNode = nextNodesById.get(rawEdge.source)
     const targetNode = nextNodesById.get(rawEdge.target)
     if (!sourceNode || !targetNode) continue
-    nextLinks.push({ source: sourceNode, target: targetNode })
+    nextLinks.push({ source: sourceNode, target: targetNode, type: rawEdge.type || 'note' })
     nextNeighborsById.get(sourceNode.id).add(targetNode.id)
     nextNeighborsById.get(targetNode.id).add(sourceNode.id)
   }
@@ -448,7 +589,7 @@ const syncSimulationWithModel = (graph) => {
 }
 
 const updateCanvasSize = () => {
-  const container = containerRef.value
+  const container = stageRef.value || containerRef.value
   const canvas = canvasRef.value
   if (!container || !canvas) return
   const rect = container.getBoundingClientRect()
@@ -592,7 +733,7 @@ const finishPointerInteraction = (event, allowClick) => {
       draggedNode.fy = null
       if (didDrag) {
         simulation?.alphaTarget(0)
-      } else if (allowClick) {
+      } else if (allowClick && (draggedNode.type === 'note' || !draggedNode.type) && draggedNode.path) {
         emit('open-note', draggedNode.path)
       }
     }
@@ -722,22 +863,28 @@ watch(viewStatus, async (status) => {
 })
 
 watch(
-  () => props.activeNotePath,
+  () => [props.activeNotePath, effectiveCenterPath.value],
   () => {
     scheduleDraw()
   }
 )
+
+watch(filtersOpen, async () => {
+  await nextTick()
+  updateCanvasSize()
+})
 
 onMounted(() => {
   isUnmounted = false
   syncSimulationWithModel(props.graph)
   updateCanvasSize()
 
-  if (typeof ResizeObserver !== 'undefined' && containerRef.value) {
+  const resizeTarget = stageRef.value || containerRef.value
+  if (typeof ResizeObserver !== 'undefined' && resizeTarget) {
     resizeObserver = new ResizeObserver(() => {
       updateCanvasSize()
     })
-    resizeObserver.observe(containerRef.value)
+    resizeObserver.observe(resizeTarget)
   }
   window.addEventListener('resize', updateCanvasSize)
   document.addEventListener('pointerdown', handleDocumentPointerDown)
@@ -768,169 +915,311 @@ defineExpose({
   <section
     ref="containerRef"
     class="graph-view"
-    data-testid="graph-view"
-    aria-label="Global graph view"
+    :class="{ 'graph-view--local': isLocalMode }"
+    :data-testid="isLocalMode ? 'local-graph-view' : 'graph-view'"
+    :aria-label="isLocalMode ? 'Local graph view' : 'Global graph view'"
   >
-    <div
-      v-if="viewStatus === 'loading'"
-      class="graph-state"
-      data-testid="graph-loading-state"
-      role="status"
-    >
-      <p>Loading graph...</p>
-    </div>
-
-    <div
-      v-else-if="viewStatus === 'error'"
-      class="graph-state"
-      data-testid="graph-error-state"
-      role="alert"
-    >
-      <p>Unable to load graph data.</p>
-      <button
-        type="button"
-        class="btn-secondary btn-compact"
-        data-testid="graph-retry-button"
-        :disabled="loading"
-        @click="handleRetry"
-      >
-        Try again
-      </button>
-    </div>
-
-    <div
-      v-else-if="viewStatus === 'incomplete-empty'"
-      class="graph-state"
-      data-testid="graph-incomplete-state"
-      role="status"
-    >
-      <p>Graph data is incomplete.</p>
-    </div>
-
-    <div
-      v-else-if="viewStatus === 'empty'"
-      class="graph-state"
-      data-testid="graph-empty-state"
-    >
-      <p>No notes in this vault.</p>
-    </div>
-
-    <template v-else>
-      <canvas
-        ref="canvasRef"
-        class="graph-canvas"
-        :class="{
-          'graph-canvas--hover': Boolean(hoveredNodeInfo),
-          'graph-canvas--grabbing': isGrabbing,
-        }"
-        data-testid="graph-canvas"
-        tabindex="0"
-        role="img"
-        :aria-label="canvasAriaLabel"
-        :title="hoveredNodeInfo ? hoveredNodeInfo.path : undefined"
-        @wheel.prevent="handleWheel"
-        @pointerdown="handlePointerDown"
-        @pointermove="handlePointerMove"
-        @pointerup="handlePointerUp"
-        @pointercancel="handlePointerCancel"
-        @pointerleave="handlePointerLeave"
-        @keydown="handleCanvasKeydown"
-      />
-
-      <!-- Accessible keyboard note locator without overlaying dozens of DOM buttons -->
-      <div ref="locatorRef" class="graph-locator">
-        <input
-          v-model="locatorQuery"
-          type="search"
-          class="graph-locator-input"
-          data-testid="graph-node-locator"
-          aria-label="Find note in graph"
-          :aria-expanded="locatorOpen ? 'true' : 'false'"
-          aria-controls="graph-locator-results"
-          placeholder="Find note…"
-          @focus="locatorOpen = true"
-          @input="locatorOpen = true"
-          @keydown.down.prevent="moveLocatorSelection(1)"
-          @keydown.up.prevent="moveLocatorSelection(-1)"
-          @keydown.enter.prevent="openHighlightedMatch"
-          @keydown.esc.prevent="closeLocator"
-        />
-        <ul
-          v-if="locatorOpen && locatorMatches.length > 0"
-          id="graph-locator-results"
-          class="graph-locator-results"
-          role="listbox"
-          aria-label="Notes in graph"
-          data-testid="graph-locator-results"
+    <header v-if="showHeaderBar" class="graph-toolbar">
+      <div class="graph-toolbar-row">
+        <span
+          v-if="isLocalMode"
+          class="graph-center-badge"
+          data-testid="local-graph-center"
+          :title="effectiveCenterPath || 'No note open'"
         >
-          <li
-            v-for="(node, idx) in locatorMatches"
-            :key="node.id"
-            role="option"
-            :aria-selected="idx === locatorActiveIndex ? 'true' : 'false'"
+          {{ centerDisplayLabel }}
+        </span>
+
+        <!-- Accessible keyboard note locator without overlaying dozens of DOM buttons -->
+        <div
+          v-if="viewStatus === 'ready'"
+          ref="locatorRef"
+          class="graph-locator"
+        >
+          <input
+            v-model="locatorQuery"
+            type="search"
+            class="graph-locator-input"
+            data-testid="graph-node-locator"
+            aria-label="Find note in graph"
+            :aria-expanded="locatorOpen ? 'true' : 'false'"
+            :aria-controls="locatorListId"
+            placeholder="Find note…"
+            @focus="locatorOpen = true"
+            @input="locatorOpen = true"
+            @keydown.down.prevent="moveLocatorSelection(1)"
+            @keydown.up.prevent="moveLocatorSelection(-1)"
+            @keydown.enter.prevent="openHighlightedMatch"
+            @keydown.esc.prevent="closeLocator"
+          />
+          <ul
+            v-if="locatorOpen && locatorMatches.length > 0"
+            :id="locatorListId"
+            class="graph-locator-results"
+            role="listbox"
+            aria-label="Notes in graph"
+            data-testid="graph-locator-results"
           >
-            <button
-              type="button"
-              class="graph-locator-item"
-              :class="{ 'graph-locator-item--active': idx === locatorActiveIndex }"
-              data-testid="graph-locator-item"
-              :data-note-path="node.path"
-              @mouseenter="locatorActiveIndex = idx; focusNodeOnCanvas(node.path)"
-              @focus="locatorActiveIndex = idx; focusNodeOnCanvas(node.path)"
-              @click="selectLocatorNode(node)"
+            <li
+              v-for="(node, idx) in locatorMatches"
+              :key="node.id"
+              role="option"
+              :aria-selected="idx === locatorActiveIndex ? 'true' : 'false'"
             >
-              <span class="graph-locator-label">{{ node.label }}</span>
-              <span v-if="node.path !== `${node.label}.md`" class="graph-locator-path">
-                {{ node.path }}
-              </span>
-            </button>
-          </li>
-        </ul>
+              <button
+                type="button"
+                class="graph-locator-item"
+                :class="{ 'graph-locator-item--active': idx === locatorActiveIndex }"
+                data-testid="graph-locator-item"
+                :data-note-path="node.path"
+                @mouseenter="locatorActiveIndex = idx; focusNodeOnCanvas(node.path)"
+                @focus="locatorActiveIndex = idx; focusNodeOnCanvas(node.path)"
+                @click="selectLocatorNode(node)"
+              >
+                <span class="graph-locator-label">{{ node.label }}</span>
+                <span v-if="node.path !== `${node.label}.md`" class="graph-locator-path">
+                  {{ node.path }}
+                </span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <button
+          type="button"
+          class="graph-filters-toggle"
+          :class="{
+            'graph-filters-toggle--open': filtersOpen,
+            'graph-filters-toggle--active': hasActiveFilters,
+          }"
+          data-testid="graph-filters-toggle"
+          :aria-expanded="filtersOpen ? 'true' : 'false'"
+          @click="filtersOpen = !filtersOpen"
+        >
+          Filters
+        </button>
       </div>
 
-      <div v-if="hasRefreshError || isIncomplete" class="graph-notices">
-        <div
-          v-if="hasRefreshError"
-          class="graph-refresh-error-notice"
-          data-testid="graph-refresh-error-notice"
-          role="alert"
-        >
-          <span>Could not refresh graph. Showing previous data.</span>
-          <button
-            type="button"
-            class="btn-secondary btn-compact"
-            data-testid="graph-retry-button"
-            :disabled="loading"
-            @click="handleRetry"
-          >
-            {{ loading ? 'Retrying...' : 'Try again' }}
-          </button>
-        </div>
+      <div v-if="isLocalMode" class="graph-local-strip">
+        <label class="graph-depth-control">
+          <span class="graph-local-label">Depth {{ localDepth }}</span>
+          <input
+            type="range"
+            min="1"
+            max="5"
+            step="1"
+            class="graph-depth-slider"
+            data-testid="graph-local-depth"
+            aria-label="Local graph depth"
+            :value="localDepth"
+            @input="handleDepthInput"
+          />
+        </label>
 
         <div
-          v-if="isIncomplete"
-          class="graph-incomplete-notice"
-          data-testid="graph-incomplete-notice"
-          role="status"
+          class="graph-direction-group"
+          role="group"
+          aria-label="Local graph link direction"
+          data-testid="graph-local-direction"
         >
-          Graph data is incomplete.
+          <button
+            type="button"
+            class="graph-dir-button"
+            :class="{ 'graph-dir-button--active': localDirection === 'both' }"
+            data-testid="graph-direction-both"
+            @click="handleDirectionSelect('both')"
+          >
+            Both
+          </button>
+          <button
+            type="button"
+            class="graph-dir-button"
+            :class="{ 'graph-dir-button--active': localDirection === 'incoming' }"
+            data-testid="graph-direction-incoming"
+            @click="handleDirectionSelect('incoming')"
+          >
+            Incoming
+          </button>
+          <button
+            type="button"
+            class="graph-dir-button"
+            :class="{ 'graph-dir-button--active': localDirection === 'outgoing' }"
+            data-testid="graph-direction-outgoing"
+            @click="handleDirectionSelect('outgoing')"
+          >
+            Outgoing
+          </button>
         </div>
+      </div>
+    </header>
+
+    <GraphControls
+      v-if="filtersOpen && showHeaderBar"
+      :filters="filters"
+      :query-error="queryError"
+      @update:filters="emit('update:filters', $event)"
+    />
+
+    <div ref="stageRef" class="graph-stage">
+      <div
+        v-if="viewStatus === 'no-center'"
+        class="graph-state"
+        data-testid="graph-no-center-state"
+        role="status"
+      >
+        <p>Open a note to view its local graph.</p>
       </div>
 
       <div
-        v-if="hoveredNodeInfo"
-        class="graph-hover-caption"
-        data-testid="graph-hover-caption"
+        v-else-if="viewStatus === 'loading'"
+        class="graph-state"
+        data-testid="graph-loading-state"
+        role="status"
       >
-        {{ hoveredNodeInfo.path }}
+        <p>Loading graph...</p>
       </div>
-    </template>
+
+      <div
+        v-else-if="viewStatus === 'error'"
+        class="graph-state"
+        data-testid="graph-error-state"
+        role="alert"
+      >
+        <p>Unable to load graph data.</p>
+        <button
+          type="button"
+          class="btn-secondary btn-compact"
+          data-testid="graph-retry-button"
+          :disabled="loading"
+          @click="handleRetry"
+        >
+          Try again
+        </button>
+      </div>
+
+      <div
+        v-else-if="viewStatus === 'center-missing'"
+        class="graph-state"
+        data-testid="graph-center-missing-state"
+        role="status"
+      >
+        <p>Selected note is not in the graph index.</p>
+      </div>
+
+      <div
+        v-else-if="viewStatus === 'filtered-empty'"
+        class="graph-state"
+        data-testid="graph-filtered-empty-state"
+        role="status"
+      >
+        <p>No nodes match the current filters.</p>
+        <button
+          type="button"
+          class="btn-secondary btn-compact"
+          data-testid="graph-clear-filters-button"
+          @click="clearFilters"
+        >
+          Clear filters
+        </button>
+      </div>
+
+      <div
+        v-else-if="viewStatus === 'incomplete-empty'"
+        class="graph-state"
+        data-testid="graph-incomplete-state"
+        role="status"
+      >
+        <p>Graph data is incomplete.</p>
+      </div>
+
+      <div
+        v-else-if="viewStatus === 'empty'"
+        class="graph-state"
+        data-testid="graph-empty-state"
+      >
+        <p>No notes in this vault.</p>
+      </div>
+
+      <template v-else>
+        <canvas
+          ref="canvasRef"
+          class="graph-canvas"
+          :class="{
+            'graph-canvas--hover': Boolean(hoveredNodeInfo && hoveredNodeInfo.type === 'note'),
+            'graph-canvas--grabbing': isGrabbing,
+          }"
+          data-testid="graph-canvas"
+          tabindex="0"
+          role="img"
+          :aria-label="canvasAriaLabel"
+          :title="hoveredNodeInfo ? hoveredNodeInfo.caption : undefined"
+          @wheel.prevent="handleWheel"
+          @pointerdown="handlePointerDown"
+          @pointermove="handlePointerMove"
+          @pointerup="handlePointerUp"
+          @pointercancel="handlePointerCancel"
+          @pointerleave="handlePointerLeave"
+          @keydown="handleCanvasKeydown"
+        />
+
+        <div
+          v-if="hasRefreshError || isIncomplete || hasFiltersRemovedOthers"
+          class="graph-notices"
+        >
+          <div
+            v-if="hasRefreshError"
+            class="graph-refresh-error-notice"
+            data-testid="graph-refresh-error-notice"
+            role="alert"
+          >
+            <span>Could not refresh graph. Showing previous data.</span>
+            <button
+              type="button"
+              class="btn-secondary btn-compact"
+              data-testid="graph-retry-button"
+              :disabled="loading"
+              @click="handleRetry"
+            >
+              {{ loading ? 'Retrying...' : 'Try again' }}
+            </button>
+          </div>
+
+          <div
+            v-if="hasFiltersRemovedOthers"
+            class="graph-incomplete-notice"
+            data-testid="graph-filter-notice"
+            role="status"
+          >
+            Filters hid other connected nodes.
+          </div>
+
+          <div
+            v-if="isIncomplete"
+            class="graph-incomplete-notice"
+            data-testid="graph-incomplete-notice"
+            role="status"
+          >
+            Graph data is incomplete.
+          </div>
+        </div>
+
+        <div
+          v-if="hoveredNodeInfo"
+          class="graph-hover-caption"
+          data-testid="graph-hover-caption"
+        >
+          {{ hoveredNodeInfo.caption }}
+        </div>
+      </template>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .graph-view {
   position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   width: 100%;
   height: 100%;
@@ -939,6 +1228,124 @@ defineExpose({
   background: var(--ayame-background, #111218);
   overflow: hidden;
   user-select: none;
+}
+
+.graph-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--ayame-surface, #1b1c25);
+  border-bottom: 1px solid var(--ayame-border, #34323f);
+  flex-shrink: 0;
+  z-index: 6;
+}
+
+.graph-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.graph-center-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--ayame-lavender, #d4cbe4);
+  padding: 0.15rem 0.35rem;
+  background: var(--ayame-hover, #242530);
+  border: 1px solid var(--ayame-border, #34323f);
+  border-radius: 4px;
+}
+
+.graph-filters-toggle {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--ayame-border, #34323f);
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.graph-filters-toggle:hover,
+.graph-filters-toggle--open {
+  background: var(--ayame-hover, #242530);
+  color: var(--ayame-text, #eeeaf3);
+}
+
+.graph-filters-toggle--active {
+  border-color: var(--ayame-primary, #a99aca);
+  color: var(--ayame-lavender, #d4cbe4);
+}
+
+.graph-local-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 0.5rem;
+  min-width: 0;
+}
+
+.graph-depth-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  flex: 1 1 105px;
+}
+
+.graph-local-label {
+  font-size: 0.72rem;
+  color: var(--ayame-text-muted, #aaa6b8);
+  white-space: nowrap;
+}
+
+.graph-depth-slider {
+  flex: 1 1 auto;
+  min-width: 48px;
+  accent-color: var(--ayame-primary, #a99aca);
+}
+
+.graph-direction-group {
+  display: inline-flex;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+}
+
+.graph-dir-button {
+  background: transparent;
+  border: 1px solid var(--ayame-border, #34323f);
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.7rem;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.graph-dir-button--active {
+  background: var(--ayame-hover, #242530);
+  border-color: var(--ayame-primary, #a99aca);
+  color: var(--ayame-lavender, #d4cbe4);
+}
+
+.graph-stage {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .graph-canvas {
@@ -981,22 +1388,21 @@ defineExpose({
 }
 
 .graph-locator {
-  position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
-  z-index: 5;
-  width: min(240px, calc(100% - 1.5rem));
+  position: relative;
+  flex: 1 1 110px;
+  min-width: 80px;
+  max-width: 240px;
+  z-index: 15;
 }
 
 .graph-locator-input {
   width: 100%;
-  padding: 0.35rem 0.55rem;
-  background: rgba(27, 28, 37, 0.85);
+  padding: 0.28rem 0.5rem;
+  background: var(--ayame-background, #111218);
   color: var(--ayame-text, #eeeaf3);
   border: 1px solid var(--ayame-border, #34323f);
   border-radius: 5px;
-  font-size: 0.8rem;
-  backdrop-filter: blur(4px);
+  font-size: 0.78rem;
 }
 
 .graph-locator-input::placeholder {
@@ -1010,8 +1416,13 @@ defineExpose({
 }
 
 .graph-locator-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  min-width: 170px;
   list-style: none;
-  margin: 0.3rem 0 0;
+  margin: 0.25rem 0 0;
   padding: 0.25rem;
   max-height: 240px;
   overflow-y: auto;
@@ -1019,6 +1430,7 @@ defineExpose({
   border: 1px solid var(--ayame-border, #34323f);
   border-radius: 6px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+  z-index: 20;
 }
 
 .graph-locator-item {

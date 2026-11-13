@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { buildVaultIndex } from './vaultIndex.js'
 import { buildGraphModel } from './graphModel.js'
+import { createDefaultGraphFilters, projectGraphView } from './graphSelection.js'
 
 const simulationRecords = vi.hoisted(() => [])
 
@@ -473,6 +474,192 @@ describe('GraphView.vue', () => {
     expect(wrapper.find('[data-testid="graph-refresh-error-notice"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="graph-canvas"]').exists()).toBe(true)
     expect(simulationRecords).toHaveLength(1)
+
+    wrapper.unmount()
+  })
+
+  it('supports local graph mode controls, distinct empty states, and preserved center identification under restrictive filters', async () => {
+    const index = buildVaultIndex({
+      directory: 'C:/vaults/story',
+      complete: true,
+      failures: [],
+      files: ['Heroi.md', 'Historia.md', 'Isolada.md'],
+      notes: [
+        { path: 'Heroi.md', content: 'Ligado a [[Historia]].', mtimeMs: 1000 },
+        { path: 'Historia.md', content: '#lore', mtimeMs: 1000 },
+        { path: 'Isolada.md', content: 'Sozinha.', mtimeMs: 1000 },
+      ],
+    })
+    const baseGraph = buildGraphModel(index)
+
+    // 1. No center note selected -> clear empty prompt
+    const noCenterGraph = projectGraphView({
+      baseGraph,
+      vaultIndex: index,
+      mode: 'local',
+      centerPath: null,
+    })
+    const wrapper = mount(GraphView, {
+      props: {
+        mode: 'local',
+        centerPath: null,
+        graph: noCenterGraph,
+        vaultDirectory: 'C:/vaults/story',
+        filters: createDefaultGraphFilters(),
+        localDepth: 1,
+        localDirection: 'both',
+      },
+    })
+    expect(wrapper.find('[data-testid="local-graph-view"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="graph-no-center-state"]').exists()).toBe(true)
+
+    // 2. Active center note with missing index entry -> distinct center-missing state
+    const missingCenterGraph = projectGraphView({
+      baseGraph,
+      vaultIndex: index,
+      mode: 'local',
+      centerPath: 'NaoIndexada.md',
+    })
+    await wrapper.setProps({
+      centerPath: 'NaoIndexada.md',
+      graph: missingCenterGraph,
+    })
+    expect(wrapper.find('[data-testid="graph-center-missing-state"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="local-graph-center"]').text()).toContain('NaoIndexada')
+
+    // 3. Valid center note with only-center remaining after search -> shows canvas + notice + center badge
+    const onlyCenterGraph = projectGraphView({
+      baseGraph,
+      vaultIndex: index,
+      mode: 'local',
+      centerPath: 'Heroi.md',
+      depth: 1,
+      direction: 'both',
+      filters: { ...createDefaultGraphFilters(), searchQuery: 'Heroi' },
+    })
+    await wrapper.setProps({
+      centerPath: 'Heroi.md',
+      graph: onlyCenterGraph,
+      filters: { ...createDefaultGraphFilters(), searchQuery: 'Heroi' },
+    })
+    expect(wrapper.find('[data-testid="graph-canvas"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="graph-filter-notice"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="local-graph-center"]').text()).toContain('Heroi')
+
+    // 4. Depth & direction controls emit expected updates
+    await wrapper.find('[data-testid="graph-local-depth"]').setValue('3')
+    expect(wrapper.emitted('update:local-depth')).toEqual([[3]])
+
+    await wrapper.find('[data-testid="graph-direction-outgoing"]').trigger('click')
+    expect(wrapper.emitted('update:local-direction')).toEqual([['outgoing']])
+
+    // 5. All nodes filtered out -> filter-empty state keeps center badge & clear filters button
+    const filteredEmptyGraph = projectGraphView({
+      baseGraph,
+      vaultIndex: index,
+      mode: 'local',
+      centerPath: 'Heroi.md',
+      filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
+    })
+    await wrapper.setProps({
+      graph: filteredEmptyGraph,
+      filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
+    })
+    expect(wrapper.find('[data-testid="graph-filtered-empty-state"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="local-graph-center"]').text()).toContain('Heroi')
+
+    await wrapper.find('[data-testid="graph-clear-filters-button"]').trigger('click')
+    const emittedFilters = wrapper.emitted('update:filters')
+    expect(emittedFilters[emittedFilters.length - 1][0]).toEqual(createDefaultGraphFilters())
+
+    wrapper.unmount()
+  })
+
+  it('prevents opening notes on tag or unresolved node clicks, shows origin metadata on hover, and displays search syntax errors', async () => {
+    const index = buildVaultIndex({
+      directory: 'C:/vaults/story',
+      complete: true,
+      failures: [],
+      files: ['Nota.md'],
+      notes: [
+        { path: 'Nota.md', content: '#magia [[Falta]]', mtimeMs: 1000 },
+      ],
+    })
+    const baseGraph = buildGraphModel(index)
+    const graphWithAllTypes = projectGraphView({
+      baseGraph,
+      vaultIndex: index,
+      mode: 'global',
+      filters: {
+        searchQuery: 'line:invalid',
+        showTags: true,
+        existingFilesOnly: false,
+        showOrphans: true,
+      },
+    })
+
+    const wrapper = mount(GraphView, {
+      props: {
+        graph: graphWithAllTypes,
+        vaultDirectory: 'C:/vaults/story',
+        filters: {
+          searchQuery: 'line:invalid',
+          showTags: true,
+          existingFilesOnly: false,
+          showOrphans: true,
+        },
+      },
+    })
+
+    // Toggle filters panel open & check inline query error
+    await wrapper.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="graph-filter-search-error"]').exists()).toBe(true)
+
+    // Toggle controls emit structured filter updates
+    await wrapper.find('[data-testid="graph-filter-tags"]').setValue(false)
+    const tagUpdates = wrapper.emitted('update:filters')
+    expect(tagUpdates[tagUpdates.length - 1][0].showTags).toBe(false)
+
+    // Locator search should safely exclude non-note nodes with null paths
+    const locator = wrapper.find('[data-testid="graph-node-locator"]')
+    await locator.setValue('a')
+    const locatorItems = wrapper.findAll('[data-testid="graph-locator-item"]')
+    expect(locatorItems.map((el) => el.attributes('data-note-path'))).toEqual(['Nota.md'])
+
+    const sim = simulationRecords[0]
+    sim.tick(4)
+    const unresolvedNode = sim.nodes().find((n) => n.type === 'unresolved')
+    const tagNode = sim.nodes().find((n) => n.type === 'tag')
+    expect(unresolvedNode).toBeTruthy()
+    expect(tagNode).toBeTruthy()
+
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+
+    // Hover & click unresolved node -> shows unresolved origin caption, does NOT emit open-note
+    const uX = 400 + unresolvedNode.x
+    const uY = 300 + unresolvedNode.y
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: uX, clientY: uY }))
+    await nextTick()
+    const uCaption = wrapper.find('[data-testid="graph-hover-caption"]')
+    expect(uCaption.exists()).toBe(true)
+    expect(uCaption.text()).toContain('Falta')
+    expect(uCaption.text()).toContain('Nota.md')
+
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: uX, clientY: uY }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: uX, clientY: uY }))
+    expect(wrapper.emitted('open-note')).toBeUndefined()
+
+    // Hover & click tag node -> shows #magia caption, does NOT emit open-note
+    const tX = 400 + tagNode.x
+    const tY = 300 + tagNode.y
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: tX, clientY: tY }))
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-hover-caption"]').text()).toContain('#magia')
+
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: tX, clientY: tY }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: tX, clientY: tY }))
+    expect(wrapper.emitted('open-note')).toBeUndefined()
 
     wrapper.unmount()
   })
