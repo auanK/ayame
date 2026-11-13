@@ -882,9 +882,9 @@ const handleRawYamlInput = (event) => {
 
 <style scoped>
 .properties-panel {
-  margin-bottom: 1rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--reading-border-subtle);
 }
 
 .properties-header {
@@ -900,17 +900,22 @@ const handleRawYamlInput = (event) => {
   gap: 0.4rem;
   background: transparent;
   border: none;
-  color: var(--ayame-muted);
-  font-size: 0.82rem;
-  font-weight: 600;
-  padding: 0.2rem 0.3rem;
+  color: var(--reading-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.2rem 0.35rem;
   border-radius: 4px;
   cursor: pointer;
 }
 
 .properties-toggle:hover {
-  color: var(--ayame-text);
-  background-color: rgba(255, 255, 255, 0.04);
+  color: var(--reading-text);
+  background-color: rgba(212, 203, 228, 0.06);
+}
+
+.properties-toggle:focus-visible {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 2px;
 }
 
 .properties-count {
@@ -918,7 +923,7 @@ const handleRawYamlInput = (event) => {
   padding: 0.05rem 0.38rem;
   border-radius: 999px;
   background-color: rgba(169, 154, 202, 0.14);
-  color: var(--ayame-lavender);
+  color: #c8c1da;
 }
 
 .properties-chevron {
@@ -928,35 +933,47 @@ const handleRawYamlInput = (event) => {
   width: 14px;
   height: 14px;
   font-size: 0.72rem;
-  color: var(--ayame-muted);
+  color: var(--reading-muted);
   line-height: 1;
   user-select: none;
 }
 
 .properties-toggle:hover .properties-chevron {
-  color: var(--ayame-text);
+  color: var(--reading-text);
 }
 
 .properties-action-btn {
-  padding: 0.2rem 0.5rem;
+  padding: 0.22rem 0.55rem;
   font-size: 0.74rem;
-  background: transparent;
-  color: var(--ayame-muted);
-  border: 1px solid var(--ayame-border);
+  background: var(--reading-control-bg);
+  color: var(--reading-muted);
+  border: 1px solid var(--reading-control-border);
   border-radius: 5px;
   cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background-color 0.12s ease;
 }
 
 .properties-action-btn:hover {
-  color: var(--ayame-primary);
-  border-color: var(--ayame-primary);
+  color: var(--reading-heading);
+  border-color: var(--ayame-primary, #a99aca);
+  background: var(--reading-background-elevated);
+}
+
+.properties-action-btn:focus-visible {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 2px;
 }
 
 .properties-action-btn--primary {
-  background-color: var(--ayame-primary);
+  background-color: var(--ayame-primary, #a99aca);
   color: #111218;
-  border-color: var(--ayame-primary);
+  border-color: var(--ayame-primary, #a99aca);
   font-weight: 600;
+}
+
+.properties-action-btn--primary:hover {
+  background-color: #b7aad5;
+  color: #111218;
 }
 
 .properties-table {
@@ -976,7 +993,7 @@ const handleRawYamlInput = (event) => {
 }
 
 .property-row:hover {
-  background-color: rgba(255, 255, 255, 0.025);
+  background-color: rgba(212, 203, 228, 0.035);
 }
 
 .property-key-cell {
@@ -996,21 +1013,21 @@ const handleRawYamlInput = (event) => {
   width: 7rem;
   flex: 0 0 7rem;
   padding: 0.25rem 0.4rem;
-  background-color: var(--ayame-surface, #1b1c25);
-  color: var(--ayame-text, #eeeaf3);
-  border: 1px solid var(--ayame-border, #34323f);
+  background-color: var(--reading-control-bg);
+  color: var(--reading-text);
+  border: 1px solid var(--reading-control-border);
   border-radius: 4px;
   font-size: 0.78rem;
   cursor: pointer;
 }
 
 .property-type-select option {
-  color: #eeeaf3;
-  background: #1b1c25;
+  color: var(--reading-heading);
+  background: var(--reading-control-bg);
 }
 
 .property-type-select:focus-visible {
-  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline: 2px solid var(--reading-focus-ring);
   outline-offset: 1px;
 }
 
@@ -1025,15 +1042,15 @@ const handleRawYamlInput = (event) => {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
-  color: var(--ayame-muted);
+  color: var(--reading-muted);
   font-size: 0.82rem;
 }
 
 .property-key-input:focus {
   outline: none;
-  border-color: var(--ayame-primary);
-  color: var(--ayame-text);
-  background-color: rgba(17, 18, 24, 0.5);
+  border-color: var(--ayame-primary, #a99aca);
+  color: var(--reading-text);
+  background-color: var(--reading-code-bg);
 }
 
 .property-value-cell {
@@ -1055,34 +1072,34 @@ const handleRawYamlInput = (event) => {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
-  color: var(--ayame-text);
+  color: var(--reading-text);
   font-size: 0.85rem;
 }
 
 .property-text-input:focus {
   outline: none;
-  border-color: var(--ayame-primary);
-  background-color: rgba(17, 18, 24, 0.5);
+  border-color: var(--ayame-primary, #a99aca);
+  background-color: var(--reading-code-bg);
 }
 
 .property-link-pill {
   flex-shrink: 0;
   padding: 0.15rem 0.45rem;
-  background-color: rgba(140, 207, 240, 0.1);
-  color: var(--ayame-link, #8ccff0);
-  border: 1px solid rgba(140, 207, 240, 0.3);
+  background-color: var(--reading-link-hover-bg);
+  color: var(--reading-link);
+  border: 1px solid rgba(152, 191, 217, 0.3);
   border-radius: 999px;
   font-size: 0.75rem;
   cursor: pointer;
 }
 
 .property-link-pill:hover {
-  color: var(--ayame-link-hover, #b5e2f8);
+  color: var(--reading-link-hover);
 }
 
 .property-link-pill:focus-visible,
 .chip-label-btn--link:focus-visible {
-  outline: 2px solid var(--ayame-link, #8ccff0);
+  outline: 2px solid var(--reading-focus-ring);
   outline-offset: 2px;
 }
 
@@ -1100,11 +1117,11 @@ const handleRawYamlInput = (event) => {
   align-items: center;
   gap: 0.2rem;
   padding: 0.1rem 0.5rem;
-  background-color: rgba(169, 154, 202, 0.16);
-  border: 1px solid rgba(169, 154, 202, 0.3);
+  background-color: rgba(169, 154, 202, 0.14);
+  border: 1px solid rgba(169, 154, 202, 0.24);
   border-radius: 999px;
   font-size: 0.78rem;
-  color: var(--ayame-lavender);
+  color: #c8c1da;
 }
 
 .chip-label-btn {
@@ -1118,17 +1135,17 @@ const handleRawYamlInput = (event) => {
 
 .chip-label-btn--link {
   text-decoration: underline;
-  color: var(--ayame-link, #8ccff0);
+  color: var(--reading-link);
 }
 
 .chip-label-btn--link:hover {
-  color: var(--ayame-link-hover, #b5e2f8);
+  color: var(--reading-link-hover);
 }
 
 .chip-remove-btn {
   background: transparent;
   border: 1px solid transparent;
-  color: var(--ayame-muted);
+  color: var(--reading-muted);
   font-size: 0.8rem;
   line-height: 1;
   padding: 0 0.15rem;
@@ -1142,10 +1159,11 @@ const handleRawYamlInput = (event) => {
 
 .chip-remove-btn:hover:not(:disabled),
 .chip-remove-btn:focus-visible:not(:disabled) {
-  color: var(--ayame-text);
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.15);
-  outline: none;
+  color: var(--reading-heading);
+  background: rgba(212, 203, 228, 0.1);
+  border-color: var(--reading-control-border);
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 1px;
 }
 
 .chip-remove-btn:disabled {
@@ -1159,7 +1177,7 @@ const handleRawYamlInput = (event) => {
   padding: 0.18rem 0.3rem;
   background: transparent;
   border: none;
-  color: var(--ayame-text);
+  color: var(--reading-text);
   font-size: 0.8rem;
 }
 
@@ -1171,17 +1189,19 @@ const handleRawYamlInput = (event) => {
   display: flex;
   align-items: center;
   gap: 0.2rem;
-  opacity: 0.65;
+  opacity: 0.88;
+  transition: opacity 0.12s ease;
 }
 
-.property-row:hover .property-row-actions {
+.property-row:hover .property-row-actions,
+.property-row:focus-within .property-row-actions {
   opacity: 1;
 }
 
 .property-action-btn {
   background: transparent;
   border: 1px solid transparent;
-  color: var(--ayame-muted);
+  color: var(--reading-muted);
   font-size: 0.8rem;
   font-weight: 500;
   width: 22px;
@@ -1198,15 +1218,16 @@ const handleRawYamlInput = (event) => {
 
 .property-action-btn:hover:not(:disabled),
 .property-action-btn:focus-visible:not(:disabled) {
-  color: var(--ayame-text);
-  background-color: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.15);
-  outline: none;
+  color: var(--reading-heading);
+  background-color: var(--reading-control-bg);
+  border-color: var(--reading-control-border);
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 1px;
 }
 
 .property-action-btn--danger:hover:not(:disabled),
 .property-action-btn--danger:focus-visible:not(:disabled) {
-  color: var(--ayame-error);
+  color: var(--ayame-error, #d8a6b0);
 }
 
 .property-action-btn:disabled {
@@ -1219,15 +1240,20 @@ const handleRawYamlInput = (event) => {
   padding: 0.25rem 0.45rem;
   background: transparent;
   border: none;
-  color: var(--ayame-muted);
+  color: var(--reading-muted);
   font-size: 0.8rem;
   cursor: pointer;
   border-radius: 4px;
 }
 
 .add-property-btn:hover:not(:disabled) {
-  color: var(--ayame-primary);
-  background-color: rgba(169, 154, 202, 0.08);
+  color: var(--reading-heading);
+  background-color: rgba(169, 154, 202, 0.1);
+}
+
+.add-property-btn:focus-visible:not(:disabled) {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 2px;
 }
 
 .property-add-form {
@@ -1236,22 +1262,27 @@ const handleRawYamlInput = (event) => {
   align-items: center;
   gap: 0.4rem;
   flex-wrap: wrap;
-  padding: 0.4rem;
-  background-color: rgba(17, 18, 24, 0.45);
-  border: 1px solid var(--ayame-border);
+  padding: 0.45rem;
+  background-color: var(--reading-code-bg);
+  border: 1px solid var(--reading-control-border);
   border-radius: 6px;
 }
 
 .raw-yaml-textarea {
   width: 100%;
   padding: 0.55rem 0.7rem;
-  background-color: rgba(17, 18, 24, 0.65);
-  border: 1px solid var(--ayame-border);
+  background-color: var(--reading-code-bg);
+  border: 1px solid var(--reading-control-border);
   border-radius: 6px;
-  color: var(--ayame-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--reading-text);
+  font-family: var(--reading-font-mono);
   font-size: 0.82rem;
-  line-height: 1.45;
+  line-height: 1.5;
+}
+
+.raw-yaml-textarea:focus-visible {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 1px;
 }
 
 .properties-yaml-error {
@@ -1271,13 +1302,19 @@ const handleRawYamlInput = (event) => {
 .yaml-error-hint {
   margin: 0 0 0.5rem;
   font-size: 0.76rem;
-  color: var(--ayame-text);
+  color: var(--reading-text);
 }
 
 .properties-inline-error {
   margin: 0.3rem 0 0;
   font-size: 0.76rem;
   color: var(--ayame-error);
+}
+
+@media (max-width: 640px) {
+  .property-row {
+    grid-template-columns: minmax(120px, 165px) minmax(0, 1fr) auto;
+  }
 }
 
 .sr-only {

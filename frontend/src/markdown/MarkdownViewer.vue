@@ -1072,8 +1072,9 @@ defineExpose({
   width: 100%;
   min-width: 0;
   height: 100%;
-  color: var(--ayame-text, #eeeaf3);
-  background: var(--ayame-background, #111218);
+  color: var(--reading-text);
+  background: var(--reading-background);
+  font-family: var(--reading-font-body);
   position: relative;
 }
 
@@ -1151,19 +1152,25 @@ defineExpose({
 }
 
 .action-button {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--workspace-border, #343434);
-  color: var(--workspace-text, #dcddde);
+  background: var(--reading-control-bg);
+  border: 1px solid var(--reading-control-border);
+  color: var(--reading-text);
   padding: 0.25rem 0.65rem;
   border-radius: 4px;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .action-button:hover:not(:disabled) {
-  background: var(--workspace-hover, #313131);
-  border-color: var(--workspace-accent, #a99aca);
+  background: var(--reading-background-elevated);
+  border-color: var(--ayame-primary, #a99aca);
+  color: var(--reading-heading);
+}
+
+.action-button:focus-visible:not(:disabled) {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 2px;
 }
 
 .action-button:disabled {
@@ -1179,19 +1186,25 @@ defineExpose({
   flex: 1;
   overflow-y: auto;
   padding: 0;
-  background: var(--workspace-editor, #1e1e1e);
+  background: var(--reading-background);
 }
 
 .viewer-document-container {
   width: 100%;
   min-width: 0;
-  padding: 1.5rem 2rem 4rem;
+  padding: 1.75rem 2.25rem 4.25rem;
   box-sizing: border-box;
 }
 
 .viewer-document-container--readable {
   max-width: 800px;
   margin-inline: auto;
+}
+
+@media (max-width: 640px) {
+  .viewer-document-container {
+    padding: 1.15rem 1.1rem 3rem;
+  }
 }
 
 .state-container {
@@ -1226,13 +1239,13 @@ defineExpose({
 
 .error-desc {
   font-size: 0.9rem;
-  color: rgba(212, 203, 228, 0.7);
+  color: var(--reading-muted);
 }
 
 .editor-status {
   margin: 0 0 0.75rem;
   font-size: 0.85rem;
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--reading-muted);
 }
 
 .editor-error {
@@ -1249,9 +1262,9 @@ defineExpose({
 .editor-confirm {
   margin: 0 0 0.9rem;
   padding: 0.85rem;
-  border: 1px solid rgba(212, 203, 228, 0.22);
+  border: 1px solid var(--reading-control-border);
   border-radius: 6px;
-  background: rgba(27, 28, 37, 0.92);
+  background: var(--reading-background-elevated);
 }
 
 .conflict-actions,
@@ -1262,23 +1275,31 @@ defineExpose({
 }
 
 .note-heading-row {
-  margin-bottom: 0.85rem;
+  margin-bottom: 1rem;
 }
 
 .note-heading-title {
   width: 100%;
-  padding: 0.2rem 0;
+  padding: 0.2rem 0 0.35rem;
   background: transparent;
   border: none;
   border-bottom: 1px solid transparent;
-  color: var(--workspace-text, #dcddde);
-  font-size: 1.75rem;
-  font-weight: 700;
-  line-height: 1.25;
+  color: var(--reading-heading);
+  font-family: var(--reading-font-heading);
+  font-size: 1.8rem;
+  font-weight: 600;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
 }
 
 .note-heading-title:focus {
   outline: none;
   border-bottom-color: var(--workspace-accent, #a99aca);
+}
+
+.note-heading-title:focus-visible {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 4px;
+  border-radius: 3px;
 }
 </style>

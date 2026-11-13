@@ -346,7 +346,7 @@ defineExpose({
   min-height: 100%;
   border: none;
   background: transparent;
-  color: var(--workspace-text-normal, var(--ayame-text, #dcddde));
+  color: var(--reading-text);
 }
 
 .markdown-editor-surface:focus-within {
@@ -363,19 +363,20 @@ defineExpose({
   min-height: 100%;
   background: transparent;
   outline: none;
-  font-family: var(--workspace-font-editor, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
-  font-size: 0.975rem;
-  line-height: 1.68;
+  font-family: var(--reading-font-body);
+  font-size: var(--reading-font-size);
+  font-weight: 400;
+  line-height: var(--reading-line-height);
 }
 
 :deep(.cm-scroller) {
-  padding: 0.5rem 0 3rem;
+  padding: 0.35rem 0 3.5rem;
   font-family: inherit;
 }
 
 :deep(.cm-content) {
-  caret-color: var(--ayame-lavender, #d4cbe4);
-  color: var(--ayame-text, #eeeaf3);
+  caret-color: var(--reading-caret);
+  color: var(--reading-text);
 }
 
 :deep(.cm-focused) {
@@ -383,53 +384,62 @@ defineExpose({
 }
 
 :deep(.cm-line) {
-  padding: 0.1rem 0;
+  padding: 0.14rem 0;
 }
 
 :deep(.cm-live-syntax) {
-  color: var(--ayame-text-muted, #aaa6b8);
-  opacity: 0.7;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--reading-syntax);
+  font-family: var(--reading-font-mono);
 }
 
 :deep(.cm-live-heading) {
-  color: #fff;
-  font-family: Georgia, 'Times New Roman', serif;
+  color: var(--reading-heading);
+  font-family: var(--reading-font-heading);
   font-weight: 600;
-  line-height: 1.3;
-  padding-top: 0.45rem;
-  padding-bottom: 0.2rem;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+  padding-top: 0.65rem;
+  padding-bottom: 0.22rem;
 }
 
 :deep(.cm-live-h1) {
-  font-size: 1.75rem;
-  border-bottom: 1px solid rgba(212, 203, 228, 0.15);
-  margin-bottom: 0.35rem;
+  font-size: 1.8rem;
+  font-weight: 600;
+  line-height: 1.28;
+  border-bottom: 1px solid var(--reading-border);
+  margin-bottom: 0.45rem;
 }
 
 :deep(.cm-live-h2) {
-  font-size: 1.4rem;
-  border-bottom: 1px solid rgba(212, 203, 228, 0.1);
-  margin-bottom: 0.25rem;
+  font-size: 1.42rem;
+  font-weight: 600;
+  line-height: 1.32;
+  border-bottom: 1px solid var(--reading-border-subtle);
+  margin-bottom: 0.3rem;
 }
 
 :deep(.cm-live-h3) {
   font-size: 1.2rem;
+  font-weight: 500;
+  line-height: 1.36;
 }
 
 :deep(.cm-live-h4) {
-  font-size: 1.075rem;
+  font-size: 1.08rem;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 :deep(.cm-live-h5),
 :deep(.cm-live-h6) {
-  font-size: 0.975rem;
-  color: var(--ayame-lavender, #d4cbe4);
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--reading-muted);
 }
 
 :deep(.cm-live-bold) {
-  font-weight: 700;
-  color: #fff;
+  font-weight: 600;
+  color: var(--reading-bold);
 }
 
 :deep(.cm-live-italic) {
@@ -438,45 +448,58 @@ defineExpose({
 
 :deep(.cm-live-strikethrough) {
   text-decoration: line-through;
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--reading-muted);
+}
+
+:deep(.cm-live-highlight) {
+  background: rgba(169, 154, 202, 0.2);
+  color: var(--reading-heading);
+  padding: 0.02rem 0.22rem;
+  border-radius: 3px;
 }
 
 :deep(.cm-live-inline-code) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--reading-font-mono);
   font-size: 0.88em;
-  background: rgba(212, 203, 228, 0.12);
+  background: var(--reading-code-inline-bg);
   padding: 0.1rem 0.35rem;
-  border-radius: 3px;
-  color: #f1eef8;
+  border-radius: 4px;
+  color: var(--reading-code-text);
 }
 
 :deep(.cm-live-codeblock-fence) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--reading-font-mono);
   font-size: 0.82rem;
-  color: var(--ayame-text-muted, #aaa6b8);
-  background: #0b0c10;
-  padding-inline: 0.75rem;
+  color: var(--reading-syntax);
+  background: var(--reading-code-bg);
+  padding-inline: 0.85rem;
 }
 
 :deep(.cm-live-codeblock-fence-hidden) {
-  opacity: 0.35;
+  color: var(--reading-syntax);
   font-size: 0.75rem;
 }
 
 :deep(.cm-live-codeblock-line) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--reading-font-mono);
   font-size: 0.88rem;
-  background: #0b0c10;
-  padding-inline: 0.75rem;
-  color: #e9e4f5;
+  line-height: 1.6;
+  background: var(--reading-code-bg);
+  padding-inline: 0.85rem;
+  color: var(--reading-code-text);
 }
 
 :deep(.cm-live-blockquote) {
-  border-left: 3px solid var(--ayame-primary, #a99aca);
-  padding-left: 0.9rem;
-  background: rgba(169, 154, 202, 0.06);
-  color: rgba(212, 203, 228, 0.9);
+  border-left: 3px solid var(--reading-blockquote-border);
+  padding-left: 1rem;
+  background: var(--reading-blockquote-bg);
+  color: var(--reading-blockquote-text);
   font-style: italic;
+}
+
+:deep(.cm-live-callout-badge) {
+  color: var(--ayame-lavender, #d4cbe4);
+  font-weight: 600;
 }
 
 :deep(.cm-live-list-item) {
@@ -490,27 +513,33 @@ defineExpose({
   font-weight: 600;
 }
 
+:deep(.cm-live-checklist-marker:focus-visible) {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 :deep(.cm-live-checklist-checked .cm-live-checklist-text) {
   text-decoration: line-through;
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--reading-muted);
 }
 
 :deep(.cm-live-hr) {
-  border-bottom: 1px solid rgba(212, 203, 228, 0.25);
-  margin: 0.5rem 0;
+  border-bottom: 1px solid var(--reading-border);
+  margin: 0.75rem 0;
   min-height: 0.5rem;
 }
 
 :deep(.cm-live-table-row) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.9rem;
-  background: rgba(17, 18, 24, 0.55);
-  border-left: 2px solid rgba(169, 154, 202, 0.25);
-  padding-left: 0.5rem;
+  font-family: var(--reading-font-mono);
+  font-size: 0.89rem;
+  background: var(--reading-table-bg);
+  border-left: 2px solid var(--reading-border);
+  padding-left: 0.65rem;
 }
 
 :deep(.cm-live-table-delimiter) {
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--reading-muted);
 }
 
 :deep(.cm-live-table-pipe) {
@@ -518,27 +547,63 @@ defineExpose({
   font-weight: 600;
 }
 
+:deep(.cm-live-tag) {
+  color: var(--ayame-lavender, #d4cbe4);
+  background: rgba(169, 154, 202, 0.14);
+  border-radius: 4px;
+  padding: 0.02rem 0.35rem;
+  font-size: 0.88em;
+}
+
+:deep(.cm-live-comment) {
+  color: var(--reading-syntax);
+  font-style: italic;
+}
+
+:deep(.cm-live-math) {
+  font-family: var(--reading-font-mono);
+  color: var(--reading-code-text);
+  background: var(--reading-code-inline-bg);
+  padding: 0.05rem 0.25rem;
+  border-radius: 3px;
+}
+
+:deep(.cm-live-footnote) {
+  color: var(--reading-link);
+}
+
 :deep(.cm-live-link) {
-  color: var(--ayame-link, #8ccff0);
+  color: var(--reading-link);
   text-decoration: underline;
+  text-underline-color: rgba(152, 191, 217, 0.45);
   text-underline-offset: 3px;
   cursor: pointer;
   border-radius: 2px;
   padding: 0 2px;
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+
+:deep(.cm-live-link:visited) {
+  color: var(--reading-link-visited);
 }
 
 :deep(.cm-live-link:hover) {
-  background: rgba(140, 207, 240, 0.15);
-  color: var(--ayame-link-hover, #b5e2f8);
+  background: var(--reading-link-hover-bg);
+  color: var(--reading-link-hover);
+}
+
+:deep(.cm-live-link:focus-visible) {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 2px;
 }
 
 :deep(.cm-editor.cm-focused .cm-live-link[data-editing="true"]) {
-  outline: 2px solid var(--ayame-link, #8ccff0);
+  outline: 2px solid var(--reading-link);
   outline-offset: 2px;
 }
 
 :deep(.cm-live-link--missing) {
-  color: var(--ayame-link-unresolved, #8b99b2);
+  color: var(--ayame-link-unresolved, #92a0b9);
   text-decoration-style: dashed;
 }
 

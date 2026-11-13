@@ -18,13 +18,13 @@
 
   --ayame-link: #8ccff0;
   --ayame-link-hover: #b5e2f8;
-  --ayame-link-unresolved: #8b99b2;
+  --ayame-link-unresolved: #92a0b9;
   --ayame-link-ambiguous: #e5be83;
 
   /* Workspace tokens unified with Ayame identity */
   --workspace-bg: var(--ayame-background);
   --workspace-sidebar: var(--ayame-surface);
-  --workspace-editor: var(--ayame-background);
+  --workspace-editor: var(--reading-background);
   --workspace-border: var(--ayame-border);
   --workspace-hover: var(--ayame-hover);
   --workspace-active: rgba(169, 154, 202, 0.12);
@@ -33,6 +33,38 @@
   --workspace-accent: var(--ayame-primary);
   --workspace-splitter: var(--ayame-border);
   --workspace-splitter-hover: var(--ayame-primary);
+
+  /* Grafite Suave reading tokens (document surface & typography) */
+  --reading-background: #1e2028;
+  --reading-background-elevated: #232630;
+  --reading-text: #b7bbc6;
+  --reading-heading: #dad9e2;
+  --reading-bold: #d0cfd9;
+  --reading-muted: #999caf;
+  --reading-syntax: #8c8fa3;
+  --reading-caret: #c8bfe0;
+  --reading-border: rgba(212, 203, 228, 0.14);
+  --reading-border-subtle: rgba(212, 203, 228, 0.08);
+  --reading-control-bg: #252834;
+  --reading-control-border: #6a6c7e;
+  --reading-link: #98bfd9;
+  --reading-link-hover: #b2d2e8;
+  --reading-link-visited: #b2add8;
+  --reading-link-hover-bg: rgba(152, 191, 217, 0.12);
+  --reading-code-bg: #171920;
+  --reading-code-inline-bg: rgba(212, 203, 228, 0.09);
+  --reading-code-text: #c8ccd6;
+  --reading-blockquote-bg: rgba(169, 154, 202, 0.05);
+  --reading-blockquote-text: #c6c3d4;
+  --reading-blockquote-border: #9689b8;
+  --reading-table-bg: rgba(23, 25, 32, 0.55);
+  --reading-selection-bg: rgba(169, 154, 202, 0.28);
+  --reading-focus-ring: rgba(169, 154, 202, 0.65);
+  --reading-font-body: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+  --reading-font-heading: Georgia, 'Times New Roman', serif;
+  --reading-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --reading-font-size: 1.03125rem;
+  --reading-line-height: 1.7;
 
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: var(--ayame-text);
@@ -54,8 +86,13 @@
   color: var(--ayame-text, #eeeaf3);
 }
 
+.markdown-viewer ::selection {
+  background: var(--reading-selection-bg);
+  color: var(--reading-heading);
+}
+
 .markdown-editor-surface .cm-editor .cm-selectionLayer .cm-selectionBackground {
-  background: rgba(169, 154, 202, 0.42);
+  background: var(--reading-selection-bg);
 }
 
 body {
@@ -75,6 +112,12 @@ a {
 
 a:hover {
   color: var(--ayame-link-hover);
+}
+
+a:focus-visible {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 #app {

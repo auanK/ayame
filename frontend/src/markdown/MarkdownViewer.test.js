@@ -4,10 +4,16 @@ import MarkdownViewer, { AUTOSAVE_DELAY_MS } from './MarkdownViewer.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import PropertiesPanel from './PropertiesPanel.vue'
 import { parseNoteDocument } from './properties.js'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import * as api from '../vaults/api.js'
-import mainCssRaw from '../styles/main.css?raw'
 import viewerRaw from './MarkdownViewer.vue?raw'
 import propertiesRaw from './PropertiesPanel.vue?raw'
+
+const mainCssRaw = readFileSync(
+  resolve(__dirname, '../styles/main.css'),
+  'utf8',
+)
 
 const relativeLuminance = (hex) => {
   const clean = hex.replace('#', '')
@@ -1073,7 +1079,7 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
 
   describe('Grafite Suave reading theme, surface hierarchy, Properties balance, and WCAG compliance', () => {
     it('defines Grafite Suave semantic reading tokens with WCAG AA contrast, soft surface separation, and no pure white document colors', () => {
-      const rootBlock = mainCssRaw.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1] || ''
+      const rootBlock = mainCssRaw.match(/:root\s*\{([\s\S]*?)\r?\n\}/)?.[1] || ''
       const workspaceBg = readRootToken(rootBlock, '--ayame-background')
       const readingBg = readRootToken(rootBlock, '--reading-background')
       const readingText = readRootToken(rootBlock, '--reading-text')
@@ -1205,8 +1211,9 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
 
       await wrapper.find('[data-testid="property-link-pill"]').trigger('click')
       expect(wrapper.emitted('open-link')?.[0]?.[0]).toMatchObject({
-        type: 'resolved',
-        path: 'Guia de Estilo.md',
+        type: 'unverified',
+        rawTarget: '[[Guia de Estilo]]',
+        kind: 'wikilink',
       })
 
       // Interactive text editing marks dirty draft cleanly without affecting Preferences/Properties state
