@@ -5,6 +5,22 @@ import * as vaultApi from './api.js'
 import MarkdownEditor from '../markdown/MarkdownEditor.vue'
 import VaultBrowser from './VaultBrowser.vue'
 
+const simulationRecords = vi.hoisted(() => [])
+
+vi.mock('d3-force', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    forceSimulation: vi.fn((...args) => {
+      const sim = actual.forceSimulation(...args)
+      vi.spyOn(sim, 'stop')
+      vi.spyOn(sim, 'restart')
+      simulationRecords.push(sim)
+      return sim
+    }),
+  }
+})
+
 vi.mock('./api.js', async (importOriginal) => {
   const actual = await importOriginal()
   return {
@@ -98,6 +114,7 @@ describe('VaultBrowser global graph integration', () => {
   }
 
   beforeEach(() => {
+    simulationRecords.length = 0
     activeWrappers = []
     vi.clearAllMocks()
     localStorage.clear()
@@ -633,6 +650,233 @@ describe('VaultBrowser global graph integration', () => {
     expect(wrapper.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
       'Global graph with 4 notes and 3 connections'
     )
+
+    wrapper.unmount()
+  })
+
+  it('opens Local Graph in right panel, follows active note safely across blocked navigation, and handles 200px reveal resize', async () => {
+    const richIndex = () => ({
+      directory: VAULT_A.directory,
+      complete: true,
+      failures: [],
+      folders: ['Personagens'],
+      files: ['Historia.md', 'Personagens/Heroi.md', 'Vilao.md', 'Final.md'],
+      notes: [
+        {
+          path: 'Historia.md',
+          content: '---\nchapter: 1\n---\n# Historia\nVeja [[Personagens/Heroi]].\n',
+          mtimeMs: 1000,
+        },
+        {
+          path: 'Personagens/Heroi.md',
+          content: '# Heroi\nParte de [[Historia]] e enfrenta [[Vilao]].\n',
+          mtimeMs: 1000,
+        },
+        {
+          path: 'Vilao.md',
+          content: '# Vilao\nLigado ao [[Final]].\n',
+          mtimeMs: 1000,
+        },
+        {
+          path: 'Final.md',
+          content: '# Final\nSem links.\n',
+          mtimeMs: 1000,
+        },
+      ],
+    })
+    vaultApi.getVaultIndex.mockResolvedValue(richIndex())
+    vaultApi.getVaultMarkdown.mockImplementation(async (dir, path) => {
+      const found = richIndex().notes.find((n) => n.path === path)
+      if (!found) throw Object.assign(new Error('Not found'), { code: 'NOT_FOUND' })
+      return {
+        directory: dir,
+        path: found.path,
+        name: found.path.split('/').pop(),
+        content: found.content,
+        revision: 'a'.repeat(64),
+        mtimeMs: found.mtimeMs,
+        writable: true,
+      }
+    })
+
+    const wrapper = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+
+    // Ensure right panel starts collapsed or collapse it, then open Local Graph via Command Palette
+    if (wrapper.find('[data-testid="workspace-right-panel"]').exists() &&
+        !wrapper.find('[data-testid="workspace-right-panel"]').classes().includes('workspace-right-panel--collapsed')) {
+      await wrapper.find('[data-testid="toggle-right-panel-button"]').trigger('click')
+      await nextTick()
+    }
+
+    await wrapper.find('[data-testid="command-palette-button"]').trigger('click')
+    await nextTick()
+    const localCmd = wrapper
+      .findAll('[data-testid="command-palette-modal"] button.panel-list-item')
+      .find((btn) => btn.text().includes('Open local graph'))
+    expect(localCmd).toBeTruthy()
+    await localCmd.trigger('click')
+    await nextTick()
+
+    const localGraph = wrapper.find('[data-testid="local-graph-view"]')
+    expect(localGraph.exists()).toBe(true)
+    expect(
+      wrapper.find('[data-testid="workspace-right-panel"]').classes()
+    ).not.toContain('workspace-right-panel--collapsed')
+    expect(localGraph.find('[data-testid="graph-no-center-state"]').exists()).toBe(true)
+
+    // Narrow right panel down to 200px via splitter Home key without crashing or losing panel
+    const splitter = wrapper.find('[data-testid="resize-handle-context"]')
+    await splitter.trigger('keydown', { key: 'Home' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="workspace-right-panel"]').attributes('style')).toContain(
+      'width: 200px'
+    )
+
+    // Opening Historia.md centers Local Graph on Historia + Heroi (depth 1)
+    await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
+    await flushPromises()
+    expect(localGraph.find('[data-testid="local-graph-center"]').text()).toContain('Historia')
+    expect(localGraph.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Local graph with 2 nodes and 2 connections'
+    )
+
+    // Block navigation via invalid Number draft and try opening Personagens/Heroi.md from Local Graph
+    await wrapper.find('[data-testid="property-number-input"]').setValue('abc')
+    await nextTick()
+
+    wrapper
+      .findComponent({ name: 'GraphView' }) // Local graph is only GraphView mounted right now
+      .vm.$emit('open-note', 'Personagens/Heroi.md')
+    await flushPromises()
+
+    // Navigation is blocked, so Local Graph MUST keep Historia.md as center!
+    expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
+    expect(localGraph.find('[data-testid="local-graph-center"]').text()).toContain('Historia')
+
+    await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
+    await flushPromises()
+    expect(localGraph.find('[data-testid="local-graph-center"]').text()).toContain('Heroi')
+
+    wrapper.unmount()
+  })
+
+  it('keeps Global and Local filters/depth/simulations isolated, updates on live saves, and resets on vault switch', async () => {
+    const richIndex = () => ({
+      directory: VAULT_A.directory,
+      complete: true,
+      failures: [],
+      folders: ['Personagens'],
+      files: ['Historia.md', 'Personagens/Heroi.md', 'Final.md', 'Orphan.md'],
+      notes: [
+        {
+          path: 'Historia.md',
+          content: '#Historia #lore\nVeja [[Personagens/Heroi]] e [[Falta]].\n',
+          mtimeMs: 1000,
+        },
+        {
+          path: 'Personagens/Heroi.md',
+          content: '# Heroi\nConecta em [[Final]].\n',
+          mtimeMs: 1000,
+        },
+        {
+          path: 'Final.md',
+          content: '# Final\nSem links.\n',
+          mtimeMs: 1000,
+        },
+        {
+          path: 'Orphan.md',
+          content: '# Orphan\nSem links.\n',
+          mtimeMs: 1000,
+        },
+      ],
+    })
+    vaultApi.getVaultIndex.mockResolvedValue(richIndex())
+    vaultApi.getVaultMarkdown.mockImplementation(async (dir, path) => {
+      const idx = dir === VAULT_A.directory ? richIndex() : otherRawIndex()
+      const found = idx.notes.find((n) => n.path === path)
+      if (!found) throw Object.assign(new Error('Not found'), { code: 'NOT_FOUND' })
+      return {
+        directory: dir,
+        path: found.path,
+        name: found.path.split('/').pop(),
+        content: found.content,
+        revision: 'a'.repeat(64),
+        mtimeMs: found.mtimeMs,
+        writable: true,
+      }
+    })
+
+    const wrapper = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+
+    // Open Historia.md, Global Graph tab, AND Local Graph right panel tab
+    await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="panel-tab-local-graph"]').trigger('click')
+    await nextTick()
+
+    const globalView = wrapper.find('[data-testid="graph-view"]')
+    const localView = wrapper.find('[data-testid="local-graph-view"]')
+    expect(globalView.exists()).toBe(true)
+    expect(localView.exists()).toBe(true)
+    expect(simulationRecords).toHaveLength(2)
+    const globalSim = simulationRecords[0]
+    const localSim = simulationRecords[1]
+    const globalRestartBefore = globalSim.restart.mock.calls.length
+    const localRestartBefore = localSim.restart.mock.calls.length
+
+    // Change Local depth to 2 and enable Local Tags & Unresolved -> Global Graph MUST NOT change or restart
+    await localView.find('[data-testid="graph-local-depth"]').setValue('2')
+    await nextTick()
+    await localView.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    await nextTick()
+    await localView.find('[data-testid="graph-filter-tags"]').setValue(true)
+    await nextTick()
+    await localView.find('[data-testid="graph-filter-existing-only"]').setValue(false)
+    await nextTick()
+
+    // Local now includes Historia, Heroi, Final (depth 2), tag:Historia, tag:lore, unresolved Falta
+    const localAria = localView.find('[data-testid="graph-canvas"]').attributes('aria-label')
+    expect(localAria).toBe('Local graph with 6 nodes and 5 connections')
+    expect(localView.findAll('[data-testid="graph-locator-item"]')).toHaveLength(0)
+
+    // Global remains strictly default-filtered (4 notes, 2 connections) and simulation did not restart!
+    expect(globalView.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 4 notes and 2 connections'
+    )
+    expect(globalSim.restart.mock.calls.length).toBe(globalRestartBefore)
+    expect(localSim.restart.mock.calls.length).toBeGreaterThan(localRestartBefore)
+
+    // Live note save updates tags & connections immediately in filtered Local view
+    wrapper.findComponent({ name: 'MarkdownViewer' }).vm.$emit('content-saved', {
+      path: 'Historia.md',
+      content: '#Historia #lore #novo\nVeja [[Personagens/Heroi]] e [[Falta]].\n',
+      mtimeMs: 2500,
+    })
+    await nextTick()
+    expect(localView.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Local graph with 7 nodes and 6 connections'
+    )
+
+    // Filter Global Graph independently (hide orphans) -> Local Graph keeps its own filters
+    await globalView.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    await nextTick()
+    await globalView.find('[data-testid="graph-filter-orphans"]').setValue(false)
+    await nextTick()
+    expect(globalView.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
+      'Global graph with 3 notes and 2 connections'
+    )
+
+    // Switching vault resets graph filters & local settings cleanly and stops simulations cleanly
+    await wrapper.setProps({ vault: VAULT_B })
+    await flushPromises()
+    expect(localView.find('[data-testid="graph-no-center-state"]').exists()).toBe(true)
+    expect(globalSim.stop).toHaveBeenCalled()
+    expect(localSim.stop).toHaveBeenCalled()
 
     wrapper.unmount()
   })

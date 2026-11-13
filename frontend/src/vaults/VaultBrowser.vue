@@ -18,6 +18,7 @@ import {
 import { calculateContextMenuPosition } from './contextMenuPosition.js'
 import { useAyameRouter, validateNoteQueryParam } from '../router/index.js'
 import { buildGraphModel } from './graphModel.js'
+import { createDefaultGraphFilters, projectGraphView } from './graphSelection.js'
 import MarkdownViewer from '../markdown/MarkdownViewer.vue'
 import GraphView from './GraphView.vue'
 
@@ -245,6 +246,33 @@ const vaultIndexData = ref(
 const indexLoading = ref(false)
 const indexError = ref(false)
 const graphModel = computed(() => buildGraphModel(vaultIndexData.value))
+const globalGraphRef = ref(null)
+const localGraphRef = ref(null)
+const globalGraphFilters = ref(createDefaultGraphFilters())
+const localGraphFilters = ref(createDefaultGraphFilters())
+const localGraphDepth = ref(1)
+const localGraphDirection = ref('both')
+
+const globalGraphView = computed(() =>
+  projectGraphView({
+    baseGraph: graphModel.value,
+    vaultIndex: vaultIndexData.value,
+    mode: 'global',
+    filters: globalGraphFilters.value,
+  })
+)
+
+const localGraphView = computed(() =>
+  projectGraphView({
+    baseGraph: graphModel.value,
+    vaultIndex: vaultIndexData.value,
+    mode: 'local',
+    centerPath: selectedFile.value,
+    depth: localGraphDepth.value,
+    direction: localGraphDirection.value,
+    filters: localGraphFilters.value,
+  })
+)
 
 // Vault Settings & Modals
 const vaultSettings = ref({
@@ -448,6 +476,7 @@ const availableCommands = computed(() => {
     { id: 'toggle-explorer', label: 'Toggle file explorer', run: () => { explorerCollapsed.value = !explorerCollapsed.value } },
     { id: 'toggle-right-panel', label: 'Toggle contextual panel', run: () => { rightPanelCollapsed.value = !rightPanelCollapsed.value } },
     { id: 'open-graph', label: 'Open graph view', run: () => openGraphView() },
+    { id: 'open-local-graph', label: 'Open local graph', run: () => openLocalGraphView() },
     { id: 'toggle-properties', label: 'Toggle properties (Hidden / Visible / Source)', run: () => viewerRef.value?.cyclePropertiesMode?.() },
     { id: 'toggle-readable-line', label: 'Toggle readable line length', run: () => viewerRef.value?.toggleReadableLineLength?.() },
     { id: 'reveal-active', label: 'Reveal active note in explorer', run: () => revealActiveFile() },
@@ -808,6 +837,12 @@ const ensureTabOpen = (filePath) => {
 const openGraphView = () => {
   graphTabOpen.value = true
   activeWorkspaceView.value = 'graph'
+}
+
+const openLocalGraphView = () => {
+  layout.value.contextOpen = true
+  persistLayout()
+  rightPanelTab.value = 'local-graph'
 }
 
 const closeGraphTab = () => {
@@ -2318,6 +2353,10 @@ watch(
     openTabs.value = []
     graphTabOpen.value = false
     activeWorkspaceView.value = 'note'
+    globalGraphFilters.value = createDefaultGraphFilters()
+    localGraphFilters.value = createDefaultGraphFilters()
+    localGraphDepth.value = 1
+    localGraphDirection.value = 'both'
     indexLoading.value = false
     indexError.value = false
     navHistory.value = []
@@ -2338,6 +2377,19 @@ watch(
   () => {
     if (!suppressRouteWatch) {
       void applyRouteFromUrl({ isInitial: false })
+    }
+  }
+)
+
+watch(
+  () => [layout.value.contextOpen, rightPanelTab.value, activeWorkspaceView.value],
+  async ([contextOpen, panelTab, wsView]) => {
+    await nextTick()
+    if (wsView === 'graph' && graphTabOpen.value) {
+      globalGraphRef.value?.updateCanvasSize?.()
+    }
+    if (contextOpen && panelTab === 'local-graph') {
+      localGraphRef.value?.updateCanvasSize?.()
     }
   }
 )
@@ -3214,13 +3266,17 @@ defineExpose({
         <GraphView
           v-if="graphTabOpen"
           v-show="activeWorkspaceView === 'graph'"
-          :graph="graphModel"
+          ref="globalGraphRef"
+          mode="global"
+          :graph="globalGraphView"
           :vault-directory="vault.directory"
           :loading="indexLoading"
           :error="indexError"
           :active-note-path="selectedFile"
+          :filters="globalGraphFilters"
           @open-note="openNoteFromGraph"
           @retry="retryVaultIndex"
+          @update:filters="globalGraphFilters = $event"
         />
 
         <div
@@ -3313,9 +3369,21 @@ defineExpose({
           >
             Search
           </button>
+          <button
+            type="button"
+            class="right-panel-tab"
+            :class="{ 'right-panel-tab--active': rightPanelTab === 'local-graph' }"
+            data-testid="panel-tab-local-graph"
+            @click="rightPanelTab = 'local-graph'"
+          >
+            Local Graph
+          </button>
         </nav>
 
-        <div class="right-panel-body">
+        <div
+          class="right-panel-body"
+          :class="{ 'right-panel-body--graph': rightPanelTab === 'local-graph' }"
+        >
           <!-- Backlinks Tab -->
           <div v-if="rightPanelTab === 'backlinks'" data-testid="backlinks-panel">
             <h4 class="panel-section-title">Linked mentions ({{ activeBacklinks.linked.length }})</h4>
@@ -3459,6 +3527,32 @@ defineExpose({
                 <span class="panel-item-snippet">{{ res.snippet || res.path }}</span>
               </button>
             </div>
+          </div>
+
+          <!-- Local Graph Tab -->
+          <div
+            v-else-if="rightPanelTab === 'local-graph'"
+            class="local-graph-panel"
+            data-testid="local-graph-panel"
+          >
+            <GraphView
+              ref="localGraphRef"
+              mode="local"
+              :center-path="selectedFile"
+              :graph="localGraphView"
+              :vault-directory="vault.directory"
+              :loading="indexLoading"
+              :error="indexError"
+              :active-note-path="selectedFile"
+              :filters="localGraphFilters"
+              :local-depth="localGraphDepth"
+              :local-direction="localGraphDirection"
+              @open-note="openNoteFromGraph"
+              @retry="retryVaultIndex"
+              @update:filters="localGraphFilters = $event"
+              @update:local-depth="localGraphDepth = $event"
+              @update:local-direction="localGraphDirection = $event"
+            />
           </div>
         </div>
       </aside>
@@ -4661,6 +4755,23 @@ defineExpose({
   padding: 0.65rem;
   overflow-y: auto;
   flex: 1;
+}
+
+.right-panel-body--graph {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.local-graph-panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 .panel-section-title {
