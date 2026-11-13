@@ -13,6 +13,7 @@ import { createDefaultGraphFilters } from './graphSelection.js'
 import {
   GRAPH_DISPLAY_LIMITS,
   createDefaultGraphSettings,
+  normalizeForces,
   resolveLabelOpacity,
   computeArrowGeometry,
   applySimulationForces,
@@ -137,6 +138,12 @@ let neighborsById = new Map()
 let duplicateLabelCounts = new Map()
 let currentStructureKey = ''
 let currentVaultKey = props.vaultDirectory
+let appliedForcesKey = ''
+
+const computeForcesKey = (rawForces) => {
+  const f = normalizeForces(rawForces)
+  return `${f.centerForce}|${f.repelForce}|${f.linkForce}|${f.linkDistance}`
+}
 
 let viewWidth = 0
 let viewHeight = 0
@@ -525,6 +532,7 @@ const scheduleDraw = () => {
 }
 
 const stopSimulation = () => {
+  appliedForcesKey = ''
   if (simulation) {
     simulation.on('tick', null)
     simulation.on('end', null)
@@ -686,6 +694,7 @@ const syncSimulationWithModel = (graph) => {
     applySimulationForces(simulation, props.forces, { restart: false })
     simulation.alpha(hadExistingNodes ? 0.35 : 0.9).restart()
   }
+  appliedForcesKey = computeForcesKey(props.forces)
 
   scheduleDraw()
 }
@@ -975,7 +984,9 @@ watch(
 watch(
   () => props.forces,
   (nextForces) => {
-    if (!simulation) return
+    const nextKey = computeForcesKey(nextForces)
+    if (!simulation || nextKey === appliedForcesKey) return
+    appliedForcesKey = nextKey
     applySimulationForces(simulation, nextForces)
     scheduleDraw()
   },

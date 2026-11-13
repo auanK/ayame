@@ -135,7 +135,9 @@ describe('VaultBrowser global graph integration', () => {
     HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
       setTransform: vi.fn(),
       clearRect: vi.fn(),
+      setLineDash: vi.fn(),
       beginPath: vi.fn(),
+      closePath: vi.fn(),
       moveTo: vi.fn(),
       lineTo: vi.fn(),
       stroke: vi.fn(),
@@ -879,5 +881,140 @@ describe('VaultBrowser global graph integration', () => {
     expect(localSim.stop).toHaveBeenCalled()
 
     wrapper.unmount()
+  })
+
+  it('persists shared groups and independent Global/Local display & forces per vault, isolates vaults cleanly, and handles storage failures without breaking active graphs', async () => {
+    // Pre-populate VAULT_B with distinct persisted settings to prove vault switch neither leaks A nor overwrites B
+    localStorage.setItem(
+      `ayame:graph-settings:${VAULT_B.directory}`,
+      JSON.stringify({
+        version: 1,
+        groups: [{ id: 'vb-1', query: 'Extra', color: '#56b6c2' }],
+        global: {
+          filters: { searchQuery: '', showTags: true, existingFilesOnly: true, showOrphans: true },
+          display: { arrows: false, textFadeThreshold: 0.9, nodeSize: 0.8, linkThickness: 1.5 },
+          forces: { centerForce: 0.2, repelForce: 220, linkForce: 0.7, linkDistance: 95 },
+        },
+        local: {
+          depth: 4,
+          direction: 'incoming',
+          filters: { searchQuery: '', showTags: false, existingFilesOnly: true, showOrphans: false },
+          display: { arrows: true, textFadeThreshold: 0.3, nodeSize: 1.4, linkThickness: 1.1 },
+          forces: { centerForce: 0.1, repelForce: 140, linkForce: 0.5, linkDistance: 50 },
+        },
+      })
+    )
+
+    const wrapper = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+
+    await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="panel-tab-local-graph"]').trigger('click')
+    await nextTick()
+
+    const globalView = wrapper.find('[data-testid="graph-view"]')
+    const localView = wrapper.find('[data-testid="local-graph-view"]')
+    const globalSim = simulationRecords[0]
+    const localSim = simulationRecords[1]
+
+    // Open settings in Global, add & configure two groups, then change Global Display and Forces
+    await globalView.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    await globalView.find('[data-testid="graph-section-groups"]').trigger('click')
+    await globalView.find('[data-testid="graph-group-add"]').trigger('click')
+    await nextTick()
+
+    const addedQueryInput = globalView.find('[data-testid="graph-group-query-group-1"]')
+    const addedColorInput = globalView.find('[data-testid="graph-group-color-group-1"]')
+    await addedQueryInput.setValue('path:Personagens')
+    await addedColorInput.setValue('#e06c75')
+    await nextTick()
+
+    await globalView.find('[data-testid="graph-section-display"]').trigger('click')
+    await globalView.find('[data-testid="graph-display-arrows"]').setValue(true)
+    await globalView.find('[data-testid="graph-display-node-size"]').setValue('1.9')
+    await globalView.find('[data-testid="graph-section-forces"]').trigger('click')
+    await globalView.find('[data-testid="graph-force-repel"]').setValue('310')
+    await nextTick()
+
+    // Global & Local share Groups, while Forces/Display stay view-specific
+    const localGraphVm = wrapper.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'local')
+    const globalGraphVm = wrapper.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'global')
+    expect(globalGraphVm.props('groupColors')['note:Personagens/Heroi.md']).toBe('#e06c75')
+    expect(localGraphVm.props('groupColors')['note:Personagens/Heroi.md']).toBe('#e06c75')
+    expect(globalGraphVm.props('display').arrows).toBe(true)
+    expect(localGraphVm.props('display').arrows).toBe(false)
+    expect(globalSim.force('charge').strength()()).toBeCloseTo(-310, 5)
+    expect(localSim.force('charge').strength()()).toBeCloseTo(-165, 5)
+    expect(simulationRecords).toHaveLength(2)
+
+    // Modify Local display & depth independently and ensure narrow 200px sidebar width works with controls open
+    await localView.find('[data-testid="graph-local-depth"]').setValue('2')
+    await localView.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    await localView.find('[data-testid="graph-section-display"]').trigger('click')
+    await localView.find('[data-testid="graph-display-text-fade"]').setValue('1.25')
+    await nextTick()
+    expect(localGraphVm.props('display').textFadeThreshold).toBeCloseTo(1.25, 3)
+    expect(globalGraphVm.props('display').textFadeThreshold).toBeCloseTo(0.48, 3)
+
+    // Unmount and remount VAULT_A -> persisted groups, global display/forces, and local display/depth survive reload
+    wrapper.unmount()
+    const reloaded = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+    await reloaded.find('[data-file-path="Historia.md"]').trigger('click')
+    await flushPromises()
+    await reloaded.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+    await reloaded.find('[data-testid="panel-tab-local-graph"]').trigger('click')
+    await nextTick()
+
+    const reloadedGlobal = reloaded.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'global')
+    const reloadedLocal = reloaded.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'local')
+    expect(reloadedGlobal.props('groups')).toEqual([
+      { id: 'group-1', query: 'path:Personagens', color: '#e06c75' },
+    ])
+    expect(reloadedGlobal.props('display').arrows).toBe(true)
+    expect(reloadedGlobal.props('display').nodeSize).toBeCloseTo(1.9, 3)
+    expect(reloadedGlobal.props('forces').repelForce).toBe(310)
+    expect(reloadedLocal.props('localDepth')).toBe(2)
+    expect(reloadedLocal.props('display').textFadeThreshold).toBeCloseTo(1.25, 3)
+
+    // Switch to VAULT_B -> restores VAULT_B's stored settings without overwriting VAULT_A or VAULT_B
+    const vaultASnapshotBefore = localStorage.getItem(`ayame:graph-settings:${VAULT_A.directory}`)
+    await reloaded.setProps({ vault: VAULT_B })
+    await flushPromises()
+    await reloaded.find('[data-testid="open-graph-button"]').trigger('click')
+    await nextTick()
+
+    const vaultBGlobal = reloaded.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'global')
+    const vaultBLocal = reloaded.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'local')
+    expect(vaultBGlobal.props('groups')).toEqual([{ id: 'vb-1', query: 'Extra', color: '#56b6c2' }])
+    expect(vaultBGlobal.props('display').nodeSize).toBeCloseTo(0.8, 3)
+    expect(vaultBLocal.props('localDepth')).toBe(4)
+    expect(vaultBLocal.props('localDirection')).toBe('incoming')
+    expect(localStorage.getItem(`ayame:graph-settings:${VAULT_A.directory}`)).toBe(vaultASnapshotBefore)
+
+    // Restore default settings in VAULT_B Global -> resets Global while preserving groups and Local settings
+    await reloaded.find('[data-testid="graph-view"] [data-testid="graph-filters-toggle"]').trigger('click')
+    await reloaded.find('[data-testid="graph-view"] [data-testid="graph-restore-defaults"]').trigger('click')
+    await nextTick()
+    expect(vaultBGlobal.props('display').nodeSize).toBe(1)
+    expect(vaultBGlobal.props('groups')).toHaveLength(1)
+    expect(vaultBLocal.props('localDepth')).toBe(4)
+
+    // Storage failure degrades gracefully in memory and surfaces discreet warning without claiming persisted
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+    await reloaded.find('[data-testid="graph-view"] [data-testid="graph-section-display"]').trigger('click')
+    await reloaded.find('[data-testid="graph-view"] [data-testid="graph-display-arrows"]').setValue(true)
+    await nextTick()
+    expect(vaultBGlobal.props('display').arrows).toBe(true)
+    expect(reloaded.find('[data-testid="graph-view"] [data-testid="graph-storage-warning"]').exists()).toBe(true)
+    setItemSpy.mockRestore()
+
+    reloaded.unmount()
   })
 })

@@ -83,7 +83,7 @@ const normalizeDisplay = (raw) => {
   }
 }
 
-const normalizeForces = (raw) => {
+export const normalizeForces = (raw) => {
   const src = isPlainObject(raw) ? raw : {}
   return {
     centerForce: normalizeNumber(src.centerForce, GRAPH_FORCE_LIMITS.centerForce),

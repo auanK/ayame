@@ -18,7 +18,16 @@ import {
 import { calculateContextMenuPosition } from './contextMenuPosition.js'
 import { useAyameRouter, validateNoteQueryParam } from '../router/index.js'
 import { buildGraphModel } from './graphModel.js'
-import { createDefaultGraphFilters, projectGraphView } from './graphSelection.js'
+import { projectGraphView } from './graphSelection.js'
+import {
+  normalizeGraphSettings,
+  loadGraphSettings,
+  saveGraphSettings,
+  updateGraphViewSettings,
+  resetGraphViewSettings,
+  resetGraphGroups,
+  evaluateGraphGroups,
+} from './graphSettings.js'
 import MarkdownViewer from '../markdown/MarkdownViewer.vue'
 import GraphView from './GraphView.vue'
 
@@ -248,17 +257,43 @@ const indexError = ref(false)
 const graphModel = computed(() => buildGraphModel(vaultIndexData.value))
 const globalGraphRef = ref(null)
 const localGraphRef = ref(null)
-const globalGraphFilters = ref(createDefaultGraphFilters())
-const localGraphFilters = ref(createDefaultGraphFilters())
-const localGraphDepth = ref(1)
-const localGraphDirection = ref('both')
+const initialGraphLoad = loadGraphSettings(props.vault.directory)
+const graphSettings = ref(initialGraphLoad.settings)
+const graphStorageWarning = ref(initialGraphLoad.error || '')
+
+const commitGraphSettings = (nextSettings) => {
+  const saved = saveGraphSettings(props.vault.directory, nextSettings)
+  graphSettings.value = saved.settings
+  graphStorageWarning.value = saved.ok ? '' : saved.error || 'Could not save graph settings.'
+}
+
+const handleUpdateGraphView = (mode, patch) => {
+  commitGraphSettings(updateGraphViewSettings(graphSettings.value, mode, patch))
+}
+
+const handleUpdateGraphGroups = (nextGroups) => {
+  commitGraphSettings(
+    normalizeGraphSettings({
+      ...graphSettings.value,
+      groups: nextGroups,
+    })
+  )
+}
+
+const handleRestoreGraphDefaults = (mode) => {
+  commitGraphSettings(resetGraphViewSettings(graphSettings.value, mode))
+}
+
+const handleResetGraphGroups = () => {
+  commitGraphSettings(resetGraphGroups(graphSettings.value))
+}
 
 const globalGraphView = computed(() =>
   projectGraphView({
     baseGraph: graphModel.value,
     vaultIndex: vaultIndexData.value,
     mode: 'global',
-    filters: globalGraphFilters.value,
+    filters: graphSettings.value.global.filters,
   })
 )
 
@@ -268,10 +303,26 @@ const localGraphView = computed(() =>
     vaultIndex: vaultIndexData.value,
     mode: 'local',
     centerPath: selectedFile.value,
-    depth: localGraphDepth.value,
-    direction: localGraphDirection.value,
-    filters: localGraphFilters.value,
+    depth: graphSettings.value.local.depth,
+    direction: graphSettings.value.local.direction,
+    filters: graphSettings.value.local.filters,
   })
+)
+
+const globalGroupEvaluation = computed(() =>
+  evaluateGraphGroups(
+    graphSettings.value.groups,
+    globalGraphView.value.nodes,
+    vaultIndexData.value.tagsByFile
+  )
+)
+
+const localGroupEvaluation = computed(() =>
+  evaluateGraphGroups(
+    graphSettings.value.groups,
+    localGraphView.value.nodes,
+    vaultIndexData.value.tagsByFile
+  )
 )
 
 // Vault Settings & Modals
@@ -2353,10 +2404,9 @@ watch(
     openTabs.value = []
     graphTabOpen.value = false
     activeWorkspaceView.value = 'note'
-    globalGraphFilters.value = createDefaultGraphFilters()
-    localGraphFilters.value = createDefaultGraphFilters()
-    localGraphDepth.value = 1
-    localGraphDirection.value = 'both'
+    const loadedGraph = loadGraphSettings(props.vault.directory)
+    graphSettings.value = loadedGraph.settings
+    graphStorageWarning.value = loadedGraph.error || ''
     indexLoading.value = false
     indexError.value = false
     navHistory.value = []
@@ -3273,10 +3323,21 @@ defineExpose({
           :loading="indexLoading"
           :error="indexError"
           :active-note-path="selectedFile"
-          :filters="globalGraphFilters"
+          :filters="graphSettings.global.filters"
+          :groups="graphSettings.groups"
+          :group-colors="globalGroupEvaluation.colorsByNodeId"
+          :group-errors="globalGroupEvaluation.errorsByGroupId"
+          :display="graphSettings.global.display"
+          :forces="graphSettings.global.forces"
+          :storage-warning="graphStorageWarning"
           @open-note="openNoteFromGraph"
           @retry="retryVaultIndex"
-          @update:filters="globalGraphFilters = $event"
+          @update:filters="handleUpdateGraphView('global', { filters: $event })"
+          @update:groups="handleUpdateGraphGroups"
+          @update:display="handleUpdateGraphView('global', { display: $event })"
+          @update:forces="handleUpdateGraphView('global', { forces: $event })"
+          @restore-defaults="handleRestoreGraphDefaults('global')"
+          @reset-groups="handleResetGraphGroups"
         />
 
         <div
@@ -3544,14 +3605,25 @@ defineExpose({
               :loading="indexLoading"
               :error="indexError"
               :active-note-path="selectedFile"
-              :filters="localGraphFilters"
-              :local-depth="localGraphDepth"
-              :local-direction="localGraphDirection"
+              :filters="graphSettings.local.filters"
+              :local-depth="graphSettings.local.depth"
+              :local-direction="graphSettings.local.direction"
+              :groups="graphSettings.groups"
+              :group-colors="localGroupEvaluation.colorsByNodeId"
+              :group-errors="localGroupEvaluation.errorsByGroupId"
+              :display="graphSettings.local.display"
+              :forces="graphSettings.local.forces"
+              :storage-warning="graphStorageWarning"
               @open-note="openNoteFromGraph"
               @retry="retryVaultIndex"
-              @update:filters="localGraphFilters = $event"
-              @update:local-depth="localGraphDepth = $event"
-              @update:local-direction="localGraphDirection = $event"
+              @update:filters="handleUpdateGraphView('local', { filters: $event })"
+              @update:local-depth="handleUpdateGraphView('local', { depth: $event })"
+              @update:local-direction="handleUpdateGraphView('local', { direction: $event })"
+              @update:groups="handleUpdateGraphGroups"
+              @update:display="handleUpdateGraphView('local', { display: $event })"
+              @update:forces="handleUpdateGraphView('local', { forces: $event })"
+              @restore-defaults="handleRestoreGraphDefaults('local')"
+              @reset-groups="handleResetGraphGroups"
             />
           </div>
         </div>
