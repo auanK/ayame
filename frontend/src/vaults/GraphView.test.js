@@ -549,7 +549,6 @@ describe('GraphView.vue', () => {
     const globalGraph = projectGraphView({
       baseGraph,
       vaultIndex: index,
-      mode: 'global',
       filters: activeFilters,
     })
 
@@ -596,7 +595,7 @@ describe('GraphView.vue', () => {
     expect(emittedFilters[emittedFilters.length - 1][0]).toEqual(createDefaultGraphFilters())
 
     // Switching filters prop to default hides inline Reset action cleanly
-    const defaultGlobalGraph = projectGraphView({ baseGraph, vaultIndex: index, mode: 'global' })
+    const defaultGlobalGraph = projectGraphView({ baseGraph, vaultIndex: index })
     await wrapper.setProps({
       graph: defaultGlobalGraph,
       filters: createDefaultGraphFilters(),
@@ -617,7 +616,7 @@ describe('GraphView.vue', () => {
     // Filtered-empty state in Global Graph remains recoverable via Clear filters
     const emptyFilters = { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' }
     await wrapper.setProps({
-      graph: projectGraphView({ baseGraph, vaultIndex: index, mode: 'global', filters: emptyFilters }),
+      graph: projectGraphView({ baseGraph, vaultIndex: index, filters: emptyFilters }),
       filters: emptyFilters,
     })
     await nextTick()
@@ -643,7 +642,6 @@ describe('GraphView.vue', () => {
     const graphWithAllTypes = projectGraphView({
       baseGraph,
       vaultIndex: index,
-      mode: 'global',
       filters: {
         searchQuery: 'line:invalid',
         showTags: true,
@@ -763,7 +761,6 @@ describe('GraphView.vue', () => {
     const graph = projectGraphView({
       baseGraph: base,
       vaultIndex: index,
-      mode: 'global',
       filters: { ...createDefaultGraphFilters(), showTags: true, existingFilesOnly: false },
     })
 
@@ -861,7 +858,7 @@ describe('GraphView.vue', () => {
   it('updates live D3 forces without recreating simulation and affects physical layout predictably', async () => {
     const index = sampleIndex()
     const base = buildGraphModel(index)
-    const graph = projectGraphView({ baseGraph: base, vaultIndex: index, mode: 'global' })
+    const graph = projectGraphView({ baseGraph: base, vaultIndex: index })
 
     const wrapper = mount(GraphView, {
       props: {
@@ -933,7 +930,7 @@ describe('GraphView.vue', () => {
   it('exposes Groups, Display, Forces, and Restore default settings controls and emits clean updates', async () => {
     const index = sampleIndex()
     const base = buildGraphModel(index)
-    const graph = projectGraphView({ baseGraph: base, vaultIndex: index, mode: 'global' })
+    const graph = projectGraphView({ baseGraph: base, vaultIndex: index })
 
     const wrapper = mount(GraphView, {
       props: {
@@ -1448,7 +1445,7 @@ describe('GraphView.vue', () => {
 
     const index = sampleIndex()
     const baseGraph = buildGraphModel(index)
-    const initialGraph = projectGraphView({ baseGraph, vaultIndex: index, mode: 'global' })
+    const initialGraph = projectGraphView({ baseGraph, vaultIndex: index })
 
     const wrapper = mount(GraphView, {
       props: {
@@ -1493,7 +1490,6 @@ describe('GraphView.vue', () => {
     const filteredGraph = projectGraphView({
       baseGraph,
       vaultIndex: index,
-      mode: 'global',
       filters: filtersNoOrphans,
     })
     expect(filteredGraph.nodes.some((n) => n.path === 'Isolada.md')).toBe(false)
@@ -1553,7 +1549,6 @@ describe('GraphView.vue', () => {
     const heroiOnlyGraph = projectGraphView({
       baseGraph,
       vaultIndex: index,
-      mode: 'global',
       filters: searchFilters,
     })
     expect(heroiOnlyGraph.nodes.some((n) => n.path === 'Historia.md')).toBe(false)
@@ -1581,7 +1576,7 @@ describe('GraphView.vue', () => {
 
   it('ignores stale pointer events cleanly when switching vaults mid-drag without leaking alphaTarget or affecting new graph nodes', async () => {
     const indexA = sampleIndex()
-    const graphA = projectGraphView({ baseGraph: buildGraphModel(indexA), vaultIndex: indexA, mode: 'global' })
+    const graphA = projectGraphView({ baseGraph: buildGraphModel(indexA), vaultIndex: indexA })
 
     const indexB = buildVaultIndex({
       directory: 'C:/vaults/other',
@@ -1593,7 +1588,7 @@ describe('GraphView.vue', () => {
         { path: 'Beta.md', content: 'Leaf.', mtimeMs: 2000 },
       ],
     })
-    const graphB = projectGraphView({ baseGraph: buildGraphModel(indexB), vaultIndex: indexB, mode: 'global' })
+    const graphB = projectGraphView({ baseGraph: buildGraphModel(indexB), vaultIndex: indexB })
 
     const wrapper = mount(GraphView, {
       props: {

@@ -120,7 +120,7 @@ describe('graphSelection', () => {
       )
       expect(hiddenOrphans.nodes.map((n) => n.id)).toEqual(['note:A.md', 'note:B.md'])
 
-      // Connected note B keeps surviving when search hides A (originalDegree === 1 > 0)
+      // Connected note B keeps surviving when search hides A (note degree > 0 in base topology)
       const searchBWithoutOrphans = applyGraphFilters(
         base,
         {
@@ -264,7 +264,7 @@ describe('graphSelection', () => {
           existingFilesOnly: false,
         },
       })
-      expect(noOrphans.nodes.map((n) => n.path)).toEqual(['Falta.md', 'Heroi.md', 'Historia.md'])
+      expect(noOrphans.nodes.map((n) => n.path)).toEqual(['Heroi.md', 'Historia.md', 'Falta.md'])
 
       // Global search keeps strict exclusion when nothing matches
       const globalEmptyOnNoMatch = projectGraphView({

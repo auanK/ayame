@@ -292,7 +292,6 @@ const globalGraphView = computed(() =>
   projectGraphView({
     baseGraph: graphModel.value,
     vaultIndex: vaultIndexData.value,
-    mode: 'global',
     filters: graphSettings.value.global.filters,
   })
 )

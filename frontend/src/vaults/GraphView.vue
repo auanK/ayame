@@ -1,3 +1,7 @@
+<script>
+let graphInstanceSeq = 0
+</script>
+
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import {
@@ -20,8 +24,6 @@ import {
   stepExponentialZoom,
   anchorViewportOffset,
 } from './graphSettings.js'
-
-let graphLocatorInstanceSeq = 0
 
 const props = defineProps({
   graph: {
@@ -91,7 +93,9 @@ const ZOOM_TAU_MS = 100
 const DRAG_THRESHOLD_PX = 4
 const LOCATOR_LIMIT = 12
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
-const locatorListId = `graph-locator-results-${++graphLocatorInstanceSeq}`
+const instanceSeq = ++graphInstanceSeq
+const locatorListId = `graph-locator-results-${instanceSeq}`
+const settingsPanelId = `graph-settings-panel-${instanceSeq}`
 
 const containerRef = ref(null)
 const stageRef = ref(null)
@@ -1063,16 +1067,87 @@ const closeLocator = () => {
   }
 }
 
+const getPopoverElement = () => {
+  const target = settingsPopoverRef.value
+  if (!target) return null
+  return target.$el || target
+}
+
+const isEscapeKey = (event) =>
+  Boolean(event) &&
+  (event.key === 'Escape' ||
+    event.key === 'Esc' ||
+    event.key?.toLowerCase?.() === 'esc' ||
+    event.keyCode === 27)
+
+const isContainerVisible = () => {
+  let cur = containerRef.value
+  while (cur && cur.nodeType === 1) {
+    if (cur.hidden || cur.style?.display === 'none') return false
+    cur = cur.parentElement
+  }
+  return Boolean(containerRef.value)
+}
+
+const closeSettingsPopover = ({ restoreFocus = false } = {}) => {
+  if (!filtersOpen.value) return
+  filtersOpen.value = false
+  if (!restoreFocus || isUnmounted) return
+  const toggle = settingsToggleRef.value
+  if (toggle && typeof toggle.focus === 'function') {
+    toggle.focus()
+  }
+}
+
+const handleLocatorEscape = (event) => {
+  if (!locatorOpen.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  closeLocator()
+}
+
+const handleEscapeKey = (event) => {
+  if (isUnmounted || event.defaultPrevented || !isEscapeKey(event)) return
+  if (locatorOpen.value) {
+    event.preventDefault()
+    event.stopPropagation()
+    closeLocator()
+    return
+  }
+  if (!filtersOpen.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  closeSettingsPopover({ restoreFocus: true })
+}
+
+const handleContainerKeydown = (event) => {
+  handleEscapeKey(event)
+}
+
+const handleDocumentKeydown = (event) => {
+  if (isUnmounted || event.defaultPrevented || !isEscapeKey(event)) return
+  if (!filtersOpen.value && !locatorOpen.value) return
+  if (!isContainerVisible()) return
+  const target = event.target
+  const inContainer = Boolean(containerRef.value && target && containerRef.value.contains(target))
+  const onDocumentFallback =
+    target === document || target === document.body || target === document.documentElement
+  if (!inContainer && !onDocumentFallback) return
+  handleEscapeKey(event)
+}
+
 const handleDocumentPointerDown = (event) => {
+  if (isUnmounted) return
   if (locatorOpen.value && locatorRef.value && !locatorRef.value.contains(event.target)) {
     closeLocator()
   }
+  const popoverEl = getPopoverElement()
   if (
     filtersOpen.value &&
-    !settingsPopoverRef.value?.contains(event.target) &&
-    !settingsToggleRef.value?.contains(event.target)
+    !popoverEl?.contains?.(event.target) &&
+    !settingsToggleRef.value?.contains?.(event.target)
   ) {
-    filtersOpen.value = false
+    closeSettingsPopover({ restoreFocus: false })
   }
 }
 
@@ -1124,6 +1199,17 @@ watch(
   { deep: true }
 )
 
+watch(showOverlayControls, (visible) => {
+  if (!visible) filtersOpen.value = false
+})
+
+watch(
+  () => props.vaultDirectory,
+  () => {
+    filtersOpen.value = false
+  }
+)
+
 onMounted(() => {
   isUnmounted = false
   syncSimulationWithModel(props.graph)
@@ -1138,12 +1224,14 @@ onMounted(() => {
   }
   window.addEventListener('resize', updateCanvasSize)
   window.addEventListener('blur', handleWindowBlur)
+  document.addEventListener('keydown', handleDocumentKeydown)
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onUnmounted(() => {
   isUnmounted = true
+  filtersOpen.value = false
   cancelActiveInteraction()
   cancelCameraAnimation()
   cancelPendingDraw()
@@ -1154,6 +1242,7 @@ onUnmounted(() => {
   }
   window.removeEventListener('resize', updateCanvasSize)
   window.removeEventListener('blur', handleWindowBlur)
+  document.removeEventListener('keydown', handleDocumentKeydown)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   simNodes = []
@@ -1173,6 +1262,7 @@ defineExpose({
     class="graph-view"
     data-testid="graph-view"
     aria-label="Global graph view"
+    @keydown="handleContainerKeydown"
   >
     <div ref="stageRef" class="graph-stage">
       <!-- Floating top overlay HUD: unobtrusive locator on left, gear trigger + corner popover on right -->
@@ -1196,7 +1286,7 @@ defineExpose({
             @keydown.down.prevent="moveLocatorSelection(1)"
             @keydown.up.prevent="moveLocatorSelection(-1)"
             @keydown.enter.prevent="openHighlightedMatch"
-            @keydown.esc.prevent="closeLocator"
+            @keydown.esc="handleLocatorEscape"
           />
           <ul
             v-if="locatorOpen && locatorMatches.length > 0"
@@ -1244,6 +1334,7 @@ defineExpose({
             aria-label="Graph settings"
             title="Graph settings"
             :aria-expanded="filtersOpen ? 'true' : 'false'"
+            :aria-controls="settingsPanelId"
             @click="filtersOpen = !filtersOpen"
           >
             <svg
@@ -1267,27 +1358,24 @@ defineExpose({
             />
           </button>
 
-          <div
+          <GraphControls
             v-if="filtersOpen"
             ref="settingsPopoverRef"
             class="graph-settings-popover"
-          >
-            <GraphControls
-              :filters="filters"
-              :query-error="queryError"
-              :groups="groups"
-              :group-errors="groupErrors"
-              :display="display"
-              :forces="forces"
-              @update:filters="emit('update:filters', $event)"
-              @update:groups="emit('update:groups', $event)"
-              @update:display="emit('update:display', $event)"
-              @update:forces="emit('update:forces', $event)"
-              @restore-defaults="emit('restore-defaults')"
-              @reset-groups="emit('reset-groups')"
-              @close="filtersOpen = false"
-            />
-          </div>
+            :panel-id="settingsPanelId"
+            :filters="filters"
+            :query-error="queryError"
+            :groups="groups"
+            :group-errors="groupErrors"
+            :display="display"
+            :forces="forces"
+            @update:filters="emit('update:filters', $event)"
+            @update:groups="emit('update:groups', $event)"
+            @update:display="emit('update:display', $event)"
+            @update:forces="emit('update:forces', $event)"
+            @restore-defaults="emit('restore-defaults')"
+            @reset-groups="emit('reset-groups')"
+          />
         </div>
       </div>
 
@@ -1444,9 +1532,7 @@ defineExpose({
 
 .graph-hud {
   position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
-  right: 0.75rem;
+  inset: 0.75rem;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1456,7 +1542,6 @@ defineExpose({
 }
 
 .graph-settings-anchor {
-  position: relative;
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -1488,6 +1573,13 @@ defineExpose({
   border-color: rgba(169, 154, 202, 0.45);
 }
 
+.graph-filters-toggle:focus-visible {
+  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline-offset: 2px;
+  border-color: var(--ayame-primary, #a99aca);
+  color: var(--ayame-text, #eeeaf3);
+}
+
 .graph-filters-toggle--active {
   color: var(--ayame-lavender, #d4cbe4);
   border-color: rgba(169, 154, 202, 0.55);
@@ -1505,9 +1597,14 @@ defineExpose({
 
 .graph-settings-popover {
   position: absolute;
-  top: calc(100% + 0.4rem);
+  top: calc(32px + 0.4rem);
   right: 0;
+  width: min(308px, 100%);
+  max-width: 100%;
+  max-height: min(390px, calc(100% - 32px - 0.5rem));
+  min-width: 0;
   z-index: 25;
+  pointer-events: auto;
 }
 
 .graph-stage {
@@ -1561,8 +1658,8 @@ defineExpose({
 .graph-locator {
   position: relative;
   flex: 0 1 220px;
-  min-width: 130px;
-  max-width: 240px;
+  min-width: 0;
+  max-width: 220px;
   pointer-events: auto;
   z-index: 18;
 }
@@ -1594,7 +1691,8 @@ defineExpose({
   top: 100%;
   left: 0;
   right: 0;
-  min-width: 170px;
+  min-width: 0;
+  width: 100%;
   list-style: none;
   margin: 0.25rem 0 0;
   padding: 0.25rem;

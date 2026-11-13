@@ -2,7 +2,6 @@ import { resolvePendingLinkCreationTarget } from '../markdown/links.js'
 import { matchesTagQuery, validateTagName } from '../markdown/properties.js'
 
 const SUPPORTED_OPERATORS = new Set(['file', 'path', 'tag'])
-const VALID_DIRECTIONS = new Set(['both', 'incoming', 'outgoing'])
 
 export const DEFAULT_GRAPH_FILTERS = Object.freeze({
   searchQuery: '',
@@ -36,23 +35,6 @@ const sortEdges = (edges) =>
       compareStrings(a.type || '', b.type || '')
   )
 
-const cloneEmptyGraph = (graph, extras = {}) => ({
-  nodes: [],
-  edges: [],
-  complete: Boolean(graph?.complete),
-  failures: Array.isArray(graph?.failures) ? [...graph.failures] : [],
-  ...extras,
-})
-
-const clampDepth = (rawDepth) => {
-  const numeric = Number(rawDepth)
-  if (!Number.isFinite(numeric)) return 1
-  return Math.min(5, Math.max(1, Math.round(numeric)))
-}
-
-const normalizeDirection = (rawDirection) =>
-  VALID_DIRECTIONS.has(rawDirection) ? rawDirection : 'both'
-
 const recomputeDegrees = (nodes, edges) => {
   const counts = new Map()
   for (const edge of edges) {
@@ -65,147 +47,6 @@ const recomputeDegrees = (nodes, edges) => {
     ...node,
     degree: counts.get(node.id) || 0,
   }))
-}
-
-/**
- * Derive a breadth-first local neighborhood around `centerPath` without
- * mutating the source global graph model.
- */
-export const deriveLocalGraph = (baseGraph, { centerPath, depth = 1, direction = 'both' } = {}) => {
-  const maxDepth = clampDepth(depth)
-  const policy = normalizeDirection(direction)
-
-  if (!centerPath || typeof centerPath !== 'string') {
-    return cloneEmptyGraph(baseGraph, {
-      centerId: null,
-      centerPath: null,
-      centerMissing: false,
-      depth: maxDepth,
-      direction: policy,
-      reason: 'no-center',
-    })
-  }
-
-  const centerId = `note:${centerPath}`
-  const sourceNodes = Array.isArray(baseGraph?.nodes) ? baseGraph.nodes : []
-  const sourceEdges = Array.isArray(baseGraph?.edges) ? baseGraph.edges : []
-  const nodeById = new Map()
-  for (const node of sourceNodes) {
-    if (node?.id) nodeById.set(node.id, node)
-  }
-
-  if (!nodeById.has(centerId)) {
-    return cloneEmptyGraph(baseGraph, {
-      centerId,
-      centerPath,
-      centerMissing: true,
-      depth: maxDepth,
-      direction: policy,
-      reason: 'center-missing',
-    })
-  }
-
-  const outgoing = new Map()
-  const incoming = new Map()
-  const addAdj = (map, from, to) => {
-    let set = map.get(from)
-    if (!set) {
-      set = new Set()
-      map.set(from, set)
-    }
-    set.add(to)
-  }
-
-  for (const edge of sourceEdges) {
-    const src = endpointId(edge?.source)
-    const dst = endpointId(edge?.target)
-    if (!src || !dst || !nodeById.has(src) || !nodeById.has(dst)) continue
-    addAdj(outgoing, src, dst)
-    addAdj(incoming, dst, src)
-  }
-
-  const depthById = new Map([[centerId, 0]])
-  const queue = [centerId]
-  let head = 0
-
-  while (head < queue.length) {
-    const currentId = queue[head++]
-    const currentDepth = depthById.get(currentId)
-    if (currentDepth >= maxDepth) continue
-
-    if (policy === 'outgoing' || policy === 'both') {
-      const outs = outgoing.get(currentId)
-      if (outs) {
-        for (const nextId of outs) {
-          if (!depthById.has(nextId)) {
-            depthById.set(nextId, currentDepth + 1)
-            queue.push(nextId)
-          }
-        }
-      }
-    }
-
-    if (policy === 'incoming' || policy === 'both') {
-      const ins = incoming.get(currentId)
-      if (ins) {
-        for (const prevId of ins) {
-          if (!depthById.has(prevId)) {
-            depthById.set(prevId, currentDepth + 1)
-            queue.push(prevId)
-          }
-        }
-      }
-    }
-  }
-
-  const includedEdges = []
-  const seenEdges = new Set()
-  for (const edge of sourceEdges) {
-    const src = endpointId(edge?.source)
-    const dst = endpointId(edge?.target)
-    if (!depthById.has(src) || !depthById.has(dst)) continue
-
-    let allowed = false
-    if (policy === 'both') {
-      allowed = true
-    } else if (policy === 'outgoing') {
-      allowed = depthById.get(src) < maxDepth
-    } else if (policy === 'incoming') {
-      allowed = depthById.get(dst) < maxDepth
-    }
-
-    if (!allowed) continue
-    const edgeKey = `${src}\0${dst}\0${edge?.type || ''}`
-    if (seenEdges.has(edgeKey)) continue
-    seenEdges.add(edgeKey)
-    includedEdges.push({ source: src, target: dst })
-  }
-
-  const clonedNodes = []
-  for (const [id, nodeDepth] of depthById.entries()) {
-    const original = nodeById.get(id)
-    clonedNodes.push({
-      ...original,
-      originalDegree: original.originalDegree ?? original.degree ?? 0,
-      depth: nodeDepth,
-    })
-  }
-
-  const sortedEdges = sortEdges(includedEdges)
-  const nodesWithDegree = recomputeDegrees(sortNodes(clonedNodes), sortedEdges)
-
-  return {
-    nodes: nodesWithDegree,
-    edges: sortedEdges,
-    complete: Boolean(baseGraph?.complete),
-    failures: Array.isArray(baseGraph?.failures) ? [...baseGraph.failures] : [],
-    centerId,
-    centerPath,
-    centerMissing: false,
-    depth: maxDepth,
-    direction: policy,
-    reason: null,
-  }
 }
 
 const tokenizeSearchInput = (raw) => {
@@ -460,22 +301,15 @@ export const applyGraphFilters = (graph, rawFilters = {}, vaultIndex = {}) => {
 
   const keptNotes = []
   const keptNoteIds = new Set()
-  const hasValidLocalCenter = Boolean(graph?.centerId && !graph?.centerMissing)
 
   for (const node of noteNodes) {
-    const originalDegree = node.originalDegree ?? node.degree ?? 0
-    // In a valid local neighborhood, the center note is an obligatory structural anchor
-    // and must survive Orphans and Search files without altering its originalDegree.
-    const isLocalCenter = hasValidLocalCenter && node.id === graph.centerId
-    if (!isLocalCenter) {
-      if (filters.showOrphans === false && originalDegree === 0) continue
-      if (parsedQuery.valid && !parsedQuery.isEmpty) {
-        if (!noteMatchesTerms(node, parsedQuery.terms, tagsByFile)) continue
-      }
+    const baseDegree = node.degree ?? 0
+    if (filters.showOrphans === false && baseDegree === 0) continue
+    if (parsedQuery.valid && !parsedQuery.isEmpty) {
+      if (!noteMatchesTerms(node, parsedQuery.terms, tagsByFile)) continue
     }
     keptNotes.push({
       ...node,
-      originalDegree,
       type: 'note',
     })
     keptNoteIds.add(node.id)
@@ -499,12 +333,10 @@ export const applyGraphFilters = (graph, rawFilters = {}, vaultIndex = {}) => {
 
   const finalNodes = [...keptNotes]
 
-  if (filters.existingFilesOnly === false && graph?.direction !== 'incoming') {
+  if (filters.existingFilesOnly === false) {
     const unresolvedMap = new Map()
-    const maxLocalDepth = graph?.depth
 
     for (const note of keptNotes) {
-      if (maxLocalDepth != null && (note.depth ?? 0) >= maxLocalDepth) continue
       const refs = outgoingByFile[note.path]
       if (!Array.isArray(refs)) continue
 
@@ -575,7 +407,6 @@ export const applyGraphFilters = (graph, rawFilters = {}, vaultIndex = {}) => {
 
   const sortedEdges = sortEdges(finalEdges)
   const nodesWithDegree = recomputeDegrees(sortNodes(finalNodes), sortedEdges)
-  const keptNoteCount = keptNotes.length
 
   return {
     nodes: nodesWithDegree,
@@ -586,35 +417,15 @@ export const applyGraphFilters = (graph, rawFilters = {}, vaultIndex = {}) => {
     queryError: parsedQuery.error,
     rawNodeCount: rawNoteCount,
     filteredOut: rawNoteCount > 0 && nodesWithDegree.length === 0,
-    filtersRemovedOthers:
-      Boolean(graph?.centerId) &&
-      rawNoteCount > 1 &&
-      keptNoteCount === 1 &&
-      keptNotes[0]?.id === graph.centerId,
-    centerId: graph?.centerId || null,
-    centerPath: graph?.centerPath || null,
-    centerMissing: Boolean(graph?.centerMissing),
-    reason:
-      graph?.reason ||
-      (rawNoteCount > 0 && nodesWithDegree.length === 0 ? 'filtered-empty' : null),
+    reason: rawNoteCount > 0 && nodesWithDegree.length === 0 ? 'filtered-empty' : null,
   }
 }
 
 /**
- * Project either the global or local graph with filters cleanly isolated from base state.
+ * Project the Global Graph with active filters cleanly isolated from base state.
  */
 export const projectGraphView = ({
   baseGraph,
   vaultIndex,
-  mode = 'global',
-  centerPath = null,
-  depth = 1,
-  direction = 'both',
   filters = DEFAULT_GRAPH_FILTERS,
-} = {}) => {
-  const scoped =
-    mode === 'local'
-      ? deriveLocalGraph(baseGraph, { centerPath, depth, direction })
-      : baseGraph
-  return applyGraphFilters(scoped, filters, vaultIndex)
-}
+} = {}) => applyGraphFilters(baseGraph, filters, vaultIndex)

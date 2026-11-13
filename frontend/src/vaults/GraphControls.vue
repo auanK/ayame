@@ -36,6 +36,10 @@ const props = defineProps({
     type: Object,
     default: () => createDefaultGraphSettings().global.forces,
   },
+  panelId: {
+    type: String,
+    default: 'graph-settings-panel',
+  },
 })
 
 const emit = defineEmits([
@@ -45,7 +49,6 @@ const emit = defineEmits([
   'update:forces',
   'restore-defaults',
   'reset-groups',
-  'close',
 ])
 
 const CONTROL_TABS = [
@@ -185,25 +188,27 @@ const handleMoveGroup = (groupId, delta) => {
 
 <template>
   <div
+    :id="panelId"
     class="graph-filters-panel"
     data-testid="graph-filters-panel"
     role="region"
     aria-label="Graph settings"
-    @keydown.esc.stop.prevent="emit('close')"
   >
     <div class="graph-tabs-bar" role="tablist" aria-label="Graph settings categories">
       <button
         v-for="tab in CONTROL_TABS"
+        :id="`${panelId}-tab-${tab.id}`"
         :key="tab.id"
         type="button"
         role="tab"
         class="graph-tab-btn"
         :class="{ 'graph-tab-btn--active': activeTab === tab.id }"
         :data-testid="tab.testid"
+        :aria-controls="`${panelId}-pane-${tab.id}`"
         :aria-selected="activeTab === tab.id ? 'true' : 'false'"
         @click="activeTab = tab.id"
       >
-        <span>{{ tab.label }}</span>
+        <span class="graph-tab-label">{{ tab.label }}</span>
         <span v-if="tab.id === 'groups' && groups.length > 0" class="graph-tab-count">
           ({{ groups.length }})
         </span>
@@ -214,9 +219,11 @@ const handleMoveGroup = (groupId, delta) => {
       <!-- Filters Tab -->
       <section
         v-if="activeTab === 'filters'"
+        :id="`${panelId}-pane-filters`"
         class="graph-tab-pane"
         data-testid="graph-tab-pane-filters"
         role="tabpanel"
+        :aria-labelledby="`${panelId}-tab-filters`"
       >
         <div class="graph-pane-header">
           <span class="graph-pane-title">Filters</span>
@@ -302,9 +309,11 @@ const handleMoveGroup = (groupId, delta) => {
       <!-- Groups Tab -->
       <section
         v-else-if="activeTab === 'groups'"
+        :id="`${panelId}-pane-groups`"
         class="graph-tab-pane"
         data-testid="graph-tab-pane-groups"
         role="tabpanel"
+        :aria-labelledby="`${panelId}-tab-groups`"
       >
         <div class="graph-pane-header">
           <span class="graph-pane-title">Color groups</span>
@@ -409,9 +418,11 @@ const handleMoveGroup = (groupId, delta) => {
       <!-- Display Tab -->
       <section
         v-else-if="activeTab === 'display'"
+        :id="`${panelId}-pane-display`"
         class="graph-tab-pane"
         data-testid="graph-tab-pane-display"
         role="tabpanel"
+        :aria-labelledby="`${panelId}-tab-display`"
       >
         <label class="graph-filter-toggle">
           <input
@@ -449,9 +460,11 @@ const handleMoveGroup = (groupId, delta) => {
       <!-- Forces Tab -->
       <section
         v-else
+        :id="`${panelId}-pane-forces`"
         class="graph-tab-pane"
         data-testid="graph-tab-pane-forces"
         role="tabpanel"
+        :aria-labelledby="`${panelId}-tab-forces`"
       >
         <label
           v-for="slider in FORCE_SLIDERS"
@@ -494,7 +507,8 @@ const handleMoveGroup = (groupId, delta) => {
 .graph-filters-panel {
   display: flex;
   flex-direction: column;
-  width: min(308px, calc(100vw - 2rem));
+  width: 100%;
+  max-width: min(308px, 100%);
   max-height: min(62vh, 390px);
   background: rgba(24, 25, 34, 0.96);
   backdrop-filter: blur(10px);
@@ -508,19 +522,23 @@ const handleMoveGroup = (groupId, delta) => {
 }
 
 .graph-tabs-bar {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.2rem;
   padding: 0.35rem 0.4rem;
   background: rgba(17, 18, 24, 0.7);
   border-bottom: 1px solid var(--ayame-border, #2b2936);
+  flex-shrink: 0;
 }
 
 .graph-tab-btn {
+  flex: 1 1 56px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.18rem;
+  min-width: 0;
+  max-width: 100%;
   padding: 0.3rem 0.25rem;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -529,12 +547,26 @@ const handleMoveGroup = (groupId, delta) => {
   font-size: 0.72rem;
   font-weight: 500;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.graph-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .graph-tab-btn:hover {
   color: var(--ayame-text, #eeeaf3);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.graph-tab-btn:focus-visible {
+  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline-offset: -1px;
+  color: var(--ayame-text, #eeeaf3);
 }
 
 .graph-tab-btn--active {
@@ -547,9 +579,11 @@ const handleMoveGroup = (groupId, delta) => {
 .graph-tab-count {
   color: var(--ayame-primary, #a99aca);
   font-size: 0.68rem;
+  flex-shrink: 0;
 }
 
 .graph-tab-body {
+  flex: 1 1 auto;
   padding: 0.65rem 0.75rem 0.55rem;
   overflow-y: auto;
   overflow-x: hidden;
@@ -565,6 +599,7 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-pane-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
@@ -582,6 +617,7 @@ const handleMoveGroup = (groupId, delta) => {
 .graph-inline-link {
   padding: 0;
   border: none;
+  border-radius: 3px;
   background: transparent;
   color: var(--ayame-text-muted, #aaa6b8);
   font-size: 0.72rem;
@@ -594,6 +630,12 @@ const handleMoveGroup = (groupId, delta) => {
   color: var(--ayame-lavender, #d4cbe4);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+.graph-inline-link:focus-visible {
+  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline-offset: 2px;
+  color: var(--ayame-lavender, #d4cbe4);
 }
 
 .graph-inline-link--accent {
@@ -688,6 +730,15 @@ const handleMoveGroup = (groupId, delta) => {
   background: var(--ayame-hover, #242530);
 }
 
+.graph-filter-clear:focus-visible,
+.graph-group-btn:focus-visible,
+.graph-group-color:focus-visible,
+.graph-range-slider:focus-visible,
+.graph-filter-toggle input:focus-visible {
+  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline-offset: 1px;
+}
+
 .graph-group-btn--remove:hover:not(:disabled) {
   color: var(--ayame-danger, #e58b95);
   border-color: rgba(229, 139, 149, 0.45);
@@ -710,15 +761,22 @@ const handleMoveGroup = (groupId, delta) => {
   display: flex;
   flex-direction: column;
   gap: 0.42rem;
+  min-width: 0;
 }
 
 .graph-filter-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
+  min-width: 0;
   cursor: pointer;
   user-select: none;
   font-size: 0.75rem;
+}
+
+.graph-filter-toggle span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .graph-groups-list {
@@ -737,6 +795,7 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-group-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.28rem;
   min-width: 0;
@@ -754,6 +813,7 @@ const handleMoveGroup = (groupId, delta) => {
 }
 
 .graph-group-query {
+  flex: 1 1 90px;
   min-width: 0;
 }
 
@@ -773,10 +833,12 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-panel-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   padding: 0.4rem 0.75rem;
   border-top: 1px solid var(--ayame-border, #2b2936);
   background: rgba(17, 18, 24, 0.45);
+  flex-shrink: 0;
 }
 </style>
