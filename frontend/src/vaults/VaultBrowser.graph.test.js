@@ -1141,4 +1141,122 @@ describe('VaultBrowser global graph integration', () => {
 
     wrapper.unmount()
   })
+
+  it('re-scrolls the active contextual panel tab into view after narrowing the panel without recreating Local Graph or losing drafts, while skipping redundant scrolls on widening', async () => {
+    const origInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { value: 1400, configurable: true, writable: true })
+
+    try {
+      const wrapper = mountBrowser({ vault: VAULT_A })
+      await flushPromises()
+
+      // Open note with unsaved dirty changes so we verify resize never disturbs editor state
+      await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
+      await flushPromises()
+      const viewer = wrapper.findComponent({ name: 'MarkdownViewer' })
+      const viewerElementBefore = viewer.element
+      viewer.vm.$emit('state', { dirty: true, saving: false, saveState: 'idle' })
+      await nextTick()
+
+      let navWidth = 400
+      const navEl = wrapper.find('.right-panel-tabs').element
+      navEl.getBoundingClientRect = vi.fn(() => ({
+        left: 0,
+        right: navWidth,
+        width: navWidth,
+        top: 0,
+        bottom: 32,
+        height: 32,
+      }))
+
+      const scrollSpies = new Map()
+      const configureTabRect = (testId, left, right) => {
+        const btn = wrapper.find(`[data-testid="${testId}"]`).element
+        btn.getBoundingClientRect = vi.fn(() => ({
+          left,
+          right,
+          width: right - left,
+          top: 0,
+          bottom: 32,
+          height: 32,
+        }))
+        const spy = vi.fn()
+        btn.scrollIntoView = spy
+        scrollSpies.set(testId, spy)
+        return btn
+      }
+
+      configureTabRect('panel-tab-backlinks', 8, 90)
+      configureTabRect('panel-tab-outgoing', 94, 175)
+      configureTabRect('panel-tab-outline', 180, 235)
+      configureTabRect('panel-tab-tags', 240, 275)
+      configureTabRect('panel-tab-search', 280, 315)
+      // Fits inside 400px & 380px, overflows right edge when panel narrows to 200px
+      configureTabRect('panel-tab-local-graph', 320, 378)
+
+      // Open Local Graph at wide width (400px via splitter drag)
+      await wrapper.find('[data-testid="open-local-graph-button"]').trigger('click')
+      await nextTick()
+      await nextTick()
+
+      const splitter = wrapper.find('[data-testid="resize-handle-context"]')
+      expect(splitter.exists()).toBe(true)
+      const makePointerEvent = (type, clientX, pointerId = 1) => {
+        const ev = new MouseEvent(type, { bubbles: true, cancelable: true, clientX })
+        Object.defineProperty(ev, 'pointerId', { value: pointerId })
+        return ev
+      }
+
+      splitter.element.dispatchEvent(makePointerEvent('pointerdown', 900, 1))
+      window.dispatchEvent(makePointerEvent('pointermove', 780, 1)) // 280 + 120 = 400
+      window.dispatchEvent(makePointerEvent('pointerup', 780, 1))
+      await nextTick()
+      await nextTick()
+      expect(splitter.attributes('aria-valuenow')).toBe('400')
+
+      const simCountBeforeResize = simulationRecords.length
+      scrollSpies.get('panel-tab-local-graph').mockClear()
+
+      // B1: Shrink right panel from 400px -> 200px so Local Graph tab overflows right edge
+      navWidth = 200
+      splitter.element.dispatchEvent(makePointerEvent('pointerdown', 780, 2))
+      window.dispatchEvent(makePointerEvent('pointermove', 980, 2)) // 400 - 200 = 200
+      window.dispatchEvent(makePointerEvent('pointerup', 980, 2))
+      await nextTick()
+      await nextTick()
+
+      expect(splitter.attributes('aria-valuenow')).toBe('200')
+      expect(scrollSpies.get('panel-tab-local-graph')).toHaveBeenCalledWith({
+        block: 'nearest',
+        inline: 'nearest',
+      })
+      expect(simulationRecords).toHaveLength(simCountBeforeResize)
+      expect(wrapper.findComponent({ name: 'MarkdownViewer' }).element).toBe(viewerElementBefore)
+
+      // B2: Widen panel back from 200px -> 380px where active tab already fits cleanly: skip redundant scrollIntoView
+      navWidth = 380
+      scrollSpies.get('panel-tab-local-graph').mockClear()
+      splitter.element.dispatchEvent(makePointerEvent('pointerdown', 980, 3))
+      window.dispatchEvent(makePointerEvent('pointermove', 800, 3)) // 200 + 180 = 380
+      window.dispatchEvent(makePointerEvent('pointerup', 800, 3))
+      await nextTick()
+      await nextTick()
+
+      expect(splitter.attributes('aria-valuenow')).toBe('380')
+      expect(scrollSpies.get('panel-tab-local-graph')).not.toHaveBeenCalled()
+
+      // B3: Keyboard navigation between contextual tabs keeps working cleanly after resize
+      await wrapper.find('[data-testid="panel-tab-local-graph"]').trigger('keydown', { key: 'Home' })
+      await nextTick()
+      expect(wrapper.find('[data-testid="panel-tab-backlinks"]').classes()).toContain('right-panel-tab--active')
+      await wrapper.find('[data-testid="panel-tab-backlinks"]').trigger('keydown', { key: 'End' })
+      await nextTick()
+      await nextTick()
+      expect(wrapper.find('[data-testid="panel-tab-local-graph"]').classes()).toContain('right-panel-tab--active')
+
+      wrapper.unmount()
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: origInnerWidth, configurable: true, writable: true })
+    }
+  })
 })

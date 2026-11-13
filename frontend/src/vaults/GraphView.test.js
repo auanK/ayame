@@ -1198,4 +1198,254 @@ describe('GraphView.vue', () => {
     wrapper.unmount()
     expect(rafQueue.size).toBe(0)
   })
+
+  it('updates and commits fast node drag immediately without waiting for a tick, keeps moving-node offset stable, and cleans up on hide/unmount', async () => {
+    const stepNextRaf = (canvasEl, timestamp) => {
+      const entries = [...rafQueue.entries()]
+      expect(entries.length).toBeLessThanOrEqual(1)
+      if (entries.length === 0) return null
+      const [id, cb] = entries[0]
+      rafQueue.delete(id)
+      const ctx = canvasEl.getContext('2d')
+      ctx._recorded.arcs.length = 0
+      cb(timestamp)
+      return [...ctx._recorded.arcs]
+    }
+    const closestArc = (arcs, x, y) =>
+      arcs.reduce((best, cur) =>
+        !best || Math.hypot(cur.x - x, cur.y - y) < Math.hypot(best.x - x, best.y - y) ? cur : best
+      , null)
+
+    const graph = buildGraphModel(sampleIndex())
+    const wrapper = mount(GraphView, {
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+
+    const sim = simulationRecords[0]
+    sim.stop()
+    const targetNode = sim.nodes().find((n) => n.path === 'Personagens/Heroi.md')
+    const nHistoria = sim.nodes().find((n) => n.path === 'Historia.md')
+    const nLore = sim.nodes().find((n) => n.path === 'Lore/Heroi.md')
+    const nIsolada = sim.nodes().find((n) => n.path === 'Isolada.md')
+    targetNode.x = 100
+    targetNode.y = 50
+    targetNode.vx = 0
+    targetNode.vy = 0
+    nHistoria.x = -200
+    nHistoria.y = -150
+    nLore.x = -200
+    nLore.y = 150
+    nIsolada.x = 250
+    nIsolada.y = -150
+
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+    stepNextRaf(canvasEl, 1000)
+
+    // A2: Sub-threshold click (< 4px) emits open-note and leaves node position and fx/fy untouched
+    const pressX = 506
+    const pressY = 354
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: pressX, clientY: pressY, pointerId: 1 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: pressX + 2, clientY: pressY + 1, pointerId: 1 }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: pressX + 2, clientY: pressY + 1, pointerId: 1 }))
+    expect(targetNode.x).toBe(100)
+    expect(targetNode.y).toBe(50)
+    expect(targetNode.fx).toBeNull()
+    expect(targetNode.fy).toBeNull()
+    expect(wrapper.emitted('open-note')).toEqual([['Personagens/Heroi.md']])
+    const postClickArcs = stepNextRaf(canvasEl, 1010)
+    const unmovedArc = closestArc(postClickArcs, 500, 350)
+    expect(unmovedArc.x).toBeCloseTo(500, 5)
+    expect(unmovedArc.y).toBeCloseTo(350, 5)
+
+    // A1: Fast drag + pointerup without ANY D3 sim.tick() renders displacement immediately and retains it after release
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: pressX, clientY: pressY, pointerId: 2 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: pressX + 45, clientY: pressY - 25, pointerId: 2 }))
+
+    const midDragArcs = stepNextRaf(canvasEl, 1026)
+    const movedMidArc = closestArc(midDragArcs, 545, 325)
+    expect(movedMidArc.x).toBeCloseTo(545, 5)
+    expect(movedMidArc.y).toBeCloseTo(325, 5)
+
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: pressX + 45, clientY: pressY - 25, pointerId: 2 }))
+    expect(targetNode.fx).toBeNull()
+    expect(targetNode.fy).toBeNull()
+    expect(targetNode.x).toBeCloseTo(145, 5)
+    expect(targetNode.y).toBeCloseTo(25, 5)
+    expect(targetNode.vx).toBe(0)
+    expect(targetNode.vy).toBe(0)
+    expect(wrapper.emitted('open-note')).toHaveLength(1)
+
+    const postReleaseArcs = stepNextRaf(canvasEl, 1042)
+    const retainedArc = closestArc(postReleaseArcs, 545, 325)
+    expect(retainedArc.x).toBeCloseTo(545, 5)
+    expect(retainedArc.y).toBeCloseTo(325, 5)
+
+    // A3: Moving-node drag clears residual velocity, preserves contact offset without jump across ticks, and keeps final drop
+    targetNode.x = 60
+    targetNode.y = -20
+    targetNode.vx = 12
+    targetNode.vy = -8
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: 464, clientY: 283, pointerId: 3 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 488, clientY: 295, pointerId: 3 }))
+    expect(targetNode.x).toBeCloseTo(84, 5)
+    expect(targetNode.y).toBeCloseTo(-8, 5)
+    expect(targetNode.fx).toBeCloseTo(84, 5)
+    expect(targetNode.fy).toBeCloseTo(-8, 5)
+    expect(targetNode.vx).toBe(0)
+    expect(targetNode.vy).toBe(0)
+
+    sim.tick(1)
+    expect(targetNode.x).toBeCloseTo(84, 5)
+    expect(targetNode.y).toBeCloseTo(-8, 5)
+
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 504, clientY: 285, pointerId: 3 }))
+    sim.tick(1)
+    expect(targetNode.x).toBeCloseTo(100, 5)
+    expect(targetNode.y).toBeCloseTo(-18, 5)
+
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 514, clientY: 275, pointerId: 3 }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: 514, clientY: 275, pointerId: 3 }))
+    expect(targetNode.fx).toBeNull()
+    expect(targetNode.fy).toBeNull()
+    expect(targetNode.x).toBeCloseTo(110, 5)
+    expect(targetNode.y).toBeCloseTo(-28, 5)
+
+    // A4: document visibilitychange (hidden) and unmount release pinned drag cleanly
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: 510, clientY: 272, pointerId: 4 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 530, clientY: 272, pointerId: 4 }))
+    expect(targetNode.fx).toBeCloseTo(130, 5)
+
+    const origVisDesc = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    try {
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(targetNode.fx).toBeNull()
+      expect(targetNode.fy).toBeNull()
+      expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
+    } finally {
+      if (origVisDesc) {
+        Object.defineProperty(document, 'visibilityState', origVisDesc)
+      } else {
+        delete document.visibilityState
+      }
+    }
+
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: 530, clientY: 272, pointerId: 5 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 550, clientY: 272, pointerId: 5 }))
+    expect(targetNode.fx).toBeCloseTo(150, 5)
+    wrapper.unmount()
+    for (const node of sim.nodes()) {
+      expect(node.fx).toBeNull()
+      expect(node.fy).toBeNull()
+    }
+    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
+  })
+
+  it('interrupts active wheel zoom animation immediately on node pointerdown, keeps cursor offset exact, and still resumes normal wheel zoom later', () => {
+    const stepNextRaf = (canvasEl, timestamp) => {
+      const entries = [...rafQueue.entries()]
+      expect(entries.length).toBeLessThanOrEqual(1)
+      if (entries.length === 0) return null
+      const [id, cb] = entries[0]
+      rafQueue.delete(id)
+      const ctx = canvasEl.getContext('2d')
+      ctx._recorded.arcs.length = 0
+      cb(timestamp)
+      return [...ctx._recorded.arcs]
+    }
+    const closestArc = (arcs, x, y) =>
+      arcs.reduce((best, cur) =>
+        !best || Math.hypot(cur.x - x, cur.y - y) < Math.hypot(best.x - x, best.y - y) ? cur : best
+      , null)
+    const horizontalSpan = (arcs) => {
+      const sorted = [...arcs].sort((a, b) => a.x - b.x)
+      return Math.hypot(sorted[sorted.length - 1].x - sorted[0].x, sorted[sorted.length - 1].y - sorted[0].y)
+    }
+
+    const graph = buildGraphModel(sampleIndex())
+    const wrapper = mount(GraphView, {
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+
+    const sim = simulationRecords[0]
+    sim.stop()
+    const nHeroi = sim.nodes().find((n) => n.id === 'note:Personagens/Heroi.md')
+    const nIsolada = sim.nodes().find((n) => n.id === 'note:Isolada.md')
+    const nHistoria = sim.nodes().find((n) => n.id === 'note:Historia.md')
+    const nLore = sim.nodes().find((n) => n.id === 'note:Lore/Heroi.md')
+    nHeroi.x = 40
+    nHeroi.y = 20
+    nIsolada.x = -60
+    nIsolada.y = 20
+    nHistoria.x = 0
+    nHistoria.y = -40
+    nLore.x = 0
+    nLore.y = 80
+
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+    stepNextRaf(canvasEl, 1000)
+
+    // Start smooth zoom-in animation and advance one partial frame (animation still active in rafQueue)
+    canvasEl.dispatchEvent(
+      new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 440, clientY: 320, deltaY: -240 })
+    )
+    expect(rafQueue.size).toBe(1)
+    const frame1 = stepNextRaf(canvasEl, 1016)
+    const spanAtInterrupt = horizontalSpan(frame1)
+    expect(spanAtInterrupt).toBeGreaterThan(100)
+    expect(rafQueue.size).toBe(1)
+
+    // Grab nHeroi mid-zoom with (+3, +2) perimeter offset
+    const heroiAtInterrupt = closestArc(frame1, 440, 320)
+    const isoladaAtInterrupt = closestArc(frame1, 300, 320)
+    const pressX = heroiAtInterrupt.x + 3
+    const pressY = heroiAtInterrupt.y + 2
+
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: pressX, clientY: pressY, pointerId: 7 }))
+    // Any pending draw after pointerdown must NOT continue zooming or leave camera rAF loop queued
+    const frameAfterDown = stepNextRaf(canvasEl, 1032)
+    expect(rafQueue.size).toBe(0)
+    if (frameAfterDown) {
+      expect(horizontalSpan(frameAfterDown)).toBeCloseTo(spanAtInterrupt, 5)
+    }
+
+    // Drag across later timestamps: background node and scale stay frozen while nHeroi tracks exact (+40, -20)
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: pressX + 40, clientY: pressY - 20, pointerId: 7 }))
+    const dragFrame = stepNextRaf(canvasEl, 1048)
+    expect(rafQueue.size).toBe(0)
+
+    const isoladaAfterDrag = closestArc(dragFrame, isoladaAtInterrupt.x, isoladaAtInterrupt.y)
+    expect(isoladaAfterDrag.x).toBeCloseTo(isoladaAtInterrupt.x, 5)
+    expect(isoladaAfterDrag.y).toBeCloseTo(isoladaAtInterrupt.y, 5)
+
+    const heroiAfterDrag = closestArc(dragFrame, heroiAtInterrupt.x + 40, heroiAtInterrupt.y - 20)
+    expect(heroiAfterDrag.x).toBeCloseTo(heroiAtInterrupt.x + 40, 4)
+    expect(heroiAfterDrag.y).toBeCloseTo(heroiAtInterrupt.y - 20, 4)
+
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: pressX + 40, clientY: pressY - 20, pointerId: 7 }))
+    expect(nHeroi.fx).toBeNull()
+    expect(nHeroi.fy).toBeNull()
+    const finalFrame = stepNextRaf(canvasEl, 1064)
+    const heroiFinal = closestArc(finalFrame, heroiAtInterrupt.x + 40, heroiAtInterrupt.y - 20)
+    expect(heroiFinal.x).toBeCloseTo(heroiAtInterrupt.x + 40, 4)
+    expect(heroiFinal.y).toBeCloseTo(heroiAtInterrupt.y - 20, 4)
+
+    // Subsequent wheel zoom still works smoothly after interrupted drag
+    canvasEl.dispatchEvent(
+      new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY: -120 })
+    )
+    expect(rafQueue.size).toBe(1)
+    const zoomResume1 = stepNextRaf(canvasEl, 2000)
+    expect(zoomResume1).not.toBeNull()
+    expect(rafQueue.size).toBe(1)
+
+    wrapper.unmount()
+    expect(rafQueue.size).toBe(0)
+  })
 })
