@@ -1107,23 +1107,23 @@ defineExpose({
 }
 
 .editor-status-indicator--dirty {
-  color: var(--ayame-primary, #a99aca);
-  background: rgba(169, 154, 202, 0.12);
-  border: 1px solid rgba(169, 154, 202, 0.25);
+  color: var(--reading-tag-text);
+  background: var(--reading-tag-bg);
+  border: 1px solid var(--reading-tag-border);
   opacity: 1;
 }
 
 .editor-status-indicator--saving {
-  color: var(--ayame-lavender, #d4cbe4);
-  background: rgba(212, 203, 228, 0.08);
-  border: 1px solid rgba(212, 203, 228, 0.2);
+  color: var(--reading-heading-secondary);
+  background: var(--reading-background-elevated);
+  border: 1px solid var(--reading-border);
   opacity: 1;
 }
 
 .autosave-badge--dirty,
 .autosave-badge--saving {
-  color: var(--workspace-accent, #a99aca);
-  border-color: rgba(169, 154, 202, 0.35);
+  color: var(--reading-accent);
+  border-color: var(--reading-border);
 }
 
 .autosave-badge--conflict,
@@ -1164,7 +1164,7 @@ defineExpose({
 
 .action-button:hover:not(:disabled) {
   background: var(--reading-background-elevated);
-  border-color: var(--ayame-primary, #a99aca);
+  border-color: var(--reading-accent);
   color: var(--reading-heading);
 }
 
@@ -1192,7 +1192,7 @@ defineExpose({
 .viewer-document-container {
   width: 100%;
   min-width: 0;
-  padding: 1.75rem 2.25rem 4.25rem;
+  padding: 1.1rem 2.25rem 3.5rem;
   box-sizing: border-box;
 }
 
@@ -1203,7 +1203,7 @@ defineExpose({
 
 @media (max-width: 640px) {
   .viewer-document-container {
-    padding: 1.15rem 1.1rem 3rem;
+    padding: 0.9rem 1.1rem 2.75rem;
   }
 }
 
@@ -1275,26 +1275,26 @@ defineExpose({
 }
 
 .note-heading-row {
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
 }
 
 .note-heading-title {
   width: 100%;
-  padding: 0.2rem 0 0.35rem;
+  padding: 0.1rem 0 0.2rem;
   background: transparent;
   border: none;
   border-bottom: 1px solid transparent;
   color: var(--reading-heading);
   font-family: var(--reading-font-heading);
-  font-size: 1.8rem;
+  font-size: 1.75rem;
   font-weight: 600;
-  line-height: 1.28;
+  line-height: 1.25;
   letter-spacing: -0.01em;
 }
 
 .note-heading-title:focus {
   outline: none;
-  border-bottom-color: var(--workspace-accent, #a99aca);
+  border-bottom-color: var(--reading-accent);
 }
 
 .note-heading-title:focus-visible {

@@ -12,14 +12,14 @@
   --ayame-text-muted: #aaa6b8;
   --ayame-muted: #aaa6b8;
   --ayame-border: #34323f;
-  --ayame-error: #d8a6b0;
+  --ayame-error: #e2a8b4;
   --ayame-error-border: #684651;
   --ayame-error-bg: rgba(104, 70, 81, 0.22);
 
   --ayame-link: #8ccff0;
   --ayame-link-hover: #b5e2f8;
-  --ayame-link-unresolved: #92a0b9;
-  --ayame-link-ambiguous: #e5be83;
+  --ayame-link-unresolved: #9da8c4;
+  --ayame-link-ambiguous: #e6c387;
 
   /* Workspace tokens unified with Ayame identity */
   --workspace-bg: var(--ayame-background);
@@ -34,32 +34,37 @@
   --workspace-splitter: var(--ayame-border);
   --workspace-splitter-hover: var(--ayame-primary);
 
-  /* Grafite Suave reading tokens (document surface & typography) */
-  --reading-background: #1e2028;
-  --reading-background-elevated: #232630;
-  --reading-text: #b7bbc6;
-  --reading-heading: #dad9e2;
-  --reading-bold: #d0cfd9;
-  --reading-muted: #999caf;
-  --reading-syntax: #8c8fa3;
-  --reading-caret: #c8bfe0;
-  --reading-border: rgba(212, 203, 228, 0.14);
-  --reading-border-subtle: rgba(212, 203, 228, 0.08);
-  --reading-control-bg: #252834;
-  --reading-control-border: #6a6c7e;
-  --reading-link: #98bfd9;
-  --reading-link-hover: #b2d2e8;
-  --reading-link-visited: #b2add8;
-  --reading-link-hover-bg: rgba(152, 191, 217, 0.12);
-  --reading-code-bg: #171920;
-  --reading-code-inline-bg: rgba(212, 203, 228, 0.09);
-  --reading-code-text: #c8ccd6;
-  --reading-blockquote-bg: rgba(169, 154, 202, 0.05);
-  --reading-blockquote-text: #c6c3d4;
-  --reading-blockquote-border: #9689b8;
-  --reading-table-bg: rgba(23, 25, 32, 0.55);
-  --reading-selection-bg: rgba(169, 154, 202, 0.28);
-  --reading-focus-ring: rgba(169, 154, 202, 0.65);
+  /* Noite Lavanda reading tokens (document surface, hierarchy & lavender identity) */
+  --reading-background: #191720;
+  --reading-background-elevated: #211e2b;
+  --reading-text: #c5bdcf;
+  --reading-heading: #e5dfed;
+  --reading-heading-secondary: #d8c7f0;
+  --reading-accent: #b7a3e3;
+  --reading-bold: #e1daec;
+  --reading-muted: #a59bb6;
+  --reading-syntax: #948aa8;
+  --reading-caret: #d8c7f0;
+  --reading-border: rgba(183, 163, 227, 0.24);
+  --reading-border-subtle: rgba(183, 163, 227, 0.13);
+  --reading-control-bg: #242031;
+  --reading-control-border: #6f6686;
+  --reading-link: #98cef4;
+  --reading-link-hover: #bce1fb;
+  --reading-link-visited: #bda9e4;
+  --reading-link-hover-bg: rgba(152, 206, 244, 0.14);
+  --reading-tag-bg: #332a42;
+  --reading-tag-text: #d8c7f0;
+  --reading-tag-border: #5f507a;
+  --reading-code-bg: #131119;
+  --reading-code-inline-bg: rgba(183, 163, 227, 0.14);
+  --reading-code-text: #d2cbe0;
+  --reading-blockquote-bg: rgba(183, 163, 227, 0.07);
+  --reading-blockquote-text: #cfc5de;
+  --reading-blockquote-border: #b7a3e3;
+  --reading-table-bg: rgba(19, 17, 25, 0.65);
+  --reading-selection-bg: rgba(183, 163, 227, 0.28);
+  --reading-focus-ring: rgba(183, 163, 227, 0.72);
   --reading-font-body: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
   --reading-font-heading: Georgia, 'Times New Roman', serif;
   --reading-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

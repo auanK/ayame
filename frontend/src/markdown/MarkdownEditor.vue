@@ -370,7 +370,7 @@ defineExpose({
 }
 
 :deep(.cm-scroller) {
-  padding: 0.35rem 0 3.5rem;
+  padding: 0.1rem 0 3.25rem;
   font-family: inherit;
 }
 
@@ -384,7 +384,7 @@ defineExpose({
 }
 
 :deep(.cm-line) {
-  padding: 0.14rem 0;
+  padding: 0.12rem 0;
 }
 
 :deep(.cm-live-syntax) {
@@ -396,43 +396,52 @@ defineExpose({
   color: var(--reading-heading);
   font-family: var(--reading-font-heading);
   font-weight: 600;
-  line-height: 1.32;
+  line-height: 1.3;
   letter-spacing: -0.01em;
-  padding-top: 0.65rem;
-  padding-bottom: 0.22rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.16rem;
+}
+
+:deep(.cm-live-heading:first-child) {
+  padding-top: 0;
 }
 
 :deep(.cm-live-h1) {
-  font-size: 1.8rem;
+  font-size: 1.75rem;
   font-weight: 600;
-  line-height: 1.28;
+  line-height: 1.25;
   border-bottom: 1px solid var(--reading-border);
-  margin-bottom: 0.45rem;
+  margin-bottom: 0.32rem;
 }
 
 :deep(.cm-live-h2) {
-  font-size: 1.42rem;
+  color: var(--reading-heading-secondary);
+  font-size: 1.38rem;
   font-weight: 600;
-  line-height: 1.32;
+  line-height: 1.3;
+  padding-top: 0.65rem;
   border-bottom: 1px solid var(--reading-border-subtle);
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.24rem;
 }
 
 :deep(.cm-live-h3) {
-  font-size: 1.2rem;
+  color: var(--reading-accent);
+  font-size: 1.18rem;
   font-weight: 500;
-  line-height: 1.36;
+  line-height: 1.34;
+  padding-top: 0.45rem;
 }
 
 :deep(.cm-live-h4) {
-  font-size: 1.08rem;
+  color: var(--reading-accent);
+  font-size: 1.06rem;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1.38;
 }
 
 :deep(.cm-live-h5),
 :deep(.cm-live-h6) {
-  font-size: 1rem;
+  font-size: 0.98rem;
   font-weight: 500;
   color: var(--reading-muted);
 }
@@ -452,9 +461,9 @@ defineExpose({
 }
 
 :deep(.cm-live-highlight) {
-  background: rgba(169, 154, 202, 0.2);
+  background: var(--reading-tag-bg);
   color: var(--reading-heading);
-  padding: 0.02rem 0.22rem;
+  padding: 0.02rem 0.24rem;
   border-radius: 3px;
 }
 
@@ -498,7 +507,7 @@ defineExpose({
 }
 
 :deep(.cm-live-callout-badge) {
-  color: var(--ayame-lavender, #d4cbe4);
+  color: var(--reading-heading-secondary);
   font-weight: 600;
 }
 
@@ -509,7 +518,7 @@ defineExpose({
 :deep(.cm-live-list-bullet),
 :deep(.cm-live-list-number),
 :deep(.cm-live-checklist-marker) {
-  color: var(--ayame-primary, #a99aca);
+  color: var(--reading-accent);
   font-weight: 600;
 }
 
@@ -526,8 +535,8 @@ defineExpose({
 
 :deep(.cm-live-hr) {
   border-bottom: 1px solid var(--reading-border);
-  margin: 0.75rem 0;
-  min-height: 0.5rem;
+  margin: 0.6rem 0;
+  min-height: 0.45rem;
 }
 
 :deep(.cm-live-table-row) {
@@ -543,16 +552,17 @@ defineExpose({
 }
 
 :deep(.cm-live-table-pipe) {
-  color: var(--ayame-primary, #a99aca);
+  color: var(--reading-accent);
   font-weight: 600;
 }
 
 :deep(.cm-live-tag) {
-  color: var(--ayame-lavender, #d4cbe4);
-  background: rgba(169, 154, 202, 0.14);
+  color: var(--reading-tag-text);
+  background: var(--reading-tag-bg);
+  border: 1px solid var(--reading-tag-border);
   border-radius: 4px;
-  padding: 0.02rem 0.35rem;
-  font-size: 0.88em;
+  padding: 0.02rem 0.38rem;
+  font-size: 0.87em;
 }
 
 :deep(.cm-live-comment) {
@@ -575,7 +585,7 @@ defineExpose({
 :deep(.cm-live-link) {
   color: var(--reading-link);
   text-decoration: underline;
-  text-underline-color: rgba(152, 191, 217, 0.45);
+  text-underline-color: rgba(152, 206, 244, 0.5);
   text-underline-offset: 3px;
   cursor: pointer;
   border-radius: 2px;
