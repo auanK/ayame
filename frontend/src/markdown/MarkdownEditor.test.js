@@ -289,10 +289,15 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     expect(wrapper.find('.cm-live-checklist-marker').attributes('aria-checked')).toBe('true')
   })
 
-  it('10. applies Grafite Suave reading typography tokens in Live Preview without pure white headings/bold, excessive syntax opacity, or broken editing states', async () => {
+  it('10. applies Noite Lavanda heading hierarchy, lavender accents, compact top spacing, and readable tokens without pure white or broken editing', async () => {
     const editorStyles = editorRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
+    const extractRule = (pattern) => editorStyles.match(new RegExp(`${pattern}\\s*\\{([^}]*)\\}`, 's'))?.[1] || ''
+    const parseLeadingRem = (val) => {
+      const m = String(val || '').trim().match(/^([\d.]+)rem\b/)
+      return m ? parseFloat(m[1]) : NaN
+    }
 
-    // Body text uses calm reading tokens, 16px-17px size, weight 400, ~1.7 line-height, and visible caret
+    // Body text uses warm reading tokens, 16px-17px size, weight 400, comfortable line-height, and visible lavender caret
     expect(editorStyles).toMatch(/\.markdown-editor-surface\s*\{[^}]*var\(--reading-text/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-editor\)\s*\{[^}]*var\(--reading-font-body/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-editor\)\s*\{[^}]*var\(--reading-font-size/s)
@@ -301,36 +306,47 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     expect(editorStyles).toMatch(/:deep\(\.cm-content\)\s*\{[^}]*caret-color:\s*var\(--reading-caret/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-content\)\s*\{[^}]*color:\s*var\(--reading-text/s)
 
-    // Headings & bold avoid harsh pure white (#fff / #ffffff) and use calm editorial weights
+    // Compact vertical rhythm: trimmed scroller top padding and zero extra top gap on first-line heading
+    const scrollerRule = extractRule(':deep\\(\\.cm-scroller\\)')
+    expect(parseLeadingRem(scrollerRule.match(/padding:\s*([^;]+);/)?.[1])).toBeLessThanOrEqual(0.2)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-heading:first-child\)\s*\{[^}]*padding-top:\s*0(?:\b|;)/s)
+
+    // Expressive heading color progression using distinct semantic tokens (never monochrome gray and never #fff)
     expect(editorStyles).not.toMatch(/#fff(?:fff)?\b/i)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-heading\)\s*\{[^}]*color:\s*var\(--reading-heading/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-heading\)\s*\{[^}]*var\(--reading-font-heading/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h1\)\s*\{[^}]*font-weight:\s*600/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h2\)\s*\{[^}]*color:\s*var\(--reading-heading-secondary/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h2\)\s*\{[^}]*font-weight:\s*600/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h3\)\s*\{[^}]*color:\s*var\(--reading-accent/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h3\)\s*\{[^}]*font-weight:\s*500/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h4\)\s*\{[^}]*color:\s*var\(--reading-accent/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-bold\)\s*\{[^}]*font-weight:\s*600[^}]*var\(--reading-bold/s)
 
-    // Links, syntax, code, blockquote, and tables all use consistent semantic tokens and stay readable
+    // Lavender tags, markers, syntax delimiters, links, code, blockquotes, and tables
     expect(editorStyles).toMatch(/:deep\(\.cm-live-syntax\)\s*\{[^}]*var\(--reading-syntax/s)
     expect(editorStyles).not.toMatch(/:deep\(\.cm-live-syntax\)\s*\{[^}]*opacity:/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-tag\)\s*\{[^}]*var\(--reading-tag-text/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-tag\)\s*\{[^}]*var\(--reading-tag-bg/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-link\)\s*\{[^}]*var\(--reading-link/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-link:visited\)\s*\{[^}]*var\(--reading-link-visited/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-inline-code\)\s*\{[^}]*var\(--reading-code-text/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-codeblock-line\)\s*\{[^}]*var\(--reading-code-bg/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-blockquote\)\s*\{[^}]*var\(--reading-blockquote-text/s)
 
-    // Full Markdown semantics & editing selection remain operational across H1-H6, links, code, lists, tables, and hr
+    // Full Markdown semantics, tag clicks, & editing states remain operational across H1-H6, code, lists, tables, and hr
     const fullDoc = [
       '# H1 Principal',
-      '## H2 Seção',
-      '### H3 Subseção',
+      '## H2 Lavanda',
+      '### H3 Destaque',
       '#### H4 Tópico',
       '##### H5 Nota',
       '###### H6 Rodapé',
-      'Parágrafo com **negrito**, *itálico*, `codigo()` e [[Alvo|Link Interno]] além de #tag-leitura.',
-      '> Bloco citado',
+      'Parágrafo com **negrito**, *itálico*, `codigo()` e [[Alvo|Link Interno]] além de #noite-lavanda.',
+      '- [ ] Tarefa pendente',
+      '> [!NOTE] Nota importante em callout',
       '---',
-      '| A | B |',
+      '| Coluna A | Coluna B |',
       '| - | - |',
       '| 1 | 2 |',
       'Cursor final.',
@@ -347,14 +363,19 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.find('.cm-live-h1').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-h2').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-h3').exists()).toBe(true)
     expect(wrapper.find('.cm-live-h4').exists()).toBe(true)
     expect(wrapper.find('.cm-live-h6').exists()).toBe(true)
     expect(wrapper.find('.cm-live-bold').text()).toBe('negrito')
     expect(wrapper.find('.cm-live-inline-code').text()).toBe('codigo()')
     expect(wrapper.find('.cm-live-link').text()).toBe('Link Interno')
-    expect(wrapper.find('.cm-live-tag').text()).toBe('#tag-leitura')
-    expect(wrapper.find('.cm-live-blockquote').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-tag').text()).toBe('#noite-lavanda')
+    expect(wrapper.find('.cm-live-callout').exists()).toBe(true)
     expect(wrapper.find('.cm-live-hr').exists()).toBe(true)
     expect(wrapper.find('.cm-live-table-row').exists()).toBe(true)
+
+    await wrapper.find('.cm-live-tag').trigger('click')
+    expect(wrapper.emitted('click-tag')?.[0]).toEqual(['noite-lavanda'])
   })
 })

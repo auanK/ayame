@@ -15,10 +15,14 @@ const mainCssRaw = readFileSync(
   'utf8',
 )
 
-const relativeLuminance = (hex) => {
+const parseHexRgb = (hex) => {
   const clean = hex.replace('#', '')
-  const channels = [0, 2, 4].map((offset) => {
-    const c = parseInt(clean.slice(offset, offset + 2), 16) / 255
+  return [0, 2, 4].map((offset) => parseInt(clean.slice(offset, offset + 2), 16))
+}
+
+const relativeLuminance = (hex) => {
+  const channels = parseHexRgb(hex).map((value) => {
+    const c = value / 255
     return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
   })
   return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
@@ -28,6 +32,21 @@ const contrastRatio = (fgHex, bgHex) => {
   const l1 = relativeLuminance(fgHex)
   const l2 = relativeLuminance(bgHex)
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+}
+
+const hasVioletTint = (hex) => {
+  const [r, g, b] = parseHexRgb(hex)
+  return b > g && r > g
+}
+
+const extractRuleBlock = (cssText, selectorPattern) => {
+  const match = cssText.match(new RegExp(`${selectorPattern}\\s*\\{([^}]*)\\}`, 's'))
+  return match ? match[1] : ''
+}
+
+const parseLeadingRem = (value) => {
+  const match = String(value || '').trim().match(/^([\d.]+)rem\b/)
+  return match ? parseFloat(match[1]) : NaN
 }
 
 const readRootToken = (cssText, name) => {
@@ -1077,62 +1096,95 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
     })
   })
 
-  describe('Grafite Suave reading theme, surface hierarchy, Properties balance, and WCAG compliance', () => {
-    it('defines Grafite Suave semantic reading tokens with WCAG AA contrast, soft surface separation, and no pure white document colors', () => {
+  describe('Noite Lavanda reading theme, chromatic hierarchy, vertical composition, Properties balance, and WCAG compliance', () => {
+    it('defines Noite Lavanda semantic tokens with violet/lavender personality, distinct heading hierarchy, WCAG AA contrast, and compact vertical composition', () => {
       const rootBlock = mainCssRaw.match(/:root\s*\{([\s\S]*?)\r?\n\}/)?.[1] || ''
       const workspaceBg = readRootToken(rootBlock, '--ayame-background')
       const readingBg = readRootToken(rootBlock, '--reading-background')
       const readingText = readRootToken(rootBlock, '--reading-text')
       const readingHeading = readRootToken(rootBlock, '--reading-heading')
+      const readingHeadingSecondary = readRootToken(rootBlock, '--reading-heading-secondary')
+      const readingAccent = readRootToken(rootBlock, '--reading-accent')
       const readingMuted = readRootToken(rootBlock, '--reading-muted')
       const readingLink = readRootToken(rootBlock, '--reading-link')
       const readingLinkHover = readRootToken(rootBlock, '--reading-link-hover')
       const readingLinkVisited = readRootToken(rootBlock, '--reading-link-visited')
       const readingBold = readRootToken(rootBlock, '--reading-bold')
       const readingSyntax = readRootToken(rootBlock, '--reading-syntax')
+      const readingTagBg = readRootToken(rootBlock, '--reading-tag-bg')
+      const readingTagText = readRootToken(rootBlock, '--reading-tag-text')
+      const readingTagBorder = readRootToken(rootBlock, '--reading-tag-border')
       const readingCodeBg = readRootToken(rootBlock, '--reading-code-bg')
       const readingCodeText = readRootToken(rootBlock, '--reading-code-text')
       const readingControlBorder = readRootToken(rootBlock, '--reading-control-border')
       const workspaceEditor = readRootToken(rootBlock, '--workspace-editor')
 
-      expect(readingBg).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingText).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingHeading).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingMuted).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingLink).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingLinkHover).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingLinkVisited).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingBold).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingSyntax).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingCodeBg).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingCodeText).toMatch(/^#[0-9a-f]{6}$/i)
-      expect(readingControlBorder).toMatch(/^#[0-9a-f]{6}$/i)
+      for (const token of [
+        readingBg,
+        readingText,
+        readingHeading,
+        readingHeadingSecondary,
+        readingAccent,
+        readingMuted,
+        readingLink,
+        readingLinkHover,
+        readingLinkVisited,
+        readingBold,
+        readingSyntax,
+        readingTagBg,
+        readingTagText,
+        readingTagBorder,
+        readingCodeBg,
+        readingCodeText,
+        readingControlBorder,
+      ]) {
+        expect(token).toMatch(/^#[0-9a-f]{6}$/i)
+      }
       expect(workspaceEditor).toBe('var(--reading-background)')
 
-      // Subtle tonal separation: reading background is softly lighter than outer workspace background
+      // Noite Lavanda identity: reading surface stays deep dark with subtle violet undertone (not flat gray or near-black flat)
       expect(relativeLuminance(readingBg)).toBeGreaterThan(relativeLuminance(workspaceBg))
       expect(readingBg.toLowerCase()).not.toBe(workspaceBg.toLowerCase())
+      expect(hasVioletTint(readingBg)).toBe(true)
+      expect(hasVioletTint(readingHeadingSecondary)).toBe(true)
+      expect(hasVioletTint(readingAccent)).toBe(true)
+      expect(hasVioletTint(readingTagBg)).toBe(true)
+      expect(hasVioletTint(readingTagText)).toBe(true)
 
-      // Zero pure white in reading tokens or viewer/properties styles
-      for (const hex of [readingText, readingHeading, readingBold, readingLink, readingLinkHover, readingCodeText]) {
+      // Expressive heading and emphasis separation without harsh pure white
+      expect(readingHeading.toLowerCase()).not.toBe(readingHeadingSecondary.toLowerCase())
+      expect(readingHeadingSecondary.toLowerCase()).not.toBe(readingAccent.toLowerCase())
+      expect(relativeLuminance(readingBold)).toBeGreaterThan(relativeLuminance(readingText))
+      expect(relativeLuminance(readingHeading)).toBeGreaterThan(relativeLuminance(readingBold))
+      for (const hex of [readingText, readingHeading, readingHeadingSecondary, readingBold, readingLink, readingLinkHover, readingTagText, readingCodeText]) {
         expect(hex.toLowerCase()).not.toBe('#ffffff')
         expect(hex.toLowerCase()).not.toBe('#fff')
       }
+
+      // Lively yet comfortable cyan-blue link hierarchy
+      const [linkR, linkG, linkB] = parseHexRgb(readingLink)
+      expect(linkB).toBeGreaterThan(linkG)
+      expect(linkG).toBeGreaterThan(linkR)
+      expect(relativeLuminance(readingLinkHover)).toBeGreaterThan(relativeLuminance(readingLink))
+
       const viewerStyles = viewerRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
       const propertiesStyles = propertiesRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
       expect(viewerStyles).not.toMatch(/color:\s*#fff(?:fff)?\b/i)
       expect(propertiesStyles).not.toMatch(/color:\s*#fff(?:fff)?\b/i)
 
-      // WCAG 2.1 AA contrast validation against actual reading background & code surface
+      // WCAG 2.1 AA contrast validation on actual reading background, code surface, and tag badges
       expect(contrastRatio(readingText, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingHeading, readingBg)).toBeGreaterThanOrEqual(4.5)
-      expect(contrastRatio(readingHeading, readingBg)).toBeGreaterThan(contrastRatio(readingText, readingBg))
+      expect(contrastRatio(readingHeadingSecondary, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingAccent, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingBold, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingMuted, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingSyntax, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingLink, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingLinkHover, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingLinkVisited, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingCodeText, readingCodeBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingTagText, readingTagBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingControlBorder, readingBg)).toBeGreaterThanOrEqual(3.0)
 
       // Viewer applies continuous surface tokens, keeps 800px reading measure without card borders/shadows or container opacity
@@ -1144,6 +1196,15 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(viewerStyles).not.toMatch(/\.markdown-viewer\s*\{[^}]*opacity:/s)
       expect(viewerStyles).not.toMatch(/\.viewer-body\s*\{[^}]*opacity:/s)
 
+      // Refined vertical rhythm above title & Properties without empty void
+      const containerRule = extractRuleBlock(viewerStyles, '\\.viewer-document-container')
+      const containerPadMatch = containerRule.match(/padding:\s*([^;]+);/)
+      expect(parseLeadingRem(containerPadMatch?.[1])).toBeLessThanOrEqual(1.25)
+
+      const headingRowRule = extractRuleBlock(viewerStyles, '\\.note-heading-row')
+      const headingRowMarginMatch = headingRowRule.match(/margin-bottom:\s*([^;]+);/)
+      expect(parseLeadingRem(headingRowMarginMatch?.[1])).toBeLessThanOrEqual(0.65)
+
       // Inline heading title shares editorial serif language with H1 without bold 700 weight
       expect(viewerStyles).toMatch(/\.note-heading-title\s*\{[^}]*var\(--reading-heading/s)
       expect(viewerStyles).toMatch(/\.note-heading-title\s*\{[^}]*var\(--reading-font-heading/s)
@@ -1151,12 +1212,19 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(viewerStyles).toMatch(/\.note-heading-title:focus-visible\s*\{/s)
     })
 
-    it('keeps PropertiesPanel calm beneath document hierarchy while preserving controls, tags, link navigation, and dirty-draft workflows', async () => {
+    it('gives PropertiesPanel balanced lavender tag identity, tighter vertical spacing, readable controls, link navigation, and dirty-draft workflows', async () => {
       const propertiesStyles = propertiesRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
+      const panelRule = extractRuleBlock(propertiesStyles, '\\.properties-panel')
+      expect(parseLeadingRem(panelRule.match(/margin-bottom:\s*([^;]+);/)?.[1])).toBeLessThanOrEqual(0.75)
+      expect(parseLeadingRem(panelRule.match(/padding-bottom:\s*([^;]+);/)?.[1])).toBeLessThanOrEqual(0.6)
+
       expect(propertiesStyles).toMatch(/\.property-key-input\s*\{[^}]*var\(--reading-muted/s)
       expect(propertiesStyles).toMatch(/\.property-text-input\s*\{[^}]*var\(--reading-text/s)
       expect(propertiesStyles).toMatch(/\.property-type-select\s*\{[^}]*var\(--reading-control-bg/s)
       expect(propertiesStyles).toMatch(/\.property-type-select\s*\{[^}]*var\(--reading-control-border/s)
+      expect(propertiesStyles).toMatch(/\.property-chip\s*\{[^}]*var\(--reading-tag-bg/s)
+      expect(propertiesStyles).toMatch(/\.property-chip\s*\{[^}]*var\(--reading-tag-text/s)
+      expect(propertiesStyles).toMatch(/\.property-chip\s*\{[^}]*var\(--reading-tag-border/s)
       expect(propertiesStyles).toMatch(/\.property-link-pill\s*\{[^}]*var\(--reading-link/s)
       expect(propertiesStyles).toMatch(/\.properties-toggle:focus-visible/s)
       expect(propertiesStyles).toMatch(/\.properties-action-btn:focus-visible/s)
@@ -1167,14 +1235,14 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
         '---',
         'tags:',
         '  - leitura',
-        '  - grafite',
+        '  - noite-lavanda',
         'related: "[[Guia de Estilo]]"',
         'status: revisao',
         '---',
         '',
         '# Arquitetura do Documento',
         '',
-        'Parágrafo longo pensado para validar conforto visual em sessões prolongadas de leitura no Ayame, preservando contraste legível e links como [[Referencias]].',
+        'Parágrafo longo pensado para validar conforto visual em sessões prolongadas de leitura no Ayame, preservando contraste legível, **destaque claro** e links como [[Referencias]].',
         '',
         '## Subtítulo Editorial',
         '### Seção Intermediária',
@@ -1183,7 +1251,7 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
         '> Citação reflexiva com borda lavanda.',
         '',
         '```js',
-        'const theme = "grafite-suave";',
+        'const theme = "noite-lavanda";',
         '```',
         'Fim da nota.',
       ].join('\n')
@@ -1205,6 +1273,7 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       await flushPromises()
 
       expect(wrapper.find('[data-testid="properties-panel"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="property-tag-chip"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="property-link-pill"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(true)
       expect(wrapper.find('.viewer-document-container--readable').exists()).toBe(true)
@@ -1216,9 +1285,16 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
         kind: 'wikilink',
       })
 
-      // Interactive text editing marks dirty draft cleanly without affecting Preferences/Properties state
+      // Toggle visible <-> hidden cleanly without mutating content or dirtying draft
+      wrapper.vm.setPropertiesMode('hidden')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="properties-panel"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="markdown-dirty-indicator"]').exists()).toBe(false)
+
+      // Interactive text editing marks dirty draft cleanly without losing content
       await editNote(wrapper, `${longDoc}\nNova linha.`)
       expect(wrapper.find('[data-testid="markdown-dirty-indicator"]').exists()).toBe(true)
+      expect(wrapper.vm.getText()).toContain('Nova linha.')
     })
   })
 })
