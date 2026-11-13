@@ -553,8 +553,9 @@ describe('GraphView.vue', () => {
     await wrapper.find('[data-testid="graph-direction-outgoing"]').trigger('click')
     expect(wrapper.emitted('update:local-direction')).toEqual([['outgoing']])
 
-    // 5. All nodes filtered out -> filter-empty state keeps center badge & clear filters button
-    const filteredEmptyGraph = projectGraphView({
+    // 5. Local Graph preserves center note on no-match search with filter notice,
+    // while Global Graph enters filtered-empty state with Clear filters button
+    const localNoMatchGraph = projectGraphView({
       baseGraph,
       vaultIndex: index,
       mode: 'local',
@@ -562,11 +563,26 @@ describe('GraphView.vue', () => {
       filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
     })
     await wrapper.setProps({
-      graph: filteredEmptyGraph,
+      graph: localNoMatchGraph,
+      filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
+    })
+    expect(wrapper.find('[data-testid="graph-canvas"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="graph-filter-notice"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="local-graph-center"]').text()).toContain('Heroi')
+
+    const globalEmptyGraph = projectGraphView({
+      baseGraph,
+      vaultIndex: index,
+      mode: 'global',
+      filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
+    })
+    await wrapper.setProps({
+      mode: 'global',
+      centerPath: null,
+      graph: globalEmptyGraph,
       filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
     })
     expect(wrapper.find('[data-testid="graph-filtered-empty-state"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="local-graph-center"]').text()).toContain('Heroi')
 
     await wrapper.find('[data-testid="graph-clear-filters-button"]').trigger('click')
     const emittedFilters = wrapper.emitted('update:filters')
@@ -582,7 +598,7 @@ describe('GraphView.vue', () => {
       failures: [],
       files: ['Nota.md'],
       notes: [
-        { path: 'Nota.md', content: '#magia [[Falta]]', mtimeMs: 1000 },
+        { path: 'Nota.md', content: '#magia [[Falta.md]] [[Falta.markdown]]', mtimeMs: 1000 },
       ],
     })
     const baseGraph = buildGraphModel(index)
@@ -629,26 +645,34 @@ describe('GraphView.vue', () => {
 
     const sim = simulationRecords[0]
     sim.tick(4)
-    const unresolvedNode = sim.nodes().find((n) => n.type === 'unresolved')
+    const unresolvedNodes = sim.nodes().filter((n) => n.type === 'unresolved')
     const tagNode = sim.nodes().find((n) => n.type === 'tag')
-    expect(unresolvedNode).toBeTruthy()
+    expect(unresolvedNodes.map((n) => n.path).sort()).toEqual(['Falta.markdown', 'Falta.md'])
     expect(tagNode).toBeTruthy()
 
     const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
 
-    // Hover & click unresolved node -> shows unresolved origin caption, does NOT emit open-note
-    const uX = 400 + unresolvedNode.x
-    const uY = 300 + unresolvedNode.y
+    // Hover & click each unresolved node -> shows normalized destination + origin caption, does NOT emit open-note
+    const unresolvedMd = unresolvedNodes.find((n) => n.path === 'Falta.md')
+    const uX = 400 + unresolvedMd.x
+    const uY = 300 + unresolvedMd.y
     canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: uX, clientY: uY }))
     await nextTick()
     const uCaption = wrapper.find('[data-testid="graph-hover-caption"]')
     expect(uCaption.exists()).toBe(true)
-    expect(uCaption.text()).toContain('Falta')
+    expect(uCaption.text()).toContain('Falta.md')
     expect(uCaption.text()).toContain('Nota.md')
 
     canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: uX, clientY: uY }))
     canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: uX, clientY: uY }))
     expect(wrapper.emitted('open-note')).toBeUndefined()
+
+    const unresolvedMarkdown = unresolvedNodes.find((n) => n.path === 'Falta.markdown')
+    const u2X = 400 + unresolvedMarkdown.x
+    const u2Y = 300 + unresolvedMarkdown.y
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: u2X, clientY: u2Y }))
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-hover-caption"]').text()).toContain('Falta.markdown')
 
     // Hover & click tag node -> shows #magia caption, does NOT emit open-note
     const tX = 400 + tagNode.x
