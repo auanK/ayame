@@ -383,7 +383,7 @@ export const parseGraphSearchQuery = (rawQuery) => {
   }
 }
 
-const noteMatchesTerms = (note, terms, tagsByFile) => {
+export const noteMatchesTerms = (note, terms, tagsByFile) => {
   const pathLower = String(note.path || '').toLowerCase()
   const labelLower = String(note.label || '').toLowerCase()
   const fileLower = basenameOf(pathLower)
