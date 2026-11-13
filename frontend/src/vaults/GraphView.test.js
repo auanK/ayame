@@ -1448,4 +1448,231 @@ describe('GraphView.vue', () => {
     wrapper.unmount()
     expect(rafQueue.size).toBe(0)
   })
+
+  it('cools simulation back to rest and clears drag state when a dragged node is removed by structural/filter update before pointerup/pointercancel', async () => {
+    const flushRaf = (timestamp = 1000) => {
+      let guard = 0
+      while (rafQueue.size > 0 && guard < 20) {
+        guard += 1
+        const [id, cb] = rafQueue.entries().next().value
+        rafQueue.delete(id)
+        cb(timestamp + guard * 16)
+      }
+    }
+
+    const index = sampleIndex()
+    const baseGraph = buildGraphModel(index)
+    const initialGraph = projectGraphView({ baseGraph, vaultIndex: index, mode: 'global' })
+
+    const wrapper = mount(GraphView, {
+      props: {
+        graph: initialGraph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+
+    const sim = simulationRecords[0]
+    sim.stop()
+    const nHeroi = sim.nodes().find((n) => n.path === 'Personagens/Heroi.md')
+    const nHistoria = sim.nodes().find((n) => n.path === 'Historia.md')
+    const nLore = sim.nodes().find((n) => n.path === 'Lore/Heroi.md')
+    const nIsolada = sim.nodes().find((n) => n.path === 'Isolada.md')
+    nHeroi.x = 100
+    nHeroi.y = 40
+    nHistoria.x = -80
+    nHistoria.y = -40
+    nLore.x = 0
+    nLore.y = 120
+    nIsolada.x = -120
+    nIsolada.y = 80
+    flushRaf(1000)
+
+    const canvas = wrapper.find('[data-testid="graph-canvas"]')
+    const canvasEl = canvas.element
+
+    // 1-3: Start dragging Isolada.md (orphan) and confirm simulation entered heated drag mode
+    const isoladaSx = 400 + nIsolada.x
+    const isoladaSy = 300 + nIsolada.y
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: isoladaSx, clientY: isoladaSy, pointerId: 1 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: isoladaSx + 24, clientY: isoladaSy + 12, pointerId: 1 }))
+    await nextTick()
+    expect(sim.alphaTarget()).toBeCloseTo(0.28, 5)
+    expect(canvas.classes()).toContain('graph-canvas--grabbing')
+
+    // 4: Structural filter update (showOrphans: false) removes Isolada.md while keeping 3 connected nodes
+    const filtersNoOrphans = {
+      ...createDefaultGraphFilters(),
+      showOrphans: false,
+    }
+    const filteredGraph = projectGraphView({
+      baseGraph,
+      vaultIndex: index,
+      mode: 'global',
+      filters: filtersNoOrphans,
+    })
+    expect(filteredGraph.nodes.some((n) => n.path === 'Isolada.md')).toBe(false)
+    expect(filteredGraph.nodes.length).toBeGreaterThanOrEqual(2)
+
+    await wrapper.setProps({
+      graph: filteredGraph,
+      filters: filtersNoOrphans,
+    })
+    await nextTick()
+
+    // Removal itself cancels the active drag immediately even before pointerup arrives
+    expect(sim.alphaTarget()).toBe(0)
+    expect(canvas.classes()).not.toContain('graph-canvas--grabbing')
+
+    // Delayed pointermove from old pointerId before pointerup must not throw or corrupt surviving nodes
+    const historiaBeforeX = sim.nodes().find((n) => n.path === 'Historia.md').x
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: isoladaSx + 48, clientY: isoladaSy + 20, pointerId: 1 }))
+
+    // 5-6: Delayed pointerup (+ duplicate pointerup) arrives after dragged node disappeared
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: isoladaSx + 48, clientY: isoladaSy + 20, pointerId: 1 }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: isoladaSx + 48, clientY: isoladaSy + 20, pointerId: 1 }))
+    await nextTick()
+
+    expect(sim.alphaTarget()).toBe(0)
+    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
+    expect(canvas.classes()).not.toContain('graph-canvas--grabbing')
+    expect(wrapper.emitted('open-note')).toBeUndefined()
+    for (const node of sim.nodes()) {
+      expect(node.fx).toBeNull()
+      expect(node.fy).toBeNull()
+    }
+    expect(sim.nodes().find((n) => n.path === 'Historia.md').x).toBe(historiaBeforeX)
+
+    // 7: Advancing D3 simulation lets alpha decay cleanly below alphaMin back to rest without residual frames
+    sim.tick(350)
+    expect(sim.alpha()).toBeLessThan(sim.alphaMin())
+    flushRaf(2000)
+    expect(rafQueue.size).toBe(0)
+
+    // Can start and finish a brand-new drag on a remaining node after structural interruption
+    const survivingHistoria = sim.nodes().find((n) => n.path === 'Historia.md')
+    survivingHistoria.x = -60
+    survivingHistoria.y = -30
+    const histSx = 400 + survivingHistoria.x
+    const histSy = 300 + survivingHistoria.y
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: histSx, clientY: histSy, pointerId: 2 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: histSx + 30, clientY: histSy - 15, pointerId: 2 }))
+    expect(sim.alphaTarget()).toBeCloseTo(0.28, 5)
+    expect(survivingHistoria.x).toBeCloseTo(-30, 5)
+    expect(survivingHistoria.y).toBeCloseTo(-45, 5)
+
+    // Removal of this dragged node via search filter followed by pointercancel must also cool down cleanly
+    const searchFilters = { ...createDefaultGraphFilters(), searchQuery: 'Heroi' }
+    const heroiOnlyGraph = projectGraphView({
+      baseGraph,
+      vaultIndex: index,
+      mode: 'global',
+      filters: searchFilters,
+    })
+    expect(heroiOnlyGraph.nodes.some((n) => n.path === 'Historia.md')).toBe(false)
+    expect(heroiOnlyGraph.nodes.length).toBeGreaterThanOrEqual(2)
+
+    await wrapper.setProps({ graph: heroiOnlyGraph, filters: searchFilters })
+    await nextTick()
+    canvasEl.dispatchEvent(pointerEvent('pointercancel', { clientX: histSx + 30, clientY: histSy - 15, pointerId: 2 }))
+    canvasEl.dispatchEvent(pointerEvent('pointercancel', { clientX: histSx + 30, clientY: histSy - 15, pointerId: 2 }))
+    await nextTick()
+
+    expect(sim.alphaTarget()).toBe(0)
+    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
+    for (const node of sim.nodes()) {
+      expect(node.fx).toBeNull()
+      expect(node.fy).toBeNull()
+    }
+    sim.tick(350)
+    expect(sim.alpha()).toBeLessThan(sim.alphaMin())
+    flushRaf(3000)
+    expect(rafQueue.size).toBe(0)
+
+    wrapper.unmount()
+  })
+
+  it('ignores stale pointer events cleanly when switching vaults mid-drag without leaking alphaTarget or affecting new graph nodes', async () => {
+    const indexA = sampleIndex()
+    const graphA = projectGraphView({ baseGraph: buildGraphModel(indexA), vaultIndex: indexA, mode: 'global' })
+
+    const indexB = buildVaultIndex({
+      directory: 'C:/vaults/other',
+      complete: true,
+      failures: [],
+      files: ['Alpha.md', 'Beta.md'],
+      notes: [
+        { path: 'Alpha.md', content: 'Links [[Beta]].', mtimeMs: 2000 },
+        { path: 'Beta.md', content: 'Leaf.', mtimeMs: 2000 },
+      ],
+    })
+    const graphB = projectGraphView({ baseGraph: buildGraphModel(indexB), vaultIndex: indexB, mode: 'global' })
+
+    const wrapper = mount(GraphView, {
+      props: {
+        graph: graphA,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+
+    const simA = simulationRecords[0]
+    simA.stop()
+    const nHeroiA = simA.nodes().find((n) => n.path === 'Personagens/Heroi.md')
+    nHeroiA.x = 20
+    nHeroiA.y = 10
+
+    const canvas = wrapper.find('[data-testid="graph-canvas"]')
+    const canvasEl = canvas.element
+
+    // Start active drag on Vault A
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: 420, clientY: 310, pointerId: 11 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 450, clientY: 330, pointerId: 11 }))
+    await nextTick()
+    expect(simA.alphaTarget()).toBeCloseTo(0.28, 5)
+    expect(canvas.classes()).toContain('graph-canvas--grabbing')
+
+    // Switch to Vault B while pointer is still down
+    await wrapper.setProps({
+      graph: graphB,
+      vaultDirectory: 'C:/vaults/other',
+    })
+    await nextTick()
+
+    expect(simA.alphaTarget()).toBe(0)
+    expect(simA.stop).toHaveBeenCalled()
+    expect(canvas.classes()).not.toContain('graph-canvas--grabbing')
+
+    const simB = simulationRecords[1]
+    expect(simB).toBeDefined()
+    simB.stop()
+    const alphaB = simB.nodes().find((n) => n.path === 'Alpha.md')
+    alphaB.x = 50
+    alphaB.y = 30
+    const alphaBeforeX = alphaB.x
+    const alphaBeforeY = alphaB.y
+
+    // Stale pointer events from pointerId=11 (right over Alpha.md coords) must NOT drag or open Alpha.md
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 450, clientY: 330, pointerId: 11 }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: 450, clientY: 330, pointerId: 11 }))
+    await nextTick()
+
+    expect(simB.alphaTarget()).toBe(0)
+    expect(alphaB.x).toBe(alphaBeforeX)
+    expect(alphaB.y).toBe(alphaBeforeY)
+    expect(alphaB.fx).toBeNull()
+    expect(alphaB.fy).toBeNull()
+    expect(wrapper.emitted('open-note')).toBeUndefined()
+
+    // New interaction with fresh pointerId on Vault B works normally
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: 450, clientY: 330, pointerId: 12 }))
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 480, clientY: 345, pointerId: 12 }))
+    expect(simB.alphaTarget()).toBeCloseTo(0.28, 5)
+    expect(alphaB.x).toBeCloseTo(80, 5)
+    expect(alphaB.y).toBeCloseTo(45, 5)
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: 480, clientY: 345, pointerId: 12 }))
+    expect(simB.alphaTarget()).toBe(0)
+    expect(alphaB.fx).toBeNull()
+    expect(alphaB.fy).toBeNull()
+
+    wrapper.unmount()
+  })
 })
