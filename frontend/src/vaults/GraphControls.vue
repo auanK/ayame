@@ -59,6 +59,23 @@ const CONTROL_TABS = [
 ]
 
 const activeTab = ref('filters')
+const tabButtonRefs = []
+
+const setTabRef = (idx) => (el) => {
+  tabButtonRefs[idx] = el
+}
+
+const handleTabKeydown = (idx, event) => {
+  let nextIdx = null
+  if (event.key === 'ArrowRight') nextIdx = (idx + 1) % CONTROL_TABS.length
+  else if (event.key === 'ArrowLeft') nextIdx = (idx - 1 + CONTROL_TABS.length) % CONTROL_TABS.length
+  else if (event.key === 'Home') nextIdx = 0
+  else if (event.key === 'End') nextIdx = CONTROL_TABS.length - 1
+  if (nextIdx === null) return
+  event.preventDefault()
+  activeTab.value = CONTROL_TABS[nextIdx].id
+  tabButtonRefs[nextIdx]?.focus?.()
+}
 
 const DISPLAY_SLIDERS = [
   {
@@ -196,9 +213,10 @@ const handleMoveGroup = (groupId, delta) => {
   >
     <div class="graph-tabs-bar" role="tablist" aria-label="Graph settings categories">
       <button
-        v-for="tab in CONTROL_TABS"
+        v-for="(tab, idx) in CONTROL_TABS"
         :id="`${panelId}-tab-${tab.id}`"
         :key="tab.id"
+        :ref="setTabRef(idx)"
         type="button"
         role="tab"
         class="graph-tab-btn"
@@ -207,6 +225,7 @@ const handleMoveGroup = (groupId, delta) => {
         :aria-controls="`${panelId}-pane-${tab.id}`"
         :aria-selected="activeTab === tab.id ? 'true' : 'false'"
         @click="activeTab = tab.id"
+        @keydown="handleTabKeydown(idx, $event)"
       >
         <span class="graph-tab-label">{{ tab.label }}</span>
         <span v-if="tab.id === 'groups' && groups.length > 0" class="graph-tab-count">
@@ -218,12 +237,14 @@ const handleMoveGroup = (groupId, delta) => {
     <div class="graph-tab-body">
       <!-- Filters Tab -->
       <section
-        v-if="activeTab === 'filters'"
+        v-show="activeTab === 'filters'"
         :id="`${panelId}-pane-filters`"
         class="graph-tab-pane"
         data-testid="graph-tab-pane-filters"
         role="tabpanel"
         :aria-labelledby="`${panelId}-tab-filters`"
+        :hidden="activeTab !== 'filters'"
+        :inert="activeTab !== 'filters' || undefined"
       >
         <div class="graph-pane-header">
           <span class="graph-pane-title">Filters</span>
@@ -308,12 +329,14 @@ const handleMoveGroup = (groupId, delta) => {
 
       <!-- Groups Tab -->
       <section
-        v-else-if="activeTab === 'groups'"
+        v-show="activeTab === 'groups'"
         :id="`${panelId}-pane-groups`"
         class="graph-tab-pane"
         data-testid="graph-tab-pane-groups"
         role="tabpanel"
         :aria-labelledby="`${panelId}-tab-groups`"
+        :hidden="activeTab !== 'groups'"
+        :inert="activeTab !== 'groups' || undefined"
       >
         <div class="graph-pane-header">
           <span class="graph-pane-title">Color groups</span>
@@ -417,12 +440,14 @@ const handleMoveGroup = (groupId, delta) => {
 
       <!-- Display Tab -->
       <section
-        v-else-if="activeTab === 'display'"
+        v-show="activeTab === 'display'"
         :id="`${panelId}-pane-display`"
         class="graph-tab-pane"
         data-testid="graph-tab-pane-display"
         role="tabpanel"
         :aria-labelledby="`${panelId}-tab-display`"
+        :hidden="activeTab !== 'display'"
+        :inert="activeTab !== 'display' || undefined"
       >
         <label class="graph-filter-toggle">
           <input
@@ -459,12 +484,14 @@ const handleMoveGroup = (groupId, delta) => {
 
       <!-- Forces Tab -->
       <section
-        v-else
+        v-show="activeTab === 'forces'"
         :id="`${panelId}-pane-forces`"
         class="graph-tab-pane"
         data-testid="graph-tab-pane-forces"
         role="tabpanel"
         :aria-labelledby="`${panelId}-tab-forces`"
+        :hidden="activeTab !== 'forces'"
+        :inert="activeTab !== 'forces' || undefined"
       >
         <label
           v-for="slider in FORCE_SLIDERS"
@@ -595,6 +622,10 @@ const handleMoveGroup = (groupId, delta) => {
   flex-direction: column;
   gap: 0.6rem;
   min-width: 0;
+}
+
+.graph-tab-pane[hidden] {
+  display: none;
 }
 
 .graph-pane-header {

@@ -131,6 +131,7 @@ const cameraTarget = {
 }
 
 let isUnmounted = false
+let locatorPointerPending = false
 let simulation = null
 let simNodes = []
 let simLinks = []
@@ -967,6 +968,7 @@ const handlePointerUp = (event) => finishPointerInteraction(event, true)
 const handlePointerCancel = (event) => finishPointerInteraction(event, false)
 
 const handleWindowBlur = () => {
+  locatorPointerPending = false
   cancelActiveInteraction()
   cancelCameraAnimation()
 }
@@ -1056,11 +1058,13 @@ const openHighlightedMatch = () => {
 }
 
 const selectLocatorNode = (node) => {
+  locatorPointerPending = false
   locatorOpen.value = false
   emit('open-note', node.path)
 }
 
 const closeLocator = () => {
+  locatorPointerPending = false
   locatorOpen.value = false
   if (!viewport.draggingNodeId && updateHoveredNode(null)) {
     scheduleDraw()
@@ -1072,6 +1076,13 @@ const getPopoverElement = () => {
   if (!target) return null
   return target.$el || target
 }
+
+const isNodeWithin = (container, eventTarget, activeEl) =>
+  Boolean(
+    container &&
+      ((eventTarget && container.contains?.(eventTarget)) ||
+        (activeEl && container.contains?.(activeEl)))
+  )
 
 const isEscapeKey = (event) =>
   Boolean(event) &&
@@ -1099,25 +1110,40 @@ const closeSettingsPopover = ({ restoreFocus = false } = {}) => {
   }
 }
 
-const handleLocatorEscape = (event) => {
-  if (!locatorOpen.value) return
-  event.preventDefault()
-  event.stopPropagation()
+const handleLocatorFocusOut = (event) => {
+  if (!locatorOpen.value || isUnmounted) return
+  const nextTarget = event.relatedTarget
+  if (nextTarget && locatorRef.value?.contains(nextTarget)) return
+  if (!nextTarget && locatorPointerPending) {
+    locatorPointerPending = false
+    return
+  }
   closeLocator()
 }
 
 const handleEscapeKey = (event) => {
   if (isUnmounted || event.defaultPrevented || !isEscapeKey(event)) return
+  const popoverEl = getPopoverElement()
+  const target = event.target
+  const activeEl = typeof document !== 'undefined' ? document.activeElement : null
+  const inSettings =
+    isNodeWithin(settingsToggleRef.value, target, activeEl) ||
+    isNodeWithin(popoverEl, target, activeEl)
+  const inLocator = isNodeWithin(locatorRef.value, target, activeEl)
+
+  // Close Settings immediately whenever it is active or focused; only prefer closing the
+  // locator first when both are open and focus is currently inside the locator region.
+  if (filtersOpen.value && (inSettings || !inLocator || !locatorOpen.value)) {
+    event.preventDefault()
+    event.stopPropagation()
+    closeSettingsPopover({ restoreFocus: true })
+    return
+  }
   if (locatorOpen.value) {
     event.preventDefault()
     event.stopPropagation()
     closeLocator()
-    return
   }
-  if (!filtersOpen.value) return
-  event.preventDefault()
-  event.stopPropagation()
-  closeSettingsPopover({ restoreFocus: true })
 }
 
 const handleContainerKeydown = (event) => {
@@ -1231,6 +1257,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   isUnmounted = true
+  locatorPointerPending = false
+  locatorOpen.value = false
   filtersOpen.value = false
   cancelActiveInteraction()
   cancelCameraAnimation()
@@ -1271,6 +1299,10 @@ defineExpose({
           v-if="viewStatus === 'ready'"
           ref="locatorRef"
           class="graph-locator"
+          @focusout="handleLocatorFocusOut"
+          @pointerdown="locatorPointerPending = true"
+          @pointerup="locatorPointerPending = false"
+          @pointercancel="locatorPointerPending = false"
         >
           <input
             v-model="locatorQuery"
@@ -1286,7 +1318,6 @@ defineExpose({
             @keydown.down.prevent="moveLocatorSelection(1)"
             @keydown.up.prevent="moveLocatorSelection(-1)"
             @keydown.enter.prevent="openHighlightedMatch"
-            @keydown.esc="handleLocatorEscape"
           />
           <ul
             v-if="locatorOpen && locatorMatches.length > 0"
@@ -1308,6 +1339,7 @@ defineExpose({
                 :class="{ 'graph-locator-item--active': idx === locatorActiveIndex }"
                 data-testid="graph-locator-item"
                 :data-note-path="node.path"
+                @mousedown.prevent
                 @mouseenter="locatorActiveIndex = idx; focusNodeOnCanvas(node.path)"
                 @focus="locatorActiveIndex = idx; focusNodeOnCanvas(node.path)"
                 @click="selectLocatorNode(node)"
