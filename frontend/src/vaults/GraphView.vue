@@ -85,6 +85,12 @@ const hasFailures = computed(
   () => Array.isArray(props.graph?.failures) && props.graph.failures.length > 0
 )
 const isIncomplete = computed(() => Boolean(props.graph && !props.graph.complete && hasFailures.value))
+const hasRefreshError = computed(() => Boolean(props.error && hasNodes.value))
+
+const handleRetry = () => {
+  if (props.loading) return
+  emit('retry')
+}
 
 const viewStatus = computed(() => {
   if (props.loading && !hasNodes.value) return 'loading'
@@ -785,7 +791,8 @@ defineExpose({
         type="button"
         class="btn-secondary btn-compact"
         data-testid="graph-retry-button"
-        @click="emit('retry')"
+        :disabled="loading"
+        @click="handleRetry"
       >
         Try again
       </button>
@@ -881,13 +888,33 @@ defineExpose({
         </ul>
       </div>
 
-      <div
-        v-if="isIncomplete"
-        class="graph-incomplete-notice"
-        data-testid="graph-incomplete-notice"
-        role="status"
-      >
-        Graph data is incomplete.
+      <div v-if="hasRefreshError || isIncomplete" class="graph-notices">
+        <div
+          v-if="hasRefreshError"
+          class="graph-refresh-error-notice"
+          data-testid="graph-refresh-error-notice"
+          role="alert"
+        >
+          <span>Could not refresh graph. Showing previous data.</span>
+          <button
+            type="button"
+            class="btn-secondary btn-compact"
+            data-testid="graph-retry-button"
+            :disabled="loading"
+            @click="handleRetry"
+          >
+            {{ loading ? 'Retrying...' : 'Try again' }}
+          </button>
+        </div>
+
+        <div
+          v-if="isIncomplete"
+          class="graph-incomplete-notice"
+          data-testid="graph-incomplete-notice"
+          role="status"
+        >
+          Graph data is incomplete.
+        </div>
       </div>
 
       <div
@@ -1024,11 +1051,36 @@ defineExpose({
   color: var(--ayame-text-muted, #aaa6b8);
 }
 
-.graph-incomplete-notice {
+.graph-notices {
   position: absolute;
   top: 0.75rem;
   right: 0.75rem;
-  z-index: 4;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  max-width: min(380px, calc(100% - 1.5rem));
+  pointer-events: none;
+}
+
+.graph-refresh-error-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: rgba(27, 28, 37, 0.92);
+  border: 1px solid var(--ayame-border, #34323f);
+  border-radius: 5px;
+  color: var(--ayame-text, #eeeaf3);
+  font-size: 0.78rem;
+  pointer-events: auto;
+  backdrop-filter: blur(4px);
+}
+
+.graph-incomplete-notice {
   padding: 0.3rem 0.6rem;
   background: rgba(27, 28, 37, 0.88);
   border: 1px solid var(--ayame-primary, #a99aca);
