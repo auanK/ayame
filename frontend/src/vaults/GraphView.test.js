@@ -993,4 +993,201 @@ describe('GraphView.vue', () => {
 
     wrapper.unmount()
   })
+
+  it('preserves initial drag contact offset without jumping, ignores foreign pointers, and cleans up on cancel/blur', async () => {
+    const graph = buildGraphModel(sampleIndex())
+    const wrapper = mount(GraphView, {
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+
+    const sim = simulationRecords[0]
+    sim.stop()
+    const targetNode = sim.nodes().find((n) => n.path === 'Personagens/Heroi.md')
+    targetNode.x = 100
+    targetNode.y = 50
+    targetNode.vx = 0
+    targetNode.vy = 0
+
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+    // Canvas center is (400, 300), scale 1 -> node center at (500, 350).
+    // Press 6px right & 4px down from node center (edge hit within hitRadius ~10.6px).
+    const pressX = 506
+    const pressY = 354
+
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: pressX, clientY: pressY, pointerId: 1 }))
+    // Pressing node perimeter MUST NOT jump node.x/y or immediately lock fx/fy to cursor center!
+    expect(targetNode.x).toBe(100)
+    expect(targetNode.y).toBe(50)
+    expect(targetNode.fx).toBeFalsy()
+    expect(targetNode.fy).toBeFalsy()
+
+    // Foreign pointer events MUST NOT hijack or terminate the active gesture
+    canvasEl.dispatchEvent(pointerEvent('pointermove', { clientX: 20, clientY: 20, pointerId: 2 }))
+    canvasEl.dispatchEvent(pointerEvent('pointerup', { clientX: 20, clientY: 20, pointerId: 2 }))
+    expect(targetNode.x).toBe(100)
+    expect(wrapper.emitted('open-note')).toBeUndefined()
+
+    // First drag move past 4px threshold preserves initial (x - wx = -6, y - wy = -4) contact offset!
+    canvasEl.dispatchEvent(
+      pointerEvent('pointermove', { clientX: pressX + 20, clientY: pressY + 10, pointerId: 1 })
+    )
+    expect(targetNode.fx).toBeCloseTo(120, 5)
+    expect(targetNode.fy).toBeCloseTo(60, 5)
+
+    // Interruption via window blur releases fx/fy and stops alphaTarget heating without emitting open-note
+    window.dispatchEvent(new Event('blur'))
+    expect(targetNode.fx).toBeNull()
+    expect(targetNode.fy).toBeNull()
+    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
+    expect(wrapper.emitted('open-note')).toBeUndefined()
+
+    // pointercancel also cleans up active drag safely without opening the note
+    canvasEl.dispatchEvent(pointerEvent('pointerdown', { clientX: pressX, clientY: pressY, pointerId: 3 }))
+    canvasEl.dispatchEvent(
+      pointerEvent('pointermove', { clientX: pressX + 15, clientY: pressY, pointerId: 3 })
+    )
+    expect(targetNode.fx).toBeCloseTo(115, 5)
+    canvasEl.dispatchEvent(
+      pointerEvent('pointercancel', { clientX: pressX + 15, clientY: pressY, pointerId: 3 })
+    )
+    expect(targetNode.fx).toBeNull()
+    expect(targetNode.fy).toBeNull()
+    expect(sim.alphaTarget).toHaveBeenLastCalledWith(0)
+    expect(wrapper.emitted('open-note')).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
+  it('smoothly interpolates wheel zoom with single rAF loop, keeps cursor point anchored, clamps bounds, and cancels on vault switch/unmount/reduced-motion', async () => {
+    const stepNextRaf = (canvasEl, timestamp) => {
+      const entries = [...rafQueue.entries()]
+      expect(entries.length).toBeLessThanOrEqual(1)
+      if (entries.length === 0) return null
+      const [id, cb] = entries[0]
+      rafQueue.delete(id)
+      const ctx = canvasEl.getContext('2d')
+      ctx._recorded.arcs.length = 0
+      cb(timestamp)
+      return { arcs: [...ctx._recorded.arcs] }
+    }
+
+    const index = sampleIndex()
+    const graph = buildGraphModel(index)
+    const wrapper = mount(GraphView, {
+      props: {
+        graph,
+        vaultDirectory: 'C:/vaults/story',
+      },
+    })
+
+    const sim = simulationRecords[0]
+    sim.stop()
+    const nHeroi = sim.nodes().find((n) => n.id === 'note:Personagens/Heroi.md')
+    const nIsolada = sim.nodes().find((n) => n.id === 'note:Isolada.md')
+    nHeroi.x = 40
+    nHeroi.y = 20
+    nIsolada.x = -60
+    nIsolada.y = 20
+
+    const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
+    // Flush initial mount frame so rAF queue is clear
+    stepNextRaf(canvasEl, 1000)
+
+    const anchorSx = 400 + nHeroi.x // 440
+    const anchorSy = 300 + nHeroi.y // 320
+
+    // Two rapid consecutive wheel events share one target and queue at most ONE rAF loop
+    canvasEl.dispatchEvent(
+      new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: anchorSx, clientY: anchorSy, deltaY: -120 })
+    )
+    canvasEl.dispatchEvent(
+      new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: anchorSx, clientY: anchorSy, deltaY: -120 })
+    )
+    expect(rafQueue.size).toBe(1)
+
+    // Frame 1 advances progressively (intermediate scale, NOT jumped straight to final)
+    const frame1 = stepNextRaf(canvasEl, 1016)
+    const measureScale = (frame) => {
+      const sorted = [...frame.arcs].sort((a, b) => a.x - b.x)
+      const left = sorted[0]
+      const right = sorted[sorted.length - 1]
+      return Math.hypot(right.x - left.x, right.y - left.y)
+    }
+
+    // Check anchored node stays right at (anchorSx, anchorSy) during animation AND scale grows progressively
+    const findArcNear = (frame, x, y) =>
+      frame.arcs.reduce((best, cur) =>
+        !best || Math.hypot(cur.x - x, cur.y - y) < Math.hypot(best.x - x, best.y - y) ? cur : best
+      , null)
+
+    const anchoredFrame1 = findArcNear(frame1, anchorSx, anchorSy)
+    expect(Math.hypot(anchoredFrame1.x - anchorSx, anchoredFrame1.y - anchorSy)).toBeLessThan(0.5)
+
+    // Advance controlled frames (~16ms each) -> progresses smoothly, converges, then stops scheduling rAF!
+    let prevWidth = measureScale(frame1)
+    let latestFrame = frame1
+    let safety = 0
+    while (rafQueue.size > 0 && safety < 80) {
+      safety += 1
+      latestFrame = stepNextRaf(canvasEl, 1016 + safety * 16)
+      const anchored = findArcNear(latestFrame, anchorSx, anchorSy)
+      expect(Math.hypot(anchored.x - anchorSx, anchored.y - anchorSy)).toBeLessThan(0.5)
+    }
+    expect(safety).toBeGreaterThan(2)
+    expect(safety).toBeLessThan(80)
+    expect(rafQueue.size).toBe(0)
+    expect(measureScale(latestFrame)).toBeGreaterThan(prevWidth)
+
+    // Bounds clamping: huge zoom-in does not overshoot MAX_SCALE=6 or produce NaN
+    for (let i = 0; i < 30; i += 1) {
+      canvasEl.dispatchEvent(
+        new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: anchorSx, clientY: anchorSy, deltaY: -240 })
+      )
+    }
+    expect(rafQueue.size).toBe(1)
+    let clampedSteps = 0
+    while (rafQueue.size > 0 && clampedSteps < 100) {
+      clampedSteps += 1
+      latestFrame = stepNextRaf(canvasEl, 3000 + clampedSteps * 16)
+    }
+    const maxSpan = measureScale(latestFrame)
+    expect(Number.isFinite(maxSpan)).toBe(true)
+    // World x separation between Isolada (-60) and Heroi (40) = 100 -> clamped at MAX_SCALE=6 => <= 600px (with other nodes inside)
+    expect(maxSpan).toBeLessThanOrEqual(600.1)
+
+    // Vault switch cancels pending animation cleanly
+    canvasEl.dispatchEvent(
+      new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: anchorSx, clientY: anchorSy, deltaY: 120 })
+    )
+    expect(rafQueue.size).toBe(1)
+    await wrapper.setProps({ vaultDirectory: 'C:/vaults/other' })
+    await nextTick()
+    expect(globalThis.cancelAnimationFrame).toHaveBeenCalled()
+    expect(rafQueue.size).toBe(0)
+
+    // prefers-reduced-motion: reduce applies zoom immediately without queuing a multi-frame animation loop
+    const origMatchMedia = window.matchMedia
+    window.matchMedia = vi.fn().mockImplementation((query) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    try {
+      canvasEl.dispatchEvent(
+        new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaY: -120 })
+      )
+      // At most 1 draw rAF queued, and running it once leaves queue empty (zero iterative loop!)
+      const reduceFrame = stepNextRaf(canvasEl, 5000)
+      expect(reduceFrame).not.toBeNull()
+      expect(rafQueue.size).toBe(0)
+    } finally {
+      window.matchMedia = origMatchMedia
+    }
+
+    wrapper.unmount()
+  })
 })

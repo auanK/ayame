@@ -1017,4 +1017,128 @@ describe('VaultBrowser global graph integration', () => {
 
     reloaded.unmount()
   })
+
+  it('promotes Graph and Local Graph to primary workspace navigation, protects dirty drafts, and scrolls offscreen contextual tabs horizontally at 200px/300px widths', async () => {
+    const wrapper = mountBrowser({ vault: VAULT_A })
+    await flushPromises()
+
+    // Mock right-panel tab strip at 200px width where first tabs fit and later tabs (e.g. Local Graph) sit off-screen
+    const navEl = wrapper.find('.right-panel-tabs').element
+    navEl.getBoundingClientRect = vi.fn(() => ({ left: 0, right: 200, width: 200, top: 0, bottom: 32, height: 32 }))
+
+    const scrollSpies = new Map()
+    const configureTabRect = (testId, left, right) => {
+      const btn = wrapper.find(`[data-testid="${testId}"]`).element
+      btn.getBoundingClientRect = vi.fn(() => ({
+        left,
+        right,
+        width: right - left,
+        top: 0,
+        bottom: 32,
+        height: 32,
+      }))
+      const spy = vi.fn()
+      btn.scrollIntoView = spy
+      scrollSpies.set(testId, spy)
+      return btn
+    }
+
+    configureTabRect('panel-tab-backlinks', 8, 90)
+    configureTabRect('panel-tab-outgoing', 94, 175)
+    configureTabRect('panel-tab-outline', 180, 235)
+    configureTabRect('panel-tab-tags', 240, 285)
+    configureTabRect('panel-tab-search', 290, 340)
+    configureTabRect('panel-tab-local-graph', 345, 430)
+
+    // Primary Graph navigation exists with single open-graph-button (+ SVG icon) and open-local-graph-button before Commands/Panel
+    const graphNav = wrapper.find('[data-testid="workspace-graph-nav"]')
+    expect(graphNav.exists()).toBe(true)
+    expect(wrapper.findAll('[data-testid="open-graph-button"]')).toHaveLength(1)
+
+    const globalBtn = graphNav.find('[data-testid="open-graph-button"]')
+    const localBtn = graphNav.find('[data-testid="open-local-graph-button"]')
+    expect(globalBtn.exists()).toBe(true)
+    expect(globalBtn.text()).toContain('Graph')
+    expect(globalBtn.find('svg').exists()).toBe(true)
+    expect(localBtn.exists()).toBe(true)
+    expect(localBtn.text()).toContain('Local Graph')
+
+    // Graph nav stays before Commands and Panel in DOM order even with no notes open, collapsed explorer, and collapsed right panel
+    const commandsBtn = wrapper.find('[data-testid="command-palette-button"]')
+    expect(
+      Boolean(graphNav.element.compareDocumentPosition(commandsBtn.element) & Node.DOCUMENT_POSITION_FOLLOWING)
+    ).toBe(true)
+
+    await wrapper.find('[data-testid="toggle-explorer-button"]').trigger('click')
+    await nextTick()
+    expect(globalBtn.isVisible()).toBe(true)
+    expect(localBtn.isVisible()).toBe(true)
+
+    // Clicking Graph with no open note opens Global Graph cleanly and marks active state
+    await globalBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-view"]').exists()).toBe(true)
+    expect(globalBtn.classes()).toContain('workspace-nav-graph--active')
+
+    // Open a note with unsaved dirty changes, then use primary Graph & Local Graph buttons:
+    // editor stays mounted and unsaved edits are preserved!
+    await wrapper.find('[data-testid="toggle-explorer-button"]').trigger('click')
+    await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
+    await flushPromises()
+    const viewer = wrapper.findComponent({ name: 'MarkdownViewer' })
+    const viewerInstanceBefore = viewer.vm
+    viewer.vm.$emit('state', { dirty: true, saving: false, saveState: 'idle' })
+    await nextTick()
+
+    await globalBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.findComponent({ name: 'MarkdownViewer' }).vm).toBe(viewerInstanceBefore)
+
+    // Right panel is collapsed initially -> clicking primary Local Graph expands panel, selects tab, and scrolls it horizontally into view!
+    expect(wrapper.find('[data-testid="workspace-right-panel"]').classes()).toContain(
+      'workspace-right-panel--collapsed'
+    )
+    await localBtn.trigger('click')
+    await nextTick()
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="workspace-right-panel"]').classes()).not.toContain(
+      'workspace-right-panel--collapsed'
+    )
+    expect(wrapper.find('[data-testid="panel-tab-local-graph"]').classes()).toContain(
+      'right-panel-tab--active'
+    )
+    expect(localBtn.classes()).toContain('workspace-nav-graph--active')
+    expect(scrollSpies.get('panel-tab-local-graph')).toHaveBeenCalledWith({
+      block: 'nearest',
+      inline: 'nearest',
+    })
+
+    // Selecting an already-visible tab (Backlinks inside 200px or 300px) does NOT call needless scrollIntoView
+    scrollSpies.get('panel-tab-backlinks').mockClear()
+    await wrapper.find('[data-testid="panel-tab-backlinks"]').trigger('click')
+    await nextTick()
+    expect(scrollSpies.get('panel-tab-backlinks')).not.toHaveBeenCalled()
+
+    // Resize to 300px width: Local Graph (345..430) is still past 300px right edge and scrolls into view via keyboard navigation
+    navEl.getBoundingClientRect = vi.fn(() => ({ left: 0, right: 300, width: 300, top: 0, bottom: 32, height: 32 }))
+    scrollSpies.get('panel-tab-local-graph').mockClear()
+    await wrapper.find('[data-testid="panel-tab-backlinks"]').trigger('keydown', { key: 'End' })
+    await nextTick()
+    await nextTick()
+    expect(wrapper.find('[data-testid="panel-tab-local-graph"]').classes()).toContain(
+      'right-panel-tab--active'
+    )
+    expect(scrollSpies.get('panel-tab-local-graph')).toHaveBeenCalledWith({
+      block: 'nearest',
+      inline: 'nearest',
+    })
+
+    // ArrowLeft moves cleanly to Search
+    await wrapper.find('[data-testid="panel-tab-local-graph"]').trigger('keydown', { key: 'ArrowLeft' })
+    await nextTick()
+    expect(wrapper.find('[data-testid="panel-tab-search"]').classes()).toContain('right-panel-tab--active')
+
+    wrapper.unmount()
+  })
 })
