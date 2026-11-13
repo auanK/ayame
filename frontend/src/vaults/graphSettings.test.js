@@ -4,7 +4,6 @@ import {
   GRAPH_SETTINGS_VERSION,
   GRAPH_DISPLAY_LIMITS,
   GRAPH_FORCE_LIMITS,
-  GRAPH_LOCAL_LIMITS,
   createDefaultGraphSettings,
   getGraphSettingsStorageKey,
   normalizeGraphSettings,
@@ -44,10 +43,11 @@ describe('graphSettings — defaults, validation & persistence', () => {
     localStorage.clear()
   })
 
-  it('produces versioned default settings matching Stage 1/2 baseline behavior', () => {
+  it('produces versioned default global graph settings without legacy local schema', () => {
     const defaults = createDefaultGraphSettings()
     expect(defaults.version).toBe(GRAPH_SETTINGS_VERSION)
     expect(defaults.groups).toEqual([])
+    expect(defaults.local).toBeUndefined()
     expect(defaults.global.filters).toEqual({
       searchQuery: '',
       showTags: false,
@@ -66,10 +66,6 @@ describe('graphSettings — defaults, validation & persistence', () => {
       linkForce: 0.55,
       linkDistance: 60,
     })
-    expect(defaults.local.depth).toBe(1)
-    expect(defaults.local.direction).toBe('both')
-    expect(defaults.local.display).toEqual(defaults.global.display)
-    expect(defaults.local.forces).toEqual(defaults.global.forces)
   })
 
   it('derives stable storage key per vault directory', () => {
@@ -78,19 +74,13 @@ describe('graphSettings — defaults, validation & persistence', () => {
     expect(getGraphSettingsStorageKey(null)).toBeNull()
   })
 
-  it('persists and restores complete settings per vault while keeping global and local independent', () => {
+  it('persists and restores complete global settings per vault and safely drops legacy local preferences fail-closed', () => {
     let settings = createDefaultGraphSettings()
     settings = addColorGroup(settings, { id: 'g1', query: 'path:Projects', color: '#e06c75' })
-    settings = updateGraphViewSettings(settings, 'global', {
+    settings = updateGraphViewSettings(settings, {
       display: { arrows: true, nodeSize: 1.8, textFadeThreshold: 0.9, linkThickness: 1.6 },
       forces: { centerForce: 0.25, repelForce: 300, linkForce: 0.8, linkDistance: 120 },
       filters: { showTags: true, showOrphans: false },
-    })
-    settings = updateGraphViewSettings(settings, 'local', {
-      depth: 3,
-      direction: 'outgoing',
-      display: { arrows: false, nodeSize: 0.7 },
-      forces: { linkDistance: 45 },
     })
 
     const saved = saveGraphSettings('vault-a', settings)
@@ -101,18 +91,38 @@ describe('graphSettings — defaults, validation & persistence', () => {
     expect(loaded.settings.groups).toEqual([{ id: 'g1', query: 'path:Projects', color: '#e06c75' }])
     expect(loaded.settings.global.display.arrows).toBe(true)
     expect(loaded.settings.global.display.nodeSize).toBe(1.8)
-    expect(loaded.settings.local.display.arrows).toBe(false)
-    expect(loaded.settings.local.display.nodeSize).toBe(0.7)
-    expect(loaded.settings.local.depth).toBe(3)
-    expect(loaded.settings.local.direction).toBe('outgoing')
     expect(loaded.settings.global.forces.repelForce).toBe(300)
-    expect(loaded.settings.local.forces.repelForce).toBe(165)
-    expect(loaded.settings.local.forces.linkDistance).toBe(45)
+    expect(loaded.settings.local).toBeUndefined()
+
+    // Legacy vault data with persisted "local" block loads valid global/groups cleanly and strips legacy local data
+    localStorage.setItem(
+      'ayame:graph-settings:vault-legacy',
+      JSON.stringify({
+        version: 1,
+        groups: [{ id: 'lg-1', query: 'tag:#keep', color: '#98c379' }],
+        global: {
+          filters: { searchQuery: 'Keep', showTags: true, existingFilesOnly: false, showOrphans: false },
+          display: { arrows: true, textFadeThreshold: 0.8, nodeSize: 1.4, linkThickness: 1.2 },
+          forces: { centerForce: 0.1, repelForce: 210, linkForce: 0.6, linkDistance: 80 },
+        },
+        local: {
+          depth: 4,
+          direction: 'outgoing',
+          display: { arrows: false, nodeSize: 0.6 },
+        },
+      })
+    )
+    const migrated = loadGraphSettings('vault-legacy')
+    expect(migrated.error).toBeNull()
+    expect(migrated.settings.local).toBeUndefined()
+    expect(migrated.settings.groups).toEqual([{ id: 'lg-1', query: 'tag:#keep', color: '#98c379' }])
+    expect(migrated.settings.global.filters.searchQuery).toBe('Keep')
+    expect(migrated.settings.global.display.nodeSize).toBe(1.4)
   })
 
   it('isolates settings strictly between different vaults', () => {
     const a = addColorGroup(createDefaultGraphSettings(), { id: 'a1', query: 'tag:#work', color: '#98c379' })
-    saveGraphSettings('vault-a', updateGraphViewSettings(a, 'global', { display: { arrows: true } }))
+    saveGraphSettings('vault-a', updateGraphViewSettings(a, { display: { arrows: true } }))
 
     const b = loadGraphSettings('vault-b')
     expect(b.settings.groups).toEqual([])
@@ -130,7 +140,7 @@ describe('graphSettings — defaults, validation & persistence', () => {
     expect(loadGraphSettings('future-version').settings).toEqual(createDefaultGraphSettings())
   })
 
-  it('sanitizes NaN, Infinity, out-of-range numbers, invalid colors, invalid enums, and unknown properties', () => {
+  it('sanitizes NaN, Infinity, out-of-range numbers, invalid colors, corrupt legacy local fields, and unknown properties', () => {
     const normalized = normalizeGraphSettings({
       version: GRAPH_SETTINGS_VERSION,
       maliciousExtra: 'drop-me',
@@ -141,6 +151,11 @@ describe('graphSettings — defaults, validation & persistence', () => {
       ],
       global: {
         injected: true,
+        filters: {
+          showTags: 1,
+          searchQuery: 12345,
+          extraFilter: true,
+        },
         display: {
           arrows: 'yes',
           textFadeThreshold: Number.NaN,
@@ -155,19 +170,15 @@ describe('graphSettings — defaults, validation & persistence', () => {
           linkDistance: 10,
         },
       },
-      local: {
-        depth: 99,
-        direction: 'diagonal',
-        filters: {
-          showTags: 1,
-          searchQuery: 12345,
-          extraFilter: true,
-        },
-      },
+      local: 'corrupted-legacy-local-payload',
     })
 
     expect(normalized.maliciousExtra).toBeUndefined()
+    expect(normalized.local).toBeUndefined()
     expect(normalized.global.injected).toBeUndefined()
+    expect(normalized.global.filters.showTags).toBe(false)
+    expect(normalized.global.filters.searchQuery).toBe('')
+    expect(normalized.global.filters.extraFilter).toBeUndefined()
     expect(normalized.groups).toHaveLength(2)
     expect(normalized.groups[0]).toEqual({ id: 'ok', query: 'tag:#a', color: '#abcdef' })
     expect(normalized.groups[1].color).toMatch(/^#[0-9a-f]{6}$/)
@@ -183,11 +194,6 @@ describe('graphSettings — defaults, validation & persistence', () => {
       linkForce: GRAPH_FORCE_LIMITS.linkForce.max,
       linkDistance: GRAPH_FORCE_LIMITS.linkDistance.min,
     })
-    expect(normalized.local.depth).toBe(GRAPH_LOCAL_LIMITS.depth.max)
-    expect(normalized.local.direction).toBe('both')
-    expect(normalized.local.filters.showTags).toBe(false)
-    expect(normalized.local.filters.searchQuery).toBe('')
-    expect(normalized.local.filters.extraFilter).toBeUndefined()
   })
 
   it('handles storage write failures gracefully and signals non-persisted error', () => {
@@ -203,27 +209,20 @@ describe('graphSettings — defaults, validation & persistence', () => {
     expect(result.settings).toEqual(createDefaultGraphSettings())
   })
 
-  it('restores default settings for a view while preserving shared groups unless explicitly requested', () => {
+  it('restores default global settings while preserving shared groups unless explicitly requested', () => {
     let settings = addColorGroup(createDefaultGraphSettings(), { id: 'g1', query: 'Alpha', color: '#e5c07b' })
-    settings = updateGraphViewSettings(settings, 'global', {
+    settings = updateGraphViewSettings(settings, {
       display: { arrows: true, nodeSize: 2 },
       forces: { repelForce: 320 },
       filters: { showOrphans: false },
     })
-    settings = updateGraphViewSettings(settings, 'local', {
-      depth: 4,
-      display: { arrows: true },
-    })
 
-    const resetGlobal = resetGraphViewSettings(settings, 'global')
+    const resetGlobal = resetGraphViewSettings(settings)
     expect(resetGlobal.global).toEqual(createDefaultGraphSettings().global)
-    expect(resetGlobal.local.depth).toBe(4)
-    expect(resetGlobal.local.display.arrows).toBe(true)
     expect(resetGlobal.groups).toHaveLength(1)
 
     const clearedGroups = resetGraphGroups(resetGlobal)
     expect(clearedGroups.groups).toEqual([])
-    expect(clearedGroups.local.depth).toBe(4)
   })
 })
 

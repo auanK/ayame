@@ -656,235 +656,8 @@ describe('VaultBrowser global graph integration', () => {
     wrapper.unmount()
   })
 
-  it('opens Local Graph in right panel, follows active note safely across blocked navigation, and handles 200px reveal resize', async () => {
-    const richIndex = () => ({
-      directory: VAULT_A.directory,
-      complete: true,
-      failures: [],
-      folders: ['Personagens'],
-      files: ['Historia.md', 'Personagens/Heroi.md', 'Vilao.md', 'Final.md'],
-      notes: [
-        {
-          path: 'Historia.md',
-          content: '---\nchapter: 1\n---\n# Historia\nVeja [[Personagens/Heroi]].\n',
-          mtimeMs: 1000,
-        },
-        {
-          path: 'Personagens/Heroi.md',
-          content: '# Heroi\nParte de [[Historia]] e enfrenta [[Vilao]].\n',
-          mtimeMs: 1000,
-        },
-        {
-          path: 'Vilao.md',
-          content: '# Vilao\nLigado ao [[Final]].\n',
-          mtimeMs: 1000,
-        },
-        {
-          path: 'Final.md',
-          content: '# Final\nSem links.\n',
-          mtimeMs: 1000,
-        },
-      ],
-    })
-    vaultApi.getVaultIndex.mockResolvedValue(richIndex())
-    vaultApi.getVaultMarkdown.mockImplementation(async (dir, path) => {
-      const found = richIndex().notes.find((n) => n.path === path)
-      if (!found) throw Object.assign(new Error('Not found'), { code: 'NOT_FOUND' })
-      return {
-        directory: dir,
-        path: found.path,
-        name: found.path.split('/').pop(),
-        content: found.content,
-        revision: 'a'.repeat(64),
-        mtimeMs: found.mtimeMs,
-        writable: true,
-      }
-    })
-
-    const wrapper = mountBrowser({ vault: VAULT_A })
-    await flushPromises()
-
-    // Ensure right panel starts collapsed or collapse it, then open Local Graph via Command Palette
-    if (wrapper.find('[data-testid="workspace-right-panel"]').exists() &&
-        !wrapper.find('[data-testid="workspace-right-panel"]').classes().includes('workspace-right-panel--collapsed')) {
-      await wrapper.find('[data-testid="toggle-right-panel-button"]').trigger('click')
-      await nextTick()
-    }
-
-    await wrapper.find('[data-testid="command-palette-button"]').trigger('click')
-    await nextTick()
-    const localCmd = wrapper
-      .findAll('[data-testid="command-palette-modal"] button.panel-list-item')
-      .find((btn) => btn.text().includes('Open local graph'))
-    expect(localCmd).toBeTruthy()
-    await localCmd.trigger('click')
-    await nextTick()
-
-    const localGraph = wrapper.find('[data-testid="local-graph-view"]')
-    expect(localGraph.exists()).toBe(true)
-    expect(
-      wrapper.find('[data-testid="workspace-right-panel"]').classes()
-    ).not.toContain('workspace-right-panel--collapsed')
-    expect(localGraph.find('[data-testid="graph-no-center-state"]').exists()).toBe(true)
-
-    // Narrow right panel down to 200px via splitter Home key without crashing or losing panel
-    const splitter = wrapper.find('[data-testid="resize-handle-context"]')
-    await splitter.trigger('keydown', { key: 'Home' })
-    await nextTick()
-    expect(wrapper.find('[data-testid="workspace-right-panel"]').attributes('style')).toContain(
-      'width: 200px'
-    )
-
-    // Opening Historia.md centers Local Graph on Historia + Heroi (depth 1)
-    await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
-    await flushPromises()
-    expect(localGraph.find('[data-testid="local-graph-center"]').text()).toContain('Historia')
-    expect(localGraph.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
-      'Local graph with 2 nodes and 2 connections'
-    )
-
-    // Block navigation via invalid Number draft and try opening Personagens/Heroi.md from Local Graph
-    await wrapper.find('[data-testid="property-number-input"]').setValue('abc')
-    await nextTick()
-
-    wrapper
-      .findComponent({ name: 'GraphView' }) // Local graph is only GraphView mounted right now
-      .vm.$emit('open-note', 'Personagens/Heroi.md')
-    await flushPromises()
-
-    // Navigation is blocked, so Local Graph MUST keep Historia.md as center!
-    expect(wrapper.find('[data-testid="navigation-keep-editing"]').exists()).toBe(true)
-    expect(localGraph.find('[data-testid="local-graph-center"]').text()).toContain('Historia')
-
-    await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
-    await flushPromises()
-    expect(localGraph.find('[data-testid="local-graph-center"]').text()).toContain('Heroi')
-
-    wrapper.unmount()
-  })
-
-  it('keeps Global and Local filters/depth/simulations isolated, updates on live saves, and resets on vault switch', async () => {
-    const richIndex = () => ({
-      directory: VAULT_A.directory,
-      complete: true,
-      failures: [],
-      folders: ['Personagens'],
-      files: ['Historia.md', 'Personagens/Heroi.md', 'Final.md', 'Orphan.md'],
-      notes: [
-        {
-          path: 'Historia.md',
-          content: '#Historia #lore\nVeja [[Personagens/Heroi]] e [[Falta]].\n',
-          mtimeMs: 1000,
-        },
-        {
-          path: 'Personagens/Heroi.md',
-          content: '# Heroi\nConecta em [[Final]].\n',
-          mtimeMs: 1000,
-        },
-        {
-          path: 'Final.md',
-          content: '# Final\nSem links.\n',
-          mtimeMs: 1000,
-        },
-        {
-          path: 'Orphan.md',
-          content: '# Orphan\nSem links.\n',
-          mtimeMs: 1000,
-        },
-      ],
-    })
-    vaultApi.getVaultIndex.mockResolvedValue(richIndex())
-    vaultApi.getVaultMarkdown.mockImplementation(async (dir, path) => {
-      const idx = dir === VAULT_A.directory ? richIndex() : otherRawIndex()
-      const found = idx.notes.find((n) => n.path === path)
-      if (!found) throw Object.assign(new Error('Not found'), { code: 'NOT_FOUND' })
-      return {
-        directory: dir,
-        path: found.path,
-        name: found.path.split('/').pop(),
-        content: found.content,
-        revision: 'a'.repeat(64),
-        mtimeMs: found.mtimeMs,
-        writable: true,
-      }
-    })
-
-    const wrapper = mountBrowser({ vault: VAULT_A })
-    await flushPromises()
-
-    // Open Historia.md, Global Graph tab, AND Local Graph right panel tab
-    await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
-    await flushPromises()
-
-    await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
-    await nextTick()
-    await wrapper.find('[data-testid="panel-tab-local-graph"]').trigger('click')
-    await nextTick()
-
-    const globalView = wrapper.find('[data-testid="graph-view"]')
-    const localView = wrapper.find('[data-testid="local-graph-view"]')
-    expect(globalView.exists()).toBe(true)
-    expect(localView.exists()).toBe(true)
-    expect(simulationRecords).toHaveLength(2)
-    const globalSim = simulationRecords[0]
-    const localSim = simulationRecords[1]
-    const globalRestartBefore = globalSim.restart.mock.calls.length
-    const localRestartBefore = localSim.restart.mock.calls.length
-
-    // Change Local depth to 2 and enable Local Tags & Unresolved -> Global Graph MUST NOT change or restart
-    await localView.find('[data-testid="graph-local-depth"]').setValue('2')
-    await nextTick()
-    await localView.find('[data-testid="graph-filters-toggle"]').trigger('click')
-    await nextTick()
-    await localView.find('[data-testid="graph-filter-tags"]').setValue(true)
-    await nextTick()
-    await localView.find('[data-testid="graph-filter-existing-only"]').setValue(false)
-    await nextTick()
-
-    // Local now includes Historia, Heroi, Final (depth 2), tag:Historia, tag:lore, unresolved Falta
-    const localAria = localView.find('[data-testid="graph-canvas"]').attributes('aria-label')
-    expect(localAria).toBe('Local graph with 6 nodes and 5 connections')
-    expect(localView.findAll('[data-testid="graph-locator-item"]')).toHaveLength(0)
-
-    // Global remains strictly default-filtered (4 notes, 2 connections) and simulation did not restart!
-    expect(globalView.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
-      'Global graph with 4 notes and 2 connections'
-    )
-    expect(globalSim.restart.mock.calls.length).toBe(globalRestartBefore)
-    expect(localSim.restart.mock.calls.length).toBeGreaterThan(localRestartBefore)
-
-    // Live note save updates tags & connections immediately in filtered Local view
-    wrapper.findComponent({ name: 'MarkdownViewer' }).vm.$emit('content-saved', {
-      path: 'Historia.md',
-      content: '#Historia #lore #novo\nVeja [[Personagens/Heroi]] e [[Falta]].\n',
-      mtimeMs: 2500,
-    })
-    await nextTick()
-    expect(localView.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
-      'Local graph with 7 nodes and 6 connections'
-    )
-
-    // Filter Global Graph independently (hide orphans) -> Local Graph keeps its own filters
-    await globalView.find('[data-testid="graph-filters-toggle"]').trigger('click')
-    await nextTick()
-    await globalView.find('[data-testid="graph-filter-orphans"]').setValue(false)
-    await nextTick()
-    expect(globalView.find('[data-testid="graph-canvas"]').attributes('aria-label')).toBe(
-      'Global graph with 3 notes and 2 connections'
-    )
-
-    // Switching vault resets graph filters & local settings cleanly and stops simulations cleanly
-    await wrapper.setProps({ vault: VAULT_B })
-    await flushPromises()
-    expect(localView.find('[data-testid="graph-no-center-state"]').exists()).toBe(true)
-    expect(globalSim.stop).toHaveBeenCalled()
-    expect(localSim.stop).toHaveBeenCalled()
-
-    wrapper.unmount()
-  })
-
-  it('persists shared groups and independent Global/Local display & forces per vault, isolates vaults cleanly, and handles storage failures without breaking active graphs', async () => {
-    // Pre-populate VAULT_B with distinct persisted settings to prove vault switch neither leaks A nor overwrites B
+  it('persists shared groups and global filters/display/forces per vault, isolates vaults cleanly, drops legacy local settings fail-closed, and handles storage failures', async () => {
+    // Pre-populate VAULT_B with distinct persisted settings (including legacy "local" block) to verify fail-closed migration
     localStorage.setItem(
       `ayame:graph-settings:${VAULT_B.directory}`,
       JSON.stringify({
@@ -899,8 +672,6 @@ describe('VaultBrowser global graph integration', () => {
           depth: 4,
           direction: 'incoming',
           filters: { searchQuery: '', showTags: false, existingFilesOnly: true, showOrphans: false },
-          display: { arrows: true, textFadeThreshold: 0.3, nodeSize: 1.4, linkThickness: 1.1 },
-          forces: { centerForce: 0.1, repelForce: 140, linkForce: 0.5, linkDistance: 50 },
         },
       })
     )
@@ -912,16 +683,13 @@ describe('VaultBrowser global graph integration', () => {
     await flushPromises()
     await wrapper.find('[data-testid="open-graph-button"]').trigger('click')
     await nextTick()
-    await wrapper.find('[data-testid="panel-tab-local-graph"]').trigger('click')
-    await nextTick()
 
     const globalView = wrapper.find('[data-testid="graph-view"]')
-    const localView = wrapper.find('[data-testid="local-graph-view"]')
     const globalSim = simulationRecords[0]
-    const localSim = simulationRecords[1]
 
-    // Open settings in Global, add & configure two groups, then change Global Display and Forces
+    // Open settings in Global, add a group, adjust Display, Forces, and Filters
     await globalView.find('[data-testid="graph-filters-toggle"]').trigger('click')
+    await globalView.find('[data-testid="graph-filter-orphans"]').setValue(false)
     await globalView.find('[data-testid="graph-section-groups"]').trigger('click')
     await globalView.find('[data-testid="graph-group-add"]').trigger('click')
     await nextTick()
@@ -939,27 +707,13 @@ describe('VaultBrowser global graph integration', () => {
     await globalView.find('[data-testid="graph-force-repel"]').setValue('310')
     await nextTick()
 
-    // Global & Local share Groups, while Forces/Display stay view-specific
-    const localGraphVm = wrapper.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'local')
-    const globalGraphVm = wrapper.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'global')
+    const globalGraphVm = wrapper.findComponent({ name: 'GraphView' })
     expect(globalGraphVm.props('groupColors')['note:Personagens/Heroi.md']).toBe('#e06c75')
-    expect(localGraphVm.props('groupColors')['note:Personagens/Heroi.md']).toBe('#e06c75')
     expect(globalGraphVm.props('display').arrows).toBe(true)
-    expect(localGraphVm.props('display').arrows).toBe(false)
     expect(globalSim.force('charge').strength()()).toBeCloseTo(-310, 5)
-    expect(localSim.force('charge').strength()()).toBeCloseTo(-165, 5)
-    expect(simulationRecords).toHaveLength(2)
+    expect(simulationRecords).toHaveLength(1)
 
-    // Modify Local display & depth independently and ensure narrow 200px sidebar width works with controls open
-    await localView.find('[data-testid="graph-local-depth"]').setValue('2')
-    await localView.find('[data-testid="graph-filters-toggle"]').trigger('click')
-    await localView.find('[data-testid="graph-section-display"]').trigger('click')
-    await localView.find('[data-testid="graph-display-text-fade"]').setValue('1.25')
-    await nextTick()
-    expect(localGraphVm.props('display').textFadeThreshold).toBeCloseTo(1.25, 3)
-    expect(globalGraphVm.props('display').textFadeThreshold).toBeCloseTo(0.48, 3)
-
-    // Unmount and remount VAULT_A -> persisted groups, global display/forces, and local display/depth survive reload
+    // Unmount and remount VAULT_A -> persisted groups, global display/forces, and filters survive reload cleanly
     wrapper.unmount()
     const reloaded = mountBrowser({ vault: VAULT_A })
     await flushPromises()
@@ -967,42 +721,45 @@ describe('VaultBrowser global graph integration', () => {
     await flushPromises()
     await reloaded.find('[data-testid="open-graph-button"]').trigger('click')
     await nextTick()
-    await reloaded.find('[data-testid="panel-tab-local-graph"]').trigger('click')
-    await nextTick()
 
-    const reloadedGlobal = reloaded.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'global')
-    const reloadedLocal = reloaded.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'local')
+    const reloadedGlobal = reloaded.findComponent({ name: 'GraphView' })
     expect(reloadedGlobal.props('groups')).toEqual([
       { id: 'group-1', query: 'path:Personagens', color: '#e06c75' },
     ])
+    expect(reloadedGlobal.props('filters').showOrphans).toBe(false)
     expect(reloadedGlobal.props('display').arrows).toBe(true)
     expect(reloadedGlobal.props('display').nodeSize).toBeCloseTo(1.9, 3)
     expect(reloadedGlobal.props('forces').repelForce).toBe(310)
-    expect(reloadedLocal.props('localDepth')).toBe(2)
-    expect(reloadedLocal.props('display').textFadeThreshold).toBeCloseTo(1.25, 3)
 
-    // Switch to VAULT_B -> restores VAULT_B's stored settings without overwriting VAULT_A or VAULT_B
+    // Switch to VAULT_B -> restores VAULT_B's global & group settings while dropping legacy local block fail-closed
     const vaultASnapshotBefore = localStorage.getItem(`ayame:graph-settings:${VAULT_A.directory}`)
     await reloaded.setProps({ vault: VAULT_B })
     await flushPromises()
     await reloaded.find('[data-testid="open-graph-button"]').trigger('click')
     await nextTick()
 
-    const vaultBGlobal = reloaded.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'global')
-    const vaultBLocal = reloaded.findAllComponents({ name: 'GraphView' }).find((c) => c.props('mode') === 'local')
+    const vaultBGlobal = reloaded.findComponent({ name: 'GraphView' })
     expect(vaultBGlobal.props('groups')).toEqual([{ id: 'vb-1', query: 'Extra', color: '#56b6c2' }])
     expect(vaultBGlobal.props('display').nodeSize).toBeCloseTo(0.8, 3)
-    expect(vaultBLocal.props('localDepth')).toBe(4)
-    expect(vaultBLocal.props('localDirection')).toBe('incoming')
     expect(localStorage.getItem(`ayame:graph-settings:${VAULT_A.directory}`)).toBe(vaultASnapshotBefore)
+    expect(JSON.parse(vaultASnapshotBefore).local).toBeUndefined()
 
-    // Restore default settings in VAULT_B Global -> resets Global while preserving groups and Local settings
+    // Restore default settings in VAULT_B Global -> resets Global display/filters/forces while preserving groups
     await reloaded.find('[data-testid="graph-view"] [data-testid="graph-filters-toggle"]').trigger('click')
     await reloaded.find('[data-testid="graph-view"] [data-testid="graph-restore-defaults"]').trigger('click')
     await nextTick()
     expect(vaultBGlobal.props('display').nodeSize).toBe(1)
     expect(vaultBGlobal.props('groups')).toHaveLength(1)
-    expect(vaultBLocal.props('localDepth')).toBe(4)
+    expect(JSON.parse(localStorage.getItem(`ayame:graph-settings:${VAULT_B.directory}`)).local).toBeUndefined()
+
+    // Live note save still updates global graph view cleanly without restarting simulation unnecessarily
+    reloaded.findComponent({ name: 'MarkdownViewer' }).vm.$emit('content-saved', {
+      path: 'Alpha.md',
+      content: '#updated\nLink para [[Beta]].\n',
+      mtimeMs: 3000,
+    })
+    await nextTick()
+    expect(vaultBGlobal.find('[data-testid="graph-canvas"]').attributes('aria-label')).toContain('notes')
 
     // Storage failure degrades gracefully in memory and surfaces discreet warning without claiming persisted
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
@@ -1018,11 +775,11 @@ describe('VaultBrowser global graph integration', () => {
     reloaded.unmount()
   })
 
-  it('promotes Graph and Local Graph to primary workspace navigation, protects dirty drafts, and scrolls offscreen contextual tabs horizontally at 200px/300px widths', async () => {
+  it('removes Local Graph from topbar, command palette, and contextual panel while keeping Global Graph navigation and 5-tab right panel scrolling intact', async () => {
     const wrapper = mountBrowser({ vault: VAULT_A })
     await flushPromises()
 
-    // Mock right-panel tab strip at 200px width where first tabs fit and later tabs (e.g. Local Graph) sit off-screen
+    // Mock right-panel tab strip at 200px width where early tabs fit and later tab (Search) sits off-screen
     const navEl = wrapper.find('.right-panel-tabs').element
     navEl.getBoundingClientRect = vi.fn(() => ({ left: 0, right: 200, width: 200, top: 0, bottom: 32, height: 32 }))
 
@@ -1047,21 +804,32 @@ describe('VaultBrowser global graph integration', () => {
     configureTabRect('panel-tab-outgoing', 94, 175)
     configureTabRect('panel-tab-outline', 180, 235)
     configureTabRect('panel-tab-tags', 240, 285)
-    configureTabRect('panel-tab-search', 290, 340)
-    configureTabRect('panel-tab-local-graph', 345, 430)
+    configureTabRect('panel-tab-search', 290, 345)
 
-    // Primary Graph navigation exists with single open-graph-button (+ SVG icon) and open-local-graph-button before Commands/Panel
+    // Primary Graph navigation exists with ONLY open-graph-button (+ SVG icon) before Commands/Panel, and zero Local Graph affordances
     const graphNav = wrapper.find('[data-testid="workspace-graph-nav"]')
     expect(graphNav.exists()).toBe(true)
     expect(wrapper.findAll('[data-testid="open-graph-button"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="open-local-graph-button"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="panel-tab-local-graph"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="local-graph-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="local-graph-view"]').exists()).toBe(false)
+    expect(wrapper.findAll('.right-panel-tab')).toHaveLength(5)
+
+    // Command palette exposes Open graph view and does NOT expose Open local graph
+    await wrapper.find('[data-testid="command-palette-button"]').trigger('click')
+    await nextTick()
+    const cmdLabels = wrapper
+      .findAll('[data-testid="command-palette-modal"] button.panel-list-item')
+      .map((btn) => btn.text())
+    expect(cmdLabels.some((t) => t.includes('Open graph view'))).toBe(true)
+    expect(cmdLabels.some((t) => t.toLowerCase().includes('local graph'))).toBe(false)
+    await wrapper.find('[data-testid="command-palette-modal"]').trigger('keydown', { key: 'Escape' })
+    await nextTick()
 
     const globalBtn = graphNav.find('[data-testid="open-graph-button"]')
-    const localBtn = graphNav.find('[data-testid="open-local-graph-button"]')
-    expect(globalBtn.exists()).toBe(true)
     expect(globalBtn.text()).toContain('Graph')
     expect(globalBtn.find('svg').exists()).toBe(true)
-    expect(localBtn.exists()).toBe(true)
-    expect(localBtn.text()).toContain('Local Graph')
 
     // Graph nav stays before Commands and Panel in DOM order even with no notes open, collapsed explorer, and collapsed right panel
     const commandsBtn = wrapper.find('[data-testid="command-palette-button"]')
@@ -1072,7 +840,6 @@ describe('VaultBrowser global graph integration', () => {
     await wrapper.find('[data-testid="toggle-explorer-button"]').trigger('click')
     await nextTick()
     expect(globalBtn.isVisible()).toBe(true)
-    expect(localBtn.isVisible()).toBe(true)
 
     // Clicking Graph with no open note opens Global Graph cleanly and marks active state
     await globalBtn.trigger('click')
@@ -1080,8 +847,7 @@ describe('VaultBrowser global graph integration', () => {
     expect(wrapper.find('[data-testid="graph-view"]').exists()).toBe(true)
     expect(globalBtn.classes()).toContain('workspace-nav-graph--active')
 
-    // Open a note with unsaved dirty changes, then use primary Graph & Local Graph buttons:
-    // editor stays mounted and unsaved edits are preserved!
+    // Open a note with unsaved dirty changes -> Global Graph keeps editor mounted and unsaved draft intact
     await wrapper.find('[data-testid="toggle-explorer-button"]').trigger('click')
     await wrapper.find('[data-file-path="Historia.md"]').trigger('click')
     await flushPromises()
@@ -1094,55 +860,38 @@ describe('VaultBrowser global graph integration', () => {
     await nextTick()
     expect(wrapper.findComponent({ name: 'MarkdownViewer' }).element).toBe(viewerElementBefore)
 
-    // Right panel is collapsed initially -> clicking primary Local Graph expands panel, selects tab, and scrolls it horizontally into view!
-    expect(wrapper.find('[data-testid="workspace-right-panel"]').classes()).toContain(
-      'workspace-right-panel--collapsed'
-    )
-    await localBtn.trigger('click')
+    // Open contextual panel and test 200px/300px horizontal tab visibility across the 5 tabs
+    await wrapper.find('[data-testid="toggle-right-panel-button"]').trigger('click')
     await nextTick()
     await nextTick()
 
-    expect(wrapper.find('[data-testid="workspace-right-panel"]').classes()).not.toContain(
-      'workspace-right-panel--collapsed'
-    )
-    expect(wrapper.find('[data-testid="panel-tab-local-graph"]').classes()).toContain(
-      'right-panel-tab--active'
-    )
-    expect(localBtn.classes()).toContain('workspace-nav-graph--active')
-    expect(scrollSpies.get('panel-tab-local-graph')).toHaveBeenCalledWith({
-      block: 'nearest',
-      inline: 'nearest',
-    })
-
-    // Selecting an already-visible tab (Backlinks inside 200px or 300px) does NOT call needless scrollIntoView
+    // Selecting already-visible Backlinks tab inside 200px does NOT trigger needless scrollIntoView
     scrollSpies.get('panel-tab-backlinks').mockClear()
     await wrapper.find('[data-testid="panel-tab-backlinks"]').trigger('click')
     await nextTick()
     expect(scrollSpies.get('panel-tab-backlinks')).not.toHaveBeenCalled()
 
-    // Resize to 300px width: Local Graph (345..430) is still past 300px right edge and scrolls into view via keyboard navigation
+    // Resize to 300px width: End jumps to Search (290..345), which sits past 300px right edge and scrolls into view
     navEl.getBoundingClientRect = vi.fn(() => ({ left: 0, right: 300, width: 300, top: 0, bottom: 32, height: 32 }))
-    scrollSpies.get('panel-tab-local-graph').mockClear()
+    scrollSpies.get('panel-tab-search').mockClear()
     await wrapper.find('[data-testid="panel-tab-backlinks"]').trigger('keydown', { key: 'End' })
     await nextTick()
     await nextTick()
-    expect(wrapper.find('[data-testid="panel-tab-local-graph"]').classes()).toContain(
-      'right-panel-tab--active'
-    )
-    expect(scrollSpies.get('panel-tab-local-graph')).toHaveBeenCalledWith({
+    expect(wrapper.find('[data-testid="panel-tab-search"]').classes()).toContain('right-panel-tab--active')
+    expect(scrollSpies.get('panel-tab-search')).toHaveBeenCalledWith({
       block: 'nearest',
       inline: 'nearest',
     })
 
-    // ArrowLeft moves cleanly to Search
-    await wrapper.find('[data-testid="panel-tab-local-graph"]').trigger('keydown', { key: 'ArrowLeft' })
+    // ArrowLeft moves cleanly to Tags
+    await wrapper.find('[data-testid="panel-tab-search"]').trigger('keydown', { key: 'ArrowLeft' })
     await nextTick()
-    expect(wrapper.find('[data-testid="panel-tab-search"]').classes()).toContain('right-panel-tab--active')
+    expect(wrapper.find('[data-testid="panel-tab-tags"]').classes()).toContain('right-panel-tab--active')
 
     wrapper.unmount()
   })
 
-  it('re-scrolls the active contextual panel tab into view after narrowing the panel without recreating Local Graph or losing drafts, while skipping redundant scrolls on widening', async () => {
+  it('re-scrolls the active contextual panel tab into view after narrowing the panel without losing drafts or disturbing Graph View, while skipping redundant scrolls on widening', async () => {
     const origInnerWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', { value: 1400, configurable: true, writable: true })
 
@@ -1189,13 +938,13 @@ describe('VaultBrowser global graph integration', () => {
       configureTabRect('panel-tab-backlinks', 8, 90)
       configureTabRect('panel-tab-outgoing', 94, 175)
       configureTabRect('panel-tab-outline', 180, 235)
-      configureTabRect('panel-tab-tags', 240, 275)
-      configureTabRect('panel-tab-search', 280, 315)
+      configureTabRect('panel-tab-tags', 240, 290)
       // Fits inside 400px & 380px, overflows right edge when panel narrows to 200px
-      configureTabRect('panel-tab-local-graph', 320, 378)
+      configureTabRect('panel-tab-search', 300, 365)
 
-      // Open Local Graph at wide width (400px via splitter drag)
-      await wrapper.find('[data-testid="open-local-graph-button"]').trigger('click')
+      // Open right panel + Search tab at wide width (400px via splitter drag)
+      await wrapper.find('[data-testid="toggle-right-panel-button"]').trigger('click')
+      await wrapper.find('[data-testid="panel-tab-search"]').trigger('click')
       await nextTick()
       await nextTick()
 
@@ -1214,10 +963,9 @@ describe('VaultBrowser global graph integration', () => {
       await nextTick()
       expect(splitter.attributes('aria-valuenow')).toBe('400')
 
-      const simCountBeforeResize = simulationRecords.length
-      scrollSpies.get('panel-tab-local-graph').mockClear()
+      scrollSpies.get('panel-tab-search').mockClear()
 
-      // B1: Shrink right panel from 400px -> 200px so Local Graph tab overflows right edge
+      // B1: Shrink right panel from 400px -> 200px so Search tab overflows right edge
       navWidth = 200
       splitter.element.dispatchEvent(makePointerEvent('pointerdown', 780, 2))
       window.dispatchEvent(makePointerEvent('pointermove', 980, 2)) // 400 - 200 = 200
@@ -1226,16 +974,15 @@ describe('VaultBrowser global graph integration', () => {
       await nextTick()
 
       expect(splitter.attributes('aria-valuenow')).toBe('200')
-      expect(scrollSpies.get('panel-tab-local-graph')).toHaveBeenCalledWith({
+      expect(scrollSpies.get('panel-tab-search')).toHaveBeenCalledWith({
         block: 'nearest',
         inline: 'nearest',
       })
-      expect(simulationRecords).toHaveLength(simCountBeforeResize)
       expect(wrapper.findComponent({ name: 'MarkdownViewer' }).element).toBe(viewerElementBefore)
 
       // B2: Widen panel back from 200px -> 380px where active tab already fits cleanly: skip redundant scrollIntoView
       navWidth = 380
-      scrollSpies.get('panel-tab-local-graph').mockClear()
+      scrollSpies.get('panel-tab-search').mockClear()
       splitter.element.dispatchEvent(makePointerEvent('pointerdown', 980, 3))
       window.dispatchEvent(makePointerEvent('pointermove', 800, 3)) // 200 + 180 = 380
       window.dispatchEvent(makePointerEvent('pointerup', 800, 3))
@@ -1243,16 +990,16 @@ describe('VaultBrowser global graph integration', () => {
       await nextTick()
 
       expect(splitter.attributes('aria-valuenow')).toBe('380')
-      expect(scrollSpies.get('panel-tab-local-graph')).not.toHaveBeenCalled()
+      expect(scrollSpies.get('panel-tab-search')).not.toHaveBeenCalled()
 
       // B3: Keyboard navigation between contextual tabs keeps working cleanly after resize
-      await wrapper.find('[data-testid="panel-tab-local-graph"]').trigger('keydown', { key: 'Home' })
+      await wrapper.find('[data-testid="panel-tab-search"]').trigger('keydown', { key: 'Home' })
       await nextTick()
       expect(wrapper.find('[data-testid="panel-tab-backlinks"]').classes()).toContain('right-panel-tab--active')
       await wrapper.find('[data-testid="panel-tab-backlinks"]').trigger('keydown', { key: 'End' })
       await nextTick()
       await nextTick()
-      expect(wrapper.find('[data-testid="panel-tab-local-graph"]').classes()).toContain('right-panel-tab--active')
+      expect(wrapper.find('[data-testid="panel-tab-search"]').classes()).toContain('right-panel-tab--active')
 
       wrapper.unmount()
     } finally {

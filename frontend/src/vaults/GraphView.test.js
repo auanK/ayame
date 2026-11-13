@@ -530,7 +530,7 @@ describe('GraphView.vue', () => {
     wrapper.unmount()
   })
 
-  it('supports local graph mode controls, distinct empty states, and preserved center identification under restrictive filters', async () => {
+  it('renders global graph cleanly without local-graph chrome, groups settings into a discreet corner popover, and styles reset as an inline action', async () => {
     const index = buildVaultIndex({
       directory: 'C:/vaults/story',
       complete: true,
@@ -543,102 +543,86 @@ describe('GraphView.vue', () => {
       ],
     })
     const baseGraph = buildGraphModel(index)
-
-    // 1. No center note selected -> clear empty prompt
-    const noCenterGraph = projectGraphView({
+    const activeFilters = { ...createDefaultGraphFilters(), showOrphans: false }
+    const globalGraph = projectGraphView({
       baseGraph,
       vaultIndex: index,
-      mode: 'local',
-      centerPath: null,
+      mode: 'global',
+      filters: activeFilters,
     })
+
     const wrapper = mount(GraphView, {
       props: {
-        mode: 'local',
-        centerPath: null,
-        graph: noCenterGraph,
+        graph: globalGraph,
         vaultDirectory: 'C:/vaults/story',
-        filters: createDefaultGraphFilters(),
-        localDepth: 1,
-        localDirection: 'both',
+        filters: activeFilters,
       },
     })
-    expect(wrapper.find('[data-testid="local-graph-view"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="graph-no-center-state"]').exists()).toBe(true)
 
-    // 2. Active center note with missing index entry -> distinct center-missing state
-    const missingCenterGraph = projectGraphView({
-      baseGraph,
-      vaultIndex: index,
-      mode: 'local',
-      centerPath: 'NaoIndexada.md',
-    })
-    await wrapper.setProps({
-      centerPath: 'NaoIndexada.md',
-      graph: missingCenterGraph,
-    })
-    expect(wrapper.find('[data-testid="graph-center-missing-state"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="local-graph-center"]').text()).toContain('NaoIndexada')
+    // Local Graph UI elements are completely absent
+    expect(wrapper.find('[data-testid="graph-view"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="local-graph-view"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="local-graph-center"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-local-depth"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-local-direction"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-no-center-state"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-center-missing-state"]').exists()).toBe(false)
 
-    // 3. Valid center note with only-center remaining after search -> shows canvas + notice + center badge
-    const onlyCenterGraph = projectGraphView({
-      baseGraph,
-      vaultIndex: index,
-      mode: 'local',
-      centerPath: 'Heroi.md',
-      depth: 1,
-      direction: 'both',
-      filters: { ...createDefaultGraphFilters(), searchQuery: 'Heroi' },
-    })
-    await wrapper.setProps({
-      centerPath: 'Heroi.md',
-      graph: onlyCenterGraph,
-      filters: { ...createDefaultGraphFilters(), searchQuery: 'Heroi' },
-    })
-    expect(wrapper.find('[data-testid="graph-canvas"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="graph-filter-notice"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="local-graph-center"]').text()).toContain('Heroi')
+    // Settings popover is collapsed by default and triggered via a compact icon button
+    const toggleBtn = wrapper.find('[data-testid="graph-filters-toggle"]')
+    expect(toggleBtn.exists()).toBe(true)
+    expect(toggleBtn.find('svg').exists()).toBe(true)
+    expect(toggleBtn.text().trim()).toBe('')
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
 
-    // 4. Depth & direction controls emit expected updates
-    await wrapper.find('[data-testid="graph-local-depth"]').setValue('3')
-    expect(wrapper.emitted('update:local-depth')).toEqual([[3]])
+    // Open discreet settings popover -> segmented sections show one active group at a time
+    await toggleBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="graph-filter-search"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="graph-display-arrows"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="graph-force-repel"]').exists()).toBe(false)
 
-    await wrapper.find('[data-testid="graph-direction-outgoing"]').trigger('click')
-    expect(wrapper.emitted('update:local-direction')).toEqual([['outgoing']])
+    // Reset filters appears inline inside Filters header with discreet link styling (not a boxed secondary button)
+    const resetFiltersAction = wrapper.find('[data-testid="graph-filters-reset"]')
+    expect(resetFiltersAction.exists()).toBe(true)
+    expect(resetFiltersAction.classes()).toContain('graph-inline-link')
+    expect(resetFiltersAction.classes()).not.toContain('btn-secondary')
 
-    // 5. Local Graph preserves center note on no-match search with filter notice,
-    // while Global Graph enters filtered-empty state with Clear filters button
-    const localNoMatchGraph = projectGraphView({
-      baseGraph,
-      vaultIndex: index,
-      mode: 'local',
-      centerPath: 'Heroi.md',
-      filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
-    })
-    await wrapper.setProps({
-      graph: localNoMatchGraph,
-      filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
-    })
-    expect(wrapper.find('[data-testid="graph-canvas"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="graph-filter-notice"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="local-graph-center"]').text()).toContain('Heroi')
-
-    const globalEmptyGraph = projectGraphView({
-      baseGraph,
-      vaultIndex: index,
-      mode: 'global',
-      filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
-    })
-    await wrapper.setProps({
-      mode: 'global',
-      centerPath: null,
-      graph: globalEmptyGraph,
-      filters: { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' },
-    })
-    expect(wrapper.find('[data-testid="graph-filtered-empty-state"]').exists()).toBe(true)
-
-    await wrapper.find('[data-testid="graph-clear-filters-button"]').trigger('click')
+    await resetFiltersAction.trigger('click')
     const emittedFilters = wrapper.emitted('update:filters')
     expect(emittedFilters[emittedFilters.length - 1][0]).toEqual(createDefaultGraphFilters())
+
+    // Switching filters prop to default hides inline Reset action cleanly
+    const defaultGlobalGraph = projectGraphView({ baseGraph, vaultIndex: index, mode: 'global' })
+    await wrapper.setProps({
+      graph: defaultGlobalGraph,
+      filters: createDefaultGraphFilters(),
+    })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-reset"]').exists()).toBe(false)
+
+    // Restore defaults uses discreet inline link rather than a heavy boxed button
+    const restoreBtn = wrapper.find('[data-testid="graph-restore-defaults"]')
+    expect(restoreBtn.classes()).toContain('graph-inline-link')
+    expect(restoreBtn.classes()).not.toContain('btn-secondary')
+
+    // Escape closes the floating popover cleanly
+    await wrapper.find('[data-testid="graph-filters-panel"]').trigger('keydown.esc')
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filters-panel"]').exists()).toBe(false)
+
+    // Filtered-empty state in Global Graph remains recoverable via Clear filters
+    const emptyFilters = { ...createDefaultGraphFilters(), searchQuery: 'ZZZ' }
+    await wrapper.setProps({
+      graph: projectGraphView({ baseGraph, vaultIndex: index, mode: 'global', filters: emptyFilters }),
+      filters: emptyFilters,
+    })
+    await nextTick()
+    expect(wrapper.find('[data-testid="graph-filtered-empty-state"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="graph-clear-filters-button"]').trigger('click')
+    const recoveredFilters = wrapper.emitted('update:filters')
+    expect(recoveredFilters[recoveredFilters.length - 1][0]).toEqual(createDefaultGraphFilters())
 
     wrapper.unmount()
   })
