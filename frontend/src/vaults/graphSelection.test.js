@@ -137,10 +137,24 @@ describe('graphSelection', () => {
       const local = deriveLocalGraph(base, { centerPath: 'A.md', depth: 5, direction: 'outgoing' })
       expect(local.nodes.map((n) => n.path)).toEqual(['A.md', 'B.md', 'C.md'])
       expect(local.edges).toEqual([
-        { source: 'note:A.md', target: 'note:A.md' },
         { source: 'note:A.md', target: 'note:B.md' },
         { source: 'note:B.md', target: 'note:C.md' },
         { source: 'note:C.md', target: 'note:A.md' },
+      ])
+
+      const withSyntheticSelfLoop = {
+        ...base,
+        edges: [{ source: 'note:A.md', target: 'note:A.md' }, ...base.edges],
+      }
+      const localSelf = deriveLocalGraph(withSyntheticSelfLoop, {
+        centerPath: 'A.md',
+        depth: 1,
+        direction: 'outgoing',
+      })
+      expect(localSelf.nodes.map((n) => n.path)).toEqual(['A.md', 'B.md'])
+      expect(localSelf.edges).toEqual([
+        { source: 'note:A.md', target: 'note:A.md' },
+        { source: 'note:A.md', target: 'note:B.md' },
       ])
     })
 
@@ -316,7 +330,7 @@ describe('graphSelection', () => {
             '[[Falta]]',
             '[[Falta#Secao]]',
             '[[Dup]]',
-            '[[External|https://example.com]]',
+            '[[https://example.com]]',
             '[Site](https://example.org)',
           ].join('\n'),
         },
