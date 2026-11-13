@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MarkdownEditor from './MarkdownEditor.vue'
+import editorRaw from './MarkdownEditor.vue?raw'
 
 describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
   it('1. renders a single CodeMirror 6 surface without a separate preview HTML pane or textarea', () => {
@@ -286,5 +287,74 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
 
     expect(wrapper.vm.getText().startsWith('- [x] Tarefa interativa')).toBe(true)
     expect(wrapper.find('.cm-live-checklist-marker').attributes('aria-checked')).toBe('true')
+  })
+
+  it('10. applies Grafite Suave reading typography tokens in Live Preview without pure white headings/bold, excessive syntax opacity, or broken editing states', async () => {
+    const editorStyles = editorRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
+
+    // Body text uses calm reading tokens, 16px-17px size, weight 400, ~1.7 line-height, and visible caret
+    expect(editorStyles).toMatch(/\.markdown-editor-surface\s*\{[^}]*var\(--reading-text/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-editor\)\s*\{[^}]*var\(--reading-font-body/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-editor\)\s*\{[^}]*var\(--reading-font-size/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-editor\)\s*\{[^}]*font-weight:\s*400/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-editor\)\s*\{[^}]*var\(--reading-line-height/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-content\)\s*\{[^}]*caret-color:\s*var\(--reading-caret/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-content\)\s*\{[^}]*color:\s*var\(--reading-text/s)
+
+    // Headings & bold avoid harsh pure white (#fff / #ffffff) and use calm editorial weights
+    expect(editorStyles).not.toMatch(/#fff(?:fff)?\b/i)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-heading\)\s*\{[^}]*color:\s*var\(--reading-heading/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-heading\)\s*\{[^}]*var\(--reading-font-heading/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h1\)\s*\{[^}]*font-weight:\s*600/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h2\)\s*\{[^}]*font-weight:\s*600/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h3\)\s*\{[^}]*font-weight:\s*500/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-bold\)\s*\{[^}]*font-weight:\s*600[^}]*var\(--reading-bold/s)
+
+    // Links, syntax, code, blockquote, and tables all use consistent semantic tokens and stay readable
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-syntax\)\s*\{[^}]*var\(--reading-syntax/s)
+    expect(editorStyles).not.toMatch(/:deep\(\.cm-live-syntax\)\s*\{[^}]*opacity:/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-link\)\s*\{[^}]*var\(--reading-link/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-link:visited\)\s*\{[^}]*var\(--reading-link-visited/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-inline-code\)\s*\{[^}]*var\(--reading-code-text/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-codeblock-line\)\s*\{[^}]*var\(--reading-code-bg/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-blockquote\)\s*\{[^}]*var\(--reading-blockquote-text/s)
+
+    // Full Markdown semantics & editing selection remain operational across H1-H6, links, code, lists, tables, and hr
+    const fullDoc = [
+      '# H1 Principal',
+      '## H2 Seção',
+      '### H3 Subseção',
+      '#### H4 Tópico',
+      '##### H5 Nota',
+      '###### H6 Rodapé',
+      'Parágrafo com **negrito**, *itálico*, `codigo()` e [[Alvo|Link Interno]] além de #tag-leitura.',
+      '> Bloco citado',
+      '---',
+      '| A | B |',
+      '| - | - |',
+      '| 1 | 2 |',
+      'Cursor final.',
+    ].join('\n')
+
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: fullDoc,
+        sourcePath: 'Nota.md',
+        knownFiles: ['Nota.md', 'Alvo.md'],
+      },
+    })
+    wrapper.vm.setCursor(fullDoc.length)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.cm-live-h1').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-h4').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-h6').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-bold').text()).toBe('negrito')
+    expect(wrapper.find('.cm-live-inline-code').text()).toBe('codigo()')
+    expect(wrapper.find('.cm-live-link').text()).toBe('Link Interno')
+    expect(wrapper.find('.cm-live-tag').text()).toBe('#tag-leitura')
+    expect(wrapper.find('.cm-live-blockquote').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-hr').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-table-row').exists()).toBe(true)
   })
 })

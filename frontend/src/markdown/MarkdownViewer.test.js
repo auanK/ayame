@@ -5,6 +5,29 @@ import MarkdownEditor from './MarkdownEditor.vue'
 import PropertiesPanel from './PropertiesPanel.vue'
 import { parseNoteDocument } from './properties.js'
 import * as api from '../vaults/api.js'
+import mainCssRaw from '../styles/main.css?raw'
+import viewerRaw from './MarkdownViewer.vue?raw'
+import propertiesRaw from './PropertiesPanel.vue?raw'
+
+const relativeLuminance = (hex) => {
+  const clean = hex.replace('#', '')
+  const channels = [0, 2, 4].map((offset) => {
+    const c = parseInt(clean.slice(offset, offset + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+  })
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+}
+
+const contrastRatio = (fgHex, bgHex) => {
+  const l1 = relativeLuminance(fgHex)
+  const l2 = relativeLuminance(bgHex)
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+}
+
+const readRootToken = (cssText, name) => {
+  const match = cssText.match(new RegExp(`${name}:\\s*([^;]+);`))
+  return match ? match[1].trim() : null
+}
 
 vi.mock('../vaults/api.js', () => ({
   getVaultMarkdown: vi.fn(),
@@ -1045,6 +1068,150 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
 
       const stored = JSON.parse(localStorage.getItem('ayame:editor-preferences'))
       expect(stored.readableLineLength).toBe(false)
+    })
+  })
+
+  describe('Grafite Suave reading theme, surface hierarchy, Properties balance, and WCAG compliance', () => {
+    it('defines Grafite Suave semantic reading tokens with WCAG AA contrast, soft surface separation, and no pure white document colors', () => {
+      const rootBlock = mainCssRaw.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1] || ''
+      const workspaceBg = readRootToken(rootBlock, '--ayame-background')
+      const readingBg = readRootToken(rootBlock, '--reading-background')
+      const readingText = readRootToken(rootBlock, '--reading-text')
+      const readingHeading = readRootToken(rootBlock, '--reading-heading')
+      const readingMuted = readRootToken(rootBlock, '--reading-muted')
+      const readingLink = readRootToken(rootBlock, '--reading-link')
+      const readingLinkHover = readRootToken(rootBlock, '--reading-link-hover')
+      const readingLinkVisited = readRootToken(rootBlock, '--reading-link-visited')
+      const readingBold = readRootToken(rootBlock, '--reading-bold')
+      const readingSyntax = readRootToken(rootBlock, '--reading-syntax')
+      const readingCodeBg = readRootToken(rootBlock, '--reading-code-bg')
+      const readingCodeText = readRootToken(rootBlock, '--reading-code-text')
+      const readingControlBorder = readRootToken(rootBlock, '--reading-control-border')
+      const workspaceEditor = readRootToken(rootBlock, '--workspace-editor')
+
+      expect(readingBg).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingText).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingHeading).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingMuted).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingLink).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingLinkHover).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingLinkVisited).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingBold).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingSyntax).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingCodeBg).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingCodeText).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(readingControlBorder).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(workspaceEditor).toBe('var(--reading-background)')
+
+      // Subtle tonal separation: reading background is softly lighter than outer workspace background
+      expect(relativeLuminance(readingBg)).toBeGreaterThan(relativeLuminance(workspaceBg))
+      expect(readingBg.toLowerCase()).not.toBe(workspaceBg.toLowerCase())
+
+      // Zero pure white in reading tokens or viewer/properties styles
+      for (const hex of [readingText, readingHeading, readingBold, readingLink, readingLinkHover, readingCodeText]) {
+        expect(hex.toLowerCase()).not.toBe('#ffffff')
+        expect(hex.toLowerCase()).not.toBe('#fff')
+      }
+      const viewerStyles = viewerRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
+      const propertiesStyles = propertiesRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
+      expect(viewerStyles).not.toMatch(/color:\s*#fff(?:fff)?\b/i)
+      expect(propertiesStyles).not.toMatch(/color:\s*#fff(?:fff)?\b/i)
+
+      // WCAG 2.1 AA contrast validation against actual reading background & code surface
+      expect(contrastRatio(readingText, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingHeading, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingHeading, readingBg)).toBeGreaterThan(contrastRatio(readingText, readingBg))
+      expect(contrastRatio(readingMuted, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingSyntax, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingLink, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingLinkHover, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingLinkVisited, readingBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingCodeText, readingCodeBg)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(readingControlBorder, readingBg)).toBeGreaterThanOrEqual(3.0)
+
+      // Viewer applies continuous surface tokens, keeps 800px reading measure without card borders/shadows or container opacity
+      expect(viewerStyles).toMatch(/\.markdown-viewer\s*\{[^}]*var\(--reading-background/s)
+      expect(viewerStyles).toMatch(/\.markdown-viewer\s*\{[^}]*var\(--reading-text/s)
+      expect(viewerStyles).toMatch(/\.viewer-body\s*\{[^}]*var\(--reading-background/s)
+      expect(viewerStyles).toMatch(/\.viewer-document-container--readable\s*\{[^}]*max-width:\s*800px/s)
+      expect(viewerStyles).not.toMatch(/\.viewer-document-container[^{]*\{[^}]*(?:box-shadow|opacity):/s)
+      expect(viewerStyles).not.toMatch(/\.markdown-viewer\s*\{[^}]*opacity:/s)
+      expect(viewerStyles).not.toMatch(/\.viewer-body\s*\{[^}]*opacity:/s)
+
+      // Inline heading title shares editorial serif language with H1 without bold 700 weight
+      expect(viewerStyles).toMatch(/\.note-heading-title\s*\{[^}]*var\(--reading-heading/s)
+      expect(viewerStyles).toMatch(/\.note-heading-title\s*\{[^}]*var\(--reading-font-heading/s)
+      expect(viewerStyles).toMatch(/\.note-heading-title\s*\{[^}]*font-weight:\s*600/s)
+      expect(viewerStyles).toMatch(/\.note-heading-title:focus-visible\s*\{/s)
+    })
+
+    it('keeps PropertiesPanel calm beneath document hierarchy while preserving controls, tags, link navigation, and dirty-draft workflows', async () => {
+      const propertiesStyles = propertiesRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
+      expect(propertiesStyles).toMatch(/\.property-key-input\s*\{[^}]*var\(--reading-muted/s)
+      expect(propertiesStyles).toMatch(/\.property-text-input\s*\{[^}]*var\(--reading-text/s)
+      expect(propertiesStyles).toMatch(/\.property-type-select\s*\{[^}]*var\(--reading-control-bg/s)
+      expect(propertiesStyles).toMatch(/\.property-type-select\s*\{[^}]*var\(--reading-control-border/s)
+      expect(propertiesStyles).toMatch(/\.property-link-pill\s*\{[^}]*var\(--reading-link/s)
+      expect(propertiesStyles).toMatch(/\.properties-toggle:focus-visible/s)
+      expect(propertiesStyles).toMatch(/\.properties-action-btn:focus-visible/s)
+      expect(propertiesStyles).not.toMatch(/\.property-row-actions\s*\{[^}]*opacity:\s*0\.[0-6]/s)
+
+      localStorage.setItem('ayame:editor-preferences', JSON.stringify({ propertiesInDocument: 'visible' }))
+      const longDoc = [
+        '---',
+        'tags:',
+        '  - leitura',
+        '  - grafite',
+        'related: "[[Guia de Estilo]]"',
+        'status: revisao',
+        '---',
+        '',
+        '# Arquitetura do Documento',
+        '',
+        'Parágrafo longo pensado para validar conforto visual em sessões prolongadas de leitura no Ayame, preservando contraste legível e links como [[Referencias]].',
+        '',
+        '## Subtítulo Editorial',
+        '### Seção Intermediária',
+        '- Item simples',
+        '- [ ] Tarefa aberta',
+        '> Citação reflexiva com borda lavanda.',
+        '',
+        '```js',
+        'const theme = "grafite-suave";',
+        '```',
+        'Fim da nota.',
+      ].join('\n')
+
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'Ensaio.md',
+        content: longDoc,
+        revision,
+      })
+
+      const wrapper = mount(MarkdownViewer, {
+        props: {
+          directory: 'personal',
+          path: 'Ensaio.md',
+          knownFiles: ['Ensaio.md', 'Guia de Estilo.md', 'Referencias.md'],
+        },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="properties-panel"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="property-link-pill"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="markdown-editor"]').exists()).toBe(true)
+      expect(wrapper.find('.viewer-document-container--readable').exists()).toBe(true)
+
+      await wrapper.find('[data-testid="property-link-pill"]').trigger('click')
+      expect(wrapper.emitted('open-link')?.[0]?.[0]).toMatchObject({
+        type: 'resolved',
+        path: 'Guia de Estilo.md',
+      })
+
+      // Interactive text editing marks dirty draft cleanly without affecting Preferences/Properties state
+      await editNote(wrapper, `${longDoc}\nNova linha.`)
+      expect(wrapper.find('[data-testid="markdown-dirty-indicator"]').exists()).toBe(true)
     })
   })
 })
