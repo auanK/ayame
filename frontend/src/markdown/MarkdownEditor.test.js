@@ -316,6 +316,7 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     expect(editorStyles).toMatch(/:deep\(\.cm-live-heading\)\s*\{[^}]*color:\s*var\(--reading-heading/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-heading\)\s*\{[^}]*var\(--reading-font-heading/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h1\)\s*\{[^}]*font-weight:\s*600/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h2\)\s*\{[^}]*color:\s*var\(--reading-heading-secondary/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h2\)\s*\{[^}]*font-weight:\s*600/s)
     expect(extractRule(':deep\\(\\.cm-live-h2\\)')).not.toContain('var(--reading-accent)')
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h3\)\s*\{[^}]*font-weight:\s*500/s)

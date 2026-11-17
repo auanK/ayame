@@ -1114,7 +1114,7 @@ defineExpose({
 }
 
 .editor-status-indicator--saving {
-  color: var(--reading-heading-secondary);
+  color: var(--reading-heading);
   background: var(--reading-background-elevated);
   border: 1px solid var(--reading-border);
   opacity: 1;
@@ -1163,7 +1163,7 @@ defineExpose({
 }
 
 .action-button:hover:not(:disabled) {
-  background: var(--reading-background-elevated);
+  background: var(--ayame-hover, #242530);
   border-color: var(--reading-accent);
   color: var(--reading-heading);
 }
@@ -1233,7 +1233,7 @@ defineExpose({
 }
 
 .error-title {
-  color: #ff9d76;
+  color: var(--ayame-error, #e2a8b4);
   font-weight: 500;
 }
 

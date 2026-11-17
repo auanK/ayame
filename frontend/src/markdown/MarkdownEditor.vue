@@ -425,7 +425,7 @@ defineExpose({
 }
 
 :deep(.cm-live-h3) {
-  color: var(--reading-accent);
+  color: var(--reading-heading-secondary);
   font-size: 1.18rem;
   font-weight: 500;
   line-height: 1.34;
@@ -433,7 +433,7 @@ defineExpose({
 }
 
 :deep(.cm-live-h4) {
-  color: var(--reading-accent);
+  color: var(--reading-heading-secondary);
   font-size: 1.06rem;
   font-weight: 500;
   line-height: 1.38;
@@ -507,7 +507,7 @@ defineExpose({
 }
 
 :deep(.cm-live-callout-badge) {
-  color: var(--reading-heading-secondary);
+  color: var(--reading-accent);
   font-weight: 600;
 }
 
@@ -552,7 +552,7 @@ defineExpose({
 }
 
 :deep(.cm-live-table-pipe) {
-  color: var(--reading-accent);
+  color: var(--reading-muted);
   font-weight: 600;
 }
 
@@ -585,7 +585,7 @@ defineExpose({
 :deep(.cm-live-link) {
   color: var(--reading-link);
   text-decoration: underline;
-  text-underline-color: rgba(152, 206, 244, 0.5);
+  text-underline-color: rgba(140, 207, 240, 0.45);
   text-underline-offset: 3px;
   cursor: pointer;
   border-radius: 2px;

@@ -910,7 +910,7 @@ const handleRawYamlInput = (event) => {
 
 .properties-toggle:hover {
   color: var(--reading-text);
-  background-color: var(--reading-background-elevated);
+  background-color: var(--ayame-hover, #242530);
 }
 
 .properties-toggle:focus-visible {
@@ -957,7 +957,7 @@ const handleRawYamlInput = (event) => {
 .properties-action-btn:hover {
   color: var(--reading-heading);
   border-color: var(--reading-accent);
-  background: var(--reading-background-elevated);
+  background: var(--ayame-hover, #242530);
 }
 
 .properties-action-btn:focus-visible {
@@ -967,14 +967,14 @@ const handleRawYamlInput = (event) => {
 
 .properties-action-btn--primary {
   background-color: var(--reading-accent);
-  color: var(--reading-background);
+  color: var(--ayame-background, #111218);
   border-color: var(--reading-accent);
   font-weight: 600;
 }
 
 .properties-action-btn--primary:hover {
-  background-color: var(--reading-heading-secondary);
-  color: var(--reading-background);
+  background-color: var(--ayame-lavender, #d4cbe4);
+  color: var(--ayame-background, #111218);
 }
 
 .properties-table {
@@ -994,7 +994,7 @@ const handleRawYamlInput = (event) => {
 }
 
 .property-row:hover {
-  background-color: rgba(183, 163, 227, 0.05);
+  background-color: rgba(255, 255, 255, 0.03);
 }
 
 .property-key-cell {
@@ -1023,7 +1023,7 @@ const handleRawYamlInput = (event) => {
 }
 
 .property-type-select option {
-  color: var(--reading-heading);
+  color: var(--reading-text);
   background: var(--reading-control-bg);
 }
 
@@ -1088,7 +1088,7 @@ const handleRawYamlInput = (event) => {
   padding: 0.15rem 0.45rem;
   background-color: var(--reading-link-hover-bg);
   color: var(--reading-link);
-  border: 1px solid rgba(152, 206, 244, 0.34);
+  border: 1px solid rgba(140, 207, 240, 0.32);
   border-radius: 999px;
   font-size: 0.75rem;
   cursor: pointer;
@@ -1161,7 +1161,7 @@ const handleRawYamlInput = (event) => {
 .chip-remove-btn:hover:not(:disabled),
 .chip-remove-btn:focus-visible:not(:disabled) {
   color: var(--reading-heading);
-  background: rgba(183, 163, 227, 0.16);
+  background: rgba(169, 154, 202, 0.16);
   border-color: var(--reading-control-border);
   outline: 2px solid var(--reading-focus-ring);
   outline-offset: 1px;
@@ -1220,7 +1220,7 @@ const handleRawYamlInput = (event) => {
 .property-action-btn:hover:not(:disabled),
 .property-action-btn:focus-visible:not(:disabled) {
   color: var(--reading-heading);
-  background-color: var(--reading-control-bg);
+  background-color: var(--ayame-hover, #242530);
   border-color: var(--reading-control-border);
   outline: 2px solid var(--reading-focus-ring);
   outline-offset: 1px;
@@ -1249,7 +1249,7 @@ const handleRawYamlInput = (event) => {
 
 .add-property-btn:hover:not(:disabled) {
   color: var(--reading-heading);
-  background-color: rgba(183, 163, 227, 0.12);
+  background-color: var(--ayame-hover, #242530);
 }
 
 .add-property-btn:focus-visible:not(:disabled) {

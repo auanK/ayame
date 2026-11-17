@@ -1132,17 +1132,16 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
         }
       }
 
-      // Reading tokens compose directly from workspace / Ayame tokens
+      // Reading tokens compose directly from workspace / Ayame tokens where shared
       expect(tokens['--reading-background']).toBe('var(--workspace-editor)')
       expect(tokens['--reading-background-elevated']).toBe('var(--ayame-surface)')
       expect(tokens['--reading-control-bg']).toBe('var(--ayame-surface)')
       expect(tokens['--reading-code-bg']).toBe('var(--ayame-background)')
-      expect(tokens['--reading-accent']).toBe('var(--ayame-primary)')
-      expect(tokens['--reading-heading']).toBe('var(--ayame-lavender)')
       expect(tokens['--reading-muted']).toBe('var(--ayame-text-muted)')
       expect(tokens['--reading-link']).toBe('var(--ayame-link)')
       expect(tokens['--reading-link-hover']).toBe('var(--ayame-link-hover)')
       expect(tokens['--reading-border']).toBe('var(--ayame-border)')
+      expect(tokens['--reading-tag-text']).toBe('var(--ayame-lavender)')
 
       const workspaceBg = resolveRootToken(tokens, '--ayame-background')
       const workspaceText = resolveRootToken(tokens, '--ayame-text')
@@ -1195,9 +1194,13 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(hasVioletTint(readingControlBorder)).toBe(false)
       expect(hasVioletTint(readingCodeBg)).toBe(false)
 
-      // Reading body text stays softer than workspace UI text (#eeeaf3) and avoids pure #ffffff
+      // Clear luminance hierarchy: H1 > Bold > H2/H3 > Body text, avoiding flat contrast monotony and pure #ffffff
       expect(relativeLuminance(readingText)).toBeLessThan(relativeLuminance(workspaceText))
+      expect(relativeLuminance(readingHeading)).toBeLessThan(relativeLuminance(workspaceText))
+      expect(relativeLuminance(readingHeading)).toBeGreaterThan(relativeLuminance(readingBold))
       expect(relativeLuminance(readingBold)).toBeGreaterThan(relativeLuminance(readingText))
+      expect(relativeLuminance(readingHeadingSecondary)).toBeGreaterThan(relativeLuminance(readingText))
+      expect(contrastRatio(readingHeading, readingBg) - contrastRatio(readingText, readingBg)).toBeGreaterThanOrEqual(2.5)
       for (const hex of [readingText, readingHeading, readingHeadingSecondary, readingBold, readingLink, readingLinkHover, readingTagText, readingCodeText]) {
         expect(hex.toLowerCase()).not.toBe('#ffffff')
         expect(hex.toLowerCase()).not.toBe('#fff')
