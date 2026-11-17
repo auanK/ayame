@@ -289,7 +289,7 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     expect(wrapper.find('.cm-live-checklist-marker').attributes('aria-checked')).toBe('true')
   })
 
-  it('10. applies Noite Lavanda heading hierarchy, lavender accents, compact top spacing, and readable tokens without pure white or broken editing', async () => {
+  it('10. applies unified Ayame heading hierarchy, restrained lavender accents, compact top spacing, and readable tokens without pure white or broken editing', async () => {
     const editorStyles = editorRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
     const extractRule = (pattern) => editorStyles.match(new RegExp(`${pattern}\\s*\\{([^}]*)\\}`, 's'))?.[1] || ''
     const parseLeadingRem = (val) => {
@@ -297,7 +297,7 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
       return m ? parseFloat(m[1]) : NaN
     }
 
-    // Body text uses warm reading tokens, 16px-17px size, weight 400, comfortable line-height, and visible lavender caret
+    // Body text uses comfortable reading tokens, 16px-17px size, weight 400, comfortable line-height, and visible caret
     expect(editorStyles).toMatch(/\.markdown-editor-surface\s*\{[^}]*var\(--reading-text/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-editor\)\s*\{[^}]*var\(--reading-font-body/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-editor\)\s*\{[^}]*var\(--reading-font-size/s)
@@ -311,16 +311,18 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     expect(parseLeadingRem(scrollerRule.match(/padding:\s*([^;]+);/)?.[1])).toBeLessThanOrEqual(0.2)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-heading:first-child\)\s*\{[^}]*padding-top:\s*0(?:\b|;)/s)
 
-    // Expressive heading color progression using distinct semantic tokens (never monochrome gray and never #fff)
+    // Unified heading hierarchy: differentiated by size, weight, spacing & structural borders (no rainbow of violet shades, never #fff)
     expect(editorStyles).not.toMatch(/#fff(?:fff)?\b/i)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-heading\)\s*\{[^}]*color:\s*var\(--reading-heading/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-heading\)\s*\{[^}]*var\(--reading-font-heading/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h1\)\s*\{[^}]*font-weight:\s*600/s)
-    expect(editorStyles).toMatch(/:deep\(\.cm-live-h2\)\s*\{[^}]*color:\s*var\(--reading-heading-secondary/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h2\)\s*\{[^}]*font-weight:\s*600/s)
-    expect(editorStyles).toMatch(/:deep\(\.cm-live-h3\)\s*\{[^}]*color:\s*var\(--reading-accent/s)
+    expect(extractRule(':deep\\(\\.cm-live-h2\\)')).not.toContain('var(--reading-accent)')
     expect(editorStyles).toMatch(/:deep\(\.cm-live-h3\)\s*\{[^}]*font-weight:\s*500/s)
-    expect(editorStyles).toMatch(/:deep\(\.cm-live-h4\)\s*\{[^}]*color:\s*var\(--reading-accent/s)
+    expect(extractRule(':deep\\(\\.cm-live-h3\\)')).not.toContain('var(--reading-accent)')
+    expect(extractRule(':deep\\(\\.cm-live-h4\\)')).not.toContain('var(--reading-accent)')
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h3\)\s*\{[^}]*color:\s*var\(--reading-heading-secondary/s)
+    expect(editorStyles).toMatch(/:deep\(\.cm-live-h4\)\s*\{[^}]*color:\s*var\(--reading-heading-secondary/s)
     expect(editorStyles).toMatch(/:deep\(\.cm-live-bold\)\s*\{[^}]*font-weight:\s*600[^}]*var\(--reading-bold/s)
 
     // Lavender tags, markers, syntax delimiters, links, code, blockquotes, and tables

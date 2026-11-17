@@ -9,6 +9,7 @@ import { resolve } from 'node:path'
 import * as api from '../vaults/api.js'
 import viewerRaw from './MarkdownViewer.vue?raw'
 import propertiesRaw from './PropertiesPanel.vue?raw'
+import editorRaw from './MarkdownEditor.vue?raw'
 
 const mainCssRaw = readFileSync(
   resolve(__dirname, '../styles/main.css'),
@@ -49,9 +50,26 @@ const parseLeadingRem = (value) => {
   return match ? parseFloat(match[1]) : NaN
 }
 
-const readRootToken = (cssText, name) => {
-  const match = cssText.match(new RegExp(`${name}:\\s*([^;]+);`))
-  return match ? match[1].trim() : null
+const parseRootTokens = (cssText) => {
+  const tokens = {}
+  for (const match of cssText.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/gi)) {
+    tokens[match[1]] = match[2].trim()
+  }
+  return tokens
+}
+
+const resolveRootToken = (tokens, name, seen = new Set()) => {
+  if (seen.has(name)) {
+    throw new Error(`Circular CSS variable reference detected at ${name}`)
+  }
+  const raw = tokens[name]
+  if (!raw) return null
+  const varMatch = raw.match(/^var\(\s*(--[a-z0-9-]+)(?:\s*,\s*([^)]+))?\s*\)$/i)
+  if (!varMatch) return raw
+  const nextSeen = new Set(seen)
+  nextSeen.add(name)
+  const resolved = resolveRootToken(tokens, varMatch[1], nextSeen)
+  return resolved ?? (varMatch[2]?.trim() || null)
 }
 
 vi.mock('../vaults/api.js', () => ({
@@ -1096,30 +1114,58 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
     })
   })
 
-  describe('Noite Lavanda reading theme, chromatic hierarchy, vertical composition, Properties balance, and WCAG compliance', () => {
-    it('defines Noite Lavanda semantic tokens with violet/lavender personality, distinct heading hierarchy, WCAG AA contrast, and compact vertical composition', () => {
+  describe('Ayame workspace visual unification, token composition, compact rhythm, and WCAG compliance', () => {
+    it('composes reading tokens unidirectionally from workspace identity without circular refs, violet surface cast, or WCAG contrast regressions', () => {
       const rootBlock = mainCssRaw.match(/:root\s*\{([\s\S]*?)\r?\n\}/)?.[1] || ''
-      const workspaceBg = readRootToken(rootBlock, '--ayame-background')
-      const readingBg = readRootToken(rootBlock, '--reading-background')
-      const readingText = readRootToken(rootBlock, '--reading-text')
-      const readingHeading = readRootToken(rootBlock, '--reading-heading')
-      const readingHeadingSecondary = readRootToken(rootBlock, '--reading-heading-secondary')
-      const readingAccent = readRootToken(rootBlock, '--reading-accent')
-      const readingMuted = readRootToken(rootBlock, '--reading-muted')
-      const readingLink = readRootToken(rootBlock, '--reading-link')
-      const readingLinkHover = readRootToken(rootBlock, '--reading-link-hover')
-      const readingLinkVisited = readRootToken(rootBlock, '--reading-link-visited')
-      const readingBold = readRootToken(rootBlock, '--reading-bold')
-      const readingSyntax = readRootToken(rootBlock, '--reading-syntax')
-      const readingTagBg = readRootToken(rootBlock, '--reading-tag-bg')
-      const readingTagText = readRootToken(rootBlock, '--reading-tag-text')
-      const readingTagBorder = readRootToken(rootBlock, '--reading-tag-border')
-      const readingCodeBg = readRootToken(rootBlock, '--reading-code-bg')
-      const readingCodeText = readRootToken(rootBlock, '--reading-code-text')
-      const readingControlBorder = readRootToken(rootBlock, '--reading-control-border')
-      const workspaceEditor = readRootToken(rootBlock, '--workspace-editor')
+      const tokens = parseRootTokens(rootBlock)
 
-      for (const token of [
+      // No circular CSS variable references anywhere in :root
+      for (const name of Object.keys(tokens)) {
+        expect(() => resolveRootToken(tokens, name)).not.toThrow()
+        expect(resolveRootToken(tokens, name)).toBeTruthy()
+      }
+
+      // Unidirectional token dependency: workspace tokens never depend on reading tokens
+      for (const [name, rawValue] of Object.entries(tokens)) {
+        if (name.startsWith('--workspace-')) {
+          expect(rawValue).not.toContain('--reading-')
+        }
+      }
+
+      // Reading tokens compose directly from workspace / Ayame tokens
+      expect(tokens['--reading-background']).toBe('var(--workspace-editor)')
+      expect(tokens['--reading-background-elevated']).toBe('var(--ayame-surface)')
+      expect(tokens['--reading-control-bg']).toBe('var(--ayame-surface)')
+      expect(tokens['--reading-code-bg']).toBe('var(--ayame-background)')
+      expect(tokens['--reading-accent']).toBe('var(--ayame-primary)')
+      expect(tokens['--reading-heading']).toBe('var(--ayame-lavender)')
+      expect(tokens['--reading-muted']).toBe('var(--ayame-text-muted)')
+      expect(tokens['--reading-link']).toBe('var(--ayame-link)')
+      expect(tokens['--reading-link-hover']).toBe('var(--ayame-link-hover)')
+      expect(tokens['--reading-border']).toBe('var(--ayame-border)')
+
+      const workspaceBg = resolveRootToken(tokens, '--ayame-background')
+      const workspaceText = resolveRootToken(tokens, '--ayame-text')
+      const readingBg = resolveRootToken(tokens, '--reading-background')
+      const readingText = resolveRootToken(tokens, '--reading-text')
+      const readingHeading = resolveRootToken(tokens, '--reading-heading')
+      const readingHeadingSecondary = resolveRootToken(tokens, '--reading-heading-secondary')
+      const readingAccent = resolveRootToken(tokens, '--reading-accent')
+      const readingMuted = resolveRootToken(tokens, '--reading-muted')
+      const readingLink = resolveRootToken(tokens, '--reading-link')
+      const readingLinkHover = resolveRootToken(tokens, '--reading-link-hover')
+      const readingLinkVisited = resolveRootToken(tokens, '--reading-link-visited')
+      const readingBold = resolveRootToken(tokens, '--reading-bold')
+      const readingSyntax = resolveRootToken(tokens, '--reading-syntax')
+      const readingTagBg = resolveRootToken(tokens, '--reading-tag-bg')
+      const readingTagText = resolveRootToken(tokens, '--reading-tag-text')
+      const readingTagBorder = resolveRootToken(tokens, '--reading-tag-border')
+      const readingCodeBg = resolveRootToken(tokens, '--reading-code-bg')
+      const readingCodeText = resolveRootToken(tokens, '--reading-code-text')
+      const readingControlBg = resolveRootToken(tokens, '--reading-control-bg')
+      const readingControlBorder = resolveRootToken(tokens, '--reading-control-border')
+
+      for (const resolved of [
         readingBg,
         readingText,
         readingHeading,
@@ -1136,32 +1182,28 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
         readingTagBorder,
         readingCodeBg,
         readingCodeText,
+        readingControlBg,
         readingControlBorder,
       ]) {
-        expect(token).toMatch(/^#[0-9a-f]{6}$/i)
+        expect(resolved).toMatch(/^#[0-9a-f]{6}$/i)
       }
-      expect(workspaceEditor).toBe('var(--reading-background)')
 
-      // Noite Lavanda identity: reading surface stays deep dark with subtle violet undertone (not flat gray or near-black flat)
-      expect(relativeLuminance(readingBg)).toBeGreaterThan(relativeLuminance(workspaceBg))
-      expect(readingBg.toLowerCase()).not.toBe(workspaceBg.toLowerCase())
-      expect(hasVioletTint(readingBg)).toBe(true)
-      expect(hasVioletTint(readingHeadingSecondary)).toBe(true)
-      expect(hasVioletTint(readingAccent)).toBe(true)
-      expect(hasVioletTint(readingTagBg)).toBe(true)
-      expect(hasVioletTint(readingTagText)).toBe(true)
+      // Unified neutral dark slate surface (matches workspace blue-slate undertone, not an isolated purple card)
+      expect(relativeLuminance(readingBg)).toBeGreaterThanOrEqual(relativeLuminance(workspaceBg))
+      expect(hasVioletTint(readingBg)).toBe(false)
+      expect(hasVioletTint(readingControlBg)).toBe(false)
+      expect(hasVioletTint(readingControlBorder)).toBe(false)
+      expect(hasVioletTint(readingCodeBg)).toBe(false)
 
-      // Expressive heading and emphasis separation without harsh pure white
-      expect(readingHeading.toLowerCase()).not.toBe(readingHeadingSecondary.toLowerCase())
-      expect(readingHeadingSecondary.toLowerCase()).not.toBe(readingAccent.toLowerCase())
+      // Reading body text stays softer than workspace UI text (#eeeaf3) and avoids pure #ffffff
+      expect(relativeLuminance(readingText)).toBeLessThan(relativeLuminance(workspaceText))
       expect(relativeLuminance(readingBold)).toBeGreaterThan(relativeLuminance(readingText))
-      expect(relativeLuminance(readingHeading)).toBeGreaterThan(relativeLuminance(readingBold))
       for (const hex of [readingText, readingHeading, readingHeadingSecondary, readingBold, readingLink, readingLinkHover, readingTagText, readingCodeText]) {
         expect(hex.toLowerCase()).not.toBe('#ffffff')
         expect(hex.toLowerCase()).not.toBe('#fff')
       }
 
-      // Lively yet comfortable cyan-blue link hierarchy
+      // Links share Ayame cyan-blue identity
       const [linkR, linkG, linkB] = parseHexRgb(readingLink)
       expect(linkB).toBeGreaterThan(linkG)
       expect(linkG).toBeGreaterThan(linkR)
@@ -1169,10 +1211,14 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
 
       const viewerStyles = viewerRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
       const propertiesStyles = propertiesRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
-      expect(viewerStyles).not.toMatch(/color:\s*#fff(?:fff)?\b/i)
-      expect(propertiesStyles).not.toMatch(/color:\s*#fff(?:fff)?\b/i)
+      const editorStyles = editorRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
+      for (const styles of [mainCssRaw, viewerStyles, propertiesStyles, editorStyles]) {
+        expect(styles).not.toMatch(/color:\s*#fff(?:fff)?\b/i)
+        expect(styles).not.toContain('183, 163, 227')
+        expect(styles).not.toContain('152, 206, 244')
+      }
 
-      // WCAG 2.1 AA contrast validation on actual reading background, code surface, and tag badges
+      // WCAG 2.1 AA contrast validation on reading surface, control surface, code surface, and tags
       expect(contrastRatio(readingText, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingHeading, readingBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingHeadingSecondary, readingBg)).toBeGreaterThanOrEqual(4.5)
@@ -1186,6 +1232,7 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(contrastRatio(readingCodeText, readingCodeBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingTagText, readingTagBg)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(readingControlBorder, readingBg)).toBeGreaterThanOrEqual(3.0)
+      expect(contrastRatio(readingControlBorder, readingControlBg)).toBeGreaterThanOrEqual(3.0)
 
       // Viewer applies continuous surface tokens, keeps 800px reading measure without card borders/shadows or container opacity
       expect(viewerStyles).toMatch(/\.markdown-viewer\s*\{[^}]*var\(--reading-background/s)
@@ -1196,7 +1243,7 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(viewerStyles).not.toMatch(/\.markdown-viewer\s*\{[^}]*opacity:/s)
       expect(viewerStyles).not.toMatch(/\.viewer-body\s*\{[^}]*opacity:/s)
 
-      // Refined vertical rhythm above title & Properties without empty void
+      // Preserved compact vertical rhythm above title & Properties without empty void
       const containerRule = extractRuleBlock(viewerStyles, '\\.viewer-document-container')
       const containerPadMatch = containerRule.match(/padding:\s*([^;]+);/)
       expect(parseLeadingRem(containerPadMatch?.[1])).toBeLessThanOrEqual(1.25)
@@ -1212,7 +1259,7 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(viewerStyles).toMatch(/\.note-heading-title:focus-visible\s*\{/s)
     })
 
-    it('gives PropertiesPanel balanced lavender tag identity, tighter vertical spacing, readable controls, link navigation, and dirty-draft workflows', async () => {
+    it('gives PropertiesPanel workspace-aligned controls, discreet lavender tags, compact spacing, link navigation, and dirty-draft workflows', async () => {
       const propertiesStyles = propertiesRaw.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] || ''
       const panelRule = extractRuleBlock(propertiesStyles, '\\.properties-panel')
       expect(parseLeadingRem(panelRule.match(/margin-bottom:\s*([^;]+);/)?.[1])).toBeLessThanOrEqual(0.75)
