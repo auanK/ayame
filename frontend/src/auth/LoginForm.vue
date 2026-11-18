@@ -1,5 +1,5 @@
 <template>
-  <section class="auth-section auth-card" data-testid="login-form">
+  <section class="auth-section" data-testid="login-form">
     <div class="auth-card-header">
       <h2>Welcome back</h2>
       <p class="status-message">Sign in to access your vaults.</p>

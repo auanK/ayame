@@ -217,18 +217,6 @@ const frontmatterSummary = computed(() => {
   return { tags, items: items.slice(0, 3) }
 })
 
-const ambientGlowStyle = computed(() => {
-  const color = String(props.accentColor || '').trim()
-  if (/^#[0-9a-f]{6}$/i.test(color)) {
-    return {
-      background: `radial-gradient(ellipse 68% 130px at 50% 0%, ${color}14 0%, transparent 100%)`,
-    }
-  }
-  return {
-    background: 'radial-gradient(ellipse 68% 130px at 50% 0%, rgba(169, 154, 202, 0.065) 0%, transparent 100%)',
-  }
-})
-
 const handleUploadImage = async (file) => {
   if (!hasVaultApi('uploadVaultAttachment')) return null
   const activeDir = props.directory
@@ -1008,12 +996,6 @@ defineExpose({
     </div>
 
     <main class="viewer-body">
-      <div
-        v-if="hasConfirmedContent && !loading && !error"
-        class="viewer-ambient-glow"
-        :style="ambientGlowStyle"
-        aria-hidden="true"
-      />
       <div v-if="loading" class="state-container" data-testid="markdown-loading">
         <div class="loading-spinner"></div>
         <p>Loading note...</p>
@@ -1437,22 +1419,6 @@ defineExpose({
   overflow-y: auto;
   padding: 0;
   background: var(--reading-background);
-  position: relative;
-}
-
-.viewer-ambient-glow {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 130px;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.content-container {
-  position: relative;
-  z-index: 1;
 }
 
 .viewer-document-container {

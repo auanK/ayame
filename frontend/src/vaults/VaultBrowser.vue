@@ -3413,9 +3413,6 @@ defineExpose({
                 :title="bmPath"
                 @click="selectNote(bmPath)"
               >
-                <svg class="tree-item-icon tree-bookmark-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
-                  <path d="M8 2.1l1.8 3.6 4 .6-2.9 2.8.7 4L8 11.2 4.4 13.1l.7-4-2.9-2.8 4-.6L8 2.1Z" />
-                </svg>
                 <span class="tree-label">{{ stripMarkdownExtension(bmPath.split('/').pop()) }}</span>
               </button>
               <button
@@ -3555,9 +3552,6 @@ defineExpose({
                     @click="toggleFolder(row.entry.path)"
                   >
                     <span class="tree-chevron" aria-hidden="true">{{ row.isExpanded ? '▾' : '▸' }}</span>
-                    <svg class="tree-item-icon tree-folder-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
-                      <path d="M2 4.3A1.5 1.5 0 0 1 3.5 2.8h3l1.3 1.5h4.7A1.5 1.5 0 0 1 14 5.8v5.9a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.7V4.3Z" stroke-linejoin="round" />
-                    </svg>
                     <span class="tree-label">{{ row.entry.name }}</span>
                   </button>
                   <button
@@ -3644,10 +3638,7 @@ defineExpose({
                   @click="openFile(row.entry)"
                   @click.middle.prevent="openFile(row.entry, { newTab: true })"
                 >
-                  <svg class="tree-item-icon tree-note-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
-                    <path d="M4 2.2h5.2l2.8 2.8v8.8H4V2.2Z" stroke-linejoin="round" />
-                    <path d="M9 2.2V5h3" stroke-linejoin="round" />
-                  </svg>
+                  <span class="tree-chevron tree-chevron--spacer" aria-hidden="true" />
                   <span class="tree-label">{{ stripMarkdownExtension(row.entry.name) }}</span>
                 </button>
                 <button
@@ -3862,10 +3853,6 @@ defineExpose({
                 data-testid="welcome-recent-note"
                 @click="selectNote(notePath)"
               >
-                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
-                  <path d="M4 2.2h5.2l2.8 2.8v8.8H4V2.2Z" stroke-linejoin="round" />
-                  <path d="M9 2.2V5h3" stroke-linejoin="round" />
-                </svg>
                 <span class="workspace-empty-note-name">{{ stripMarkdownExtension(notePath.split('/').pop()) }}</span>
                 <span v-if="notePath.includes('/')" class="workspace-empty-note-dir">{{ notePath.slice(0, notePath.lastIndexOf('/')) }}</span>
               </button>
@@ -5078,23 +5065,6 @@ defineExpose({
   box-shadow: inset 2px 0 0 var(--vault-accent, #a99aca);
   color: var(--ayame-lavender, #d4cbe4);
   font-weight: 500;
-}
-
-.tree-item-icon {
-  flex-shrink: 0;
-  color: var(--ayame-text-muted, #aaa6b8);
-  opacity: 0.82;
-}
-
-.tree-folder--selected .tree-folder-icon,
-.tree-file--active .tree-note-icon {
-  color: var(--vault-accent, var(--ayame-lavender, #d4cbe4));
-  opacity: 1;
-}
-
-.tree-bookmark-icon {
-  color: #e6c387;
-  opacity: 0.9;
 }
 
 .tree-file--unsupported {

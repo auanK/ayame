@@ -94,13 +94,13 @@ describe('VaultsPanel', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0].text()).toContain('personal')
     expect(rows[0].text()).toContain('Personal Dir/')
-    expect(rows[0].text()).toContain('Detected')
+    expect(rows[0].text()).not.toContain('Detected')
     expect(rows[0].text()).toContain('Open')
     expect(rows[0].text()).toContain('Customize')
     expect(rows[0].text()).not.toContain('Reset')
     expect(rows[1].text()).toContain('Personal Notes')
     expect(rows[1].text()).toContain('personal/')
-    expect(rows[1].text()).toContain('Customized')
+    expect(rows[1].text()).not.toContain('Customized')
     expect(rows[1].text()).toContain('Open')
     expect(rows[1].text()).toContain('Reset')
     expect(rows[1].findAll('button').map((button) => button.text())).not.toContain('Customize')
@@ -177,12 +177,15 @@ describe('VaultsPanel', () => {
     await flushPromises()
     expect(api.getVaults).toHaveBeenCalledTimes(2)
     expect(wrapper.find('[data-testid="vault-editor"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="edit-vault-button"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('Customized')
 
     reload.resolve({ vaults: [customized] })
     await flushPromises()
-    expect(wrapper.text()).toContain('Customized')
+    expect(wrapper.find('[data-testid="edit-vault-button"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Reset')
     expect(wrapper.text()).toContain('Personal Notes')
+    expect(wrapper.text()).not.toContain('Customized')
   })
 
   it('resets customization, reloads server truth, and keeps the physical vault row', async () => {
@@ -192,7 +195,8 @@ describe('VaultsPanel', () => {
     await flushPromises()
     expect(api.unregisterVault).toHaveBeenCalledWith('vault-1')
     expect(wrapper.text()).toContain('personal')
-    expect(wrapper.text()).toContain('Detected')
+    expect(wrapper.text()).toContain('Customize')
+    expect(wrapper.text()).not.toContain('Detected')
     expect(wrapper.findAll('[data-testid="vault-row"]')).toHaveLength(1)
   })
 
@@ -263,7 +267,7 @@ describe('VaultsPanel', () => {
     const row = await customize(wrapper)
     await row.find('form').trigger('submit')
     await flushPromises()
-    expect(wrapper.text()).toContain('Customized')
+    expect(wrapper.find('[data-testid="edit-vault-button"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('Personal Notes')
     expect(wrapper.text()).toContain('This vault was customized elsewhere. The list has been refreshed.')
     expect(wrapper.find('[data-testid="vault-editor"]').exists()).toBe(false)
@@ -306,7 +310,7 @@ describe('VaultsPanel', () => {
     api.getVaults.mockResolvedValueOnce({ vaults: [customized] })
     await wrapper.findAll('button').find((button) => button.text() === 'Refresh').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('Customized')
+    expect(wrapper.find('[data-testid="edit-vault-button"]').exists()).toBe(true)
   })
 
   it('reports a successful reset separately from a failed list refresh and blocks stale actions', async () => {
@@ -393,7 +397,7 @@ describe('VaultsPanel', () => {
     expect(api.registerVault).not.toHaveBeenCalled()
     refresh.resolve({ vaults: [customized] })
     await flushPromises()
-    expect(wrapper.text()).toContain('Customized')
+    expect(wrapper.find('[data-testid="edit-vault-button"]').exists()).toBe(true)
   })
 
   it('reorders vault cards purely via drag-and-drop without arrow buttons or grip icons', async () => {

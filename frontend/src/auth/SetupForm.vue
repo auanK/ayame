@@ -1,5 +1,5 @@
 <template>
-  <section class="auth-section auth-card" data-testid="setup-form">
+  <section class="auth-section" data-testid="setup-form">
     <div class="auth-card-header">
       <h2>Create your Ayame space</h2>
       <p class="status-message">Create the owner account for this Ayame installation.</p>

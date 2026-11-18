@@ -34,7 +34,10 @@
       </div>
     </header>
 
-    <p v-if="!resolvedVault && view !== 'authenticated'" class="ayame-tagline">A place to think.</p>
+    <template v-if="!resolvedVault && view !== 'authenticated'">
+      <p class="ayame-tagline">A place to think.</p>
+      <div class="ayame-divider" aria-hidden="true"></div>
+    </template>
 
     <div
       v-if="view === 'loading'"

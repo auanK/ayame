@@ -280,11 +280,6 @@
               @dragend="clearCardDrag"
             >
               <div class="vault-card-banner" :style="bannerStyleFor(vault)">
-                <div
-                  v-if="vault.accentColor"
-                  class="vault-card-accent-line"
-                  :style="{ backgroundColor: vault.accentColor }"
-                />
                 <img
                   v-if="vault.hasCover"
                   class="vault-cover-img"
@@ -292,19 +287,8 @@
                   :src="coverUrlFor(vault)"
                   :alt="`Cover for ${vault.name}`"
                 />
-                <svg
-                  v-else
-                  class="vault-card-emblem"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  aria-hidden="true"
-                >
-                  <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4.2l1.8 2h7A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" />
-                </svg>
 
-                <div class="vault-banner-top">
+                <div class="vault-banner-top" :class="{ 'vault-banner-top--cover': vault.hasCover }">
                   <div class="vault-banner-badges">
                     <span v-if="vault.category" class="vault-category-badge">{{ vault.category }}</span>
                   </div>
@@ -373,7 +357,6 @@
                 </div>
 
                 <div v-if="!needsRefresh" class="vault-card-footer">
-                  <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
                   <div class="vault-actions">
                     <button
                       type="button"
@@ -451,11 +434,6 @@
           @dragend="clearCardDrag"
         >
           <div v-if="viewMode === 'cards'" class="vault-card-banner" :style="bannerStyleFor(vault)">
-            <div
-              v-if="vault.accentColor"
-              class="vault-card-accent-line"
-              :style="{ backgroundColor: vault.accentColor }"
-            />
             <img
               v-if="vault.hasCover"
               class="vault-cover-img"
@@ -463,19 +441,8 @@
               :src="coverUrlFor(vault)"
               :alt="`Cover for ${vault.name}`"
             />
-            <svg
-              v-else
-              class="vault-card-emblem"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4.2l1.8 2h7A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" />
-            </svg>
 
-            <div class="vault-banner-top">
+            <div class="vault-banner-top" :class="{ 'vault-banner-top--cover': vault.hasCover }">
               <div class="vault-banner-badges">
                 <span v-if="vault.category" class="vault-category-badge">{{ vault.category }}</span>
               </div>
@@ -549,7 +516,6 @@
             </div>
 
             <div v-if="!needsRefresh" class="vault-card-footer">
-              <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
               <div class="vault-actions">
                 <button
                   type="button"
@@ -1194,13 +1160,9 @@ const coverUrlFor = (vault) => {
 const bannerStyleFor = (vault) => {
   if (!vault || vault.hasCover || !vault.accentColor) return undefined
   const color = String(vault.accentColor).trim()
-  if (/^#[0-9a-f]{6}$/i.test(color)) {
-    return {
-      backgroundImage: `radial-gradient(ellipse at 50% 0%, ${color}28 0%, transparent 72%)`,
-    }
-  }
+  if (!color) return undefined
   return {
-    backgroundImage: `radial-gradient(ellipse at 50% 0%, color-mix(in srgb, ${color} 16%, transparent) 0%, transparent 72%)`,
+    backgroundColor: `color-mix(in srgb, ${color} 28%, #161720)`,
   }
 }
 
