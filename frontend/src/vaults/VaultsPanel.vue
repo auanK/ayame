@@ -337,6 +337,32 @@
 
       <!-- Category Grouped View -->
       <div v-else-if="viewMode === 'categories'" class="vault-category-groups">
+        <form
+          v-if="!needsRefresh && hasApi('updateVault')"
+          class="vault-category-creator"
+          data-testid="add-category-bucket-form"
+          @submit.prevent="addCustomCategoryBucket"
+        >
+          <input
+            v-model="newCategoryName"
+            type="text"
+            maxlength="60"
+            class="form-input vaults-category-creator-input"
+            data-testid="add-category-bucket-input"
+            placeholder="New category drop zone…"
+            aria-label="New category name"
+            :disabled="Boolean(operation)"
+          />
+          <button
+            type="submit"
+            class="btn btn-secondary btn-compact"
+            data-testid="add-category-bucket-submit"
+            :disabled="Boolean(operation) || !newCategoryName.trim()"
+          >
+            + Add category
+          </button>
+        </form>
+
         <section
           v-for="group in categorizedGroups"
           :key="group.key"
@@ -346,14 +372,17 @@
           :data-category-key="group.key"
           @dragover.prevent="handleCategoryDragOver(group.key)"
           @dragleave="handleCategoryDragLeave(group.key, $event)"
-          @drop.prevent="handleCategoryDrop(group.key)"
+          @drop.prevent="handleCategoryDrop(group.key, $event)"
         >
           <header class="vault-category-header">
             <h3>{{ group.label }}</h3>
             <span class="vault-category-count">{{ group.items.length }}</span>
           </header>
 
-          <ul class="vault-grid" :aria-label="`Vaults in ${group.label}`">
+          <p v-if="group.items.length === 0" class="vault-category-empty-drop">
+            Drop vault cards here
+          </p>
+          <ul v-else class="vault-grid" :aria-label="`Vaults in ${group.label}`">
             <li
               v-for="vault in group.items"
               :key="vault.id || vault.directory"
@@ -531,6 +560,7 @@
                   />
                   <div class="vault-banner-top">
                     <div class="vault-banner-badges">
+                      <span v-if="!needsRefresh" class="vault-drag-grip" aria-hidden="true" title="Drag card to reorder">⋮⋮</span>
                       <span v-if="vault.category" class="vault-category-badge">{{ vault.category }}</span>
                       <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
                     </div>
@@ -564,7 +594,13 @@
                 <div class="vault-card-body">
                   <div class="vault-details">
                     <div class="vault-title-line">
-                      <h3>{{ vault.name }}</h3>
+                      <h3
+                        class="vault-card-heading"
+                        :class="{ 'vault-card-heading--clickable': !needsRefresh && !operation }"
+                        @click.stop="!needsRefresh && !operation && $emit('open', vault)"
+                      >
+                        {{ vault.name }}
+                      </h3>
                     </div>
                     <p class="vault-directory">{{ vault.directory }}/</p>
                     <p v-if="vault.description" class="vault-description">{{ vault.description }}</p>
@@ -858,6 +894,7 @@
               />
               <div class="vault-banner-top">
                 <div class="vault-banner-badges">
+                  <span v-if="!needsRefresh" class="vault-drag-grip" aria-hidden="true" title="Drag card to reorder">⋮⋮</span>
                   <span v-if="vault.category" class="vault-category-badge">{{ vault.category }}</span>
                   <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
                 </div>
@@ -891,7 +928,19 @@
             <div class="vault-card-body">
               <div class="vault-details">
                 <div class="vault-title-line">
-                  <h3>{{ vault.name }}</h3>
+                  <span
+                    v-if="viewMode === 'compact' && !needsRefresh"
+                    class="vault-drag-grip"
+                    aria-hidden="true"
+                    title="Drag card to reorder"
+                  >⋮⋮</span>
+                  <h3
+                    class="vault-card-heading"
+                    :class="{ 'vault-card-heading--clickable': !needsRefresh && !operation }"
+                    @click.stop="!needsRefresh && !operation && $emit('open', vault)"
+                  >
+                    {{ vault.name }}
+                  </h3>
                   <span v-if="viewMode === 'compact'" class="vault-status">
                     {{ vault.registered ? 'Customized' : 'Detected' }}
                   </span>
@@ -1066,6 +1115,8 @@ const selectedCategory = ref('all')
 const selectedTag = ref('')
 const viewMode = ref('cards') // 'cards' | 'categories' | 'compact'
 const sortMode = ref('manual') // 'manual' | 'name' | 'recent' | 'notes'
+const customCategoryBuckets = ref([])
+const newCategoryName = ref('')
 
 const draggingDirectory = ref(null)
 const dragOverDirectory = ref(null)
@@ -1090,6 +1141,9 @@ const existingCategories = computed(() => {
   const set = new Set()
   for (const v of vaults.value) {
     if (v.category) set.add(v.category)
+  }
+  for (const bucket of customCategoryBuckets.value) {
+    if (bucket) set.add(bucket)
   }
   return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 })
@@ -1125,15 +1179,25 @@ const allVaultTags = computed(() => {
 
 const sortedVaults = computed(() => {
   const list = [...vaults.value]
-  if (sortMode.value === 'name') {
-    list.sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
-      a.directory.localeCompare(b.directory)
-    )
-  } else if (sortMode.value === 'recent') {
-    list.sort((a, b) => (b.lastModifiedAt || 0) - (a.lastModifiedAt || 0))
-  } else if (sortMode.value === 'notes') {
-    list.sort((a, b) => (b.noteCount || 0) - (a.noteCount || 0))
+  if (sortMode.value !== 'manual') {
+    list.sort((a, b) => {
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) {
+        return a.pinned ? -1 : 1
+      }
+      if (sortMode.value === 'name') {
+        return (
+          a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
+          a.directory.localeCompare(b.directory)
+        )
+      }
+      if (sortMode.value === 'recent') {
+        return (b.lastModifiedAt || 0) - (a.lastModifiedAt || 0)
+      }
+      if (sortMode.value === 'notes') {
+        return (b.noteCount || 0) - (a.noteCount || 0)
+      }
+      return 0
+    })
   }
   return list
 })
@@ -1177,6 +1241,17 @@ const filteredVaults = computed(() => {
 
 const categorizedGroups = computed(() => {
   const map = new Map()
+  if (!searchQuery.value.trim() && !selectedTag.value.trim() && selectedCategory.value === 'all') {
+    for (const rawCat of customCategoryBuckets.value) {
+      const clean = String(rawCat || '').trim()
+      if (!clean || map.has(clean)) continue
+      map.set(clean, {
+        key: clean,
+        label: clean,
+        items: [],
+      })
+    }
+  }
   for (const v of filteredVaults.value) {
     const key = v.category || '__uncategorized__'
     if (!map.has(key)) {
@@ -1194,6 +1269,15 @@ const categorizedGroups = computed(() => {
     return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
   })
 })
+
+const addCustomCategoryBucket = () => {
+  const clean = newCategoryName.value.trim()
+  if (!clean || /[\x00-\x1f\x7f]/.test(clean) || clean.length > 60) return
+  if (!customCategoryBuckets.value.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+    customCategoryBuckets.value = [...customCategoryBuckets.value, clean]
+  }
+  newCategoryName.value = ''
+}
 
 const coverUrlFor = (vault) => {
   if (hasApi('getVaultCoverUrl')) {
@@ -1676,8 +1760,8 @@ const handleCategoryDragLeave = (categoryKey, event) => {
   }
 }
 
-const handleCategoryDrop = async (categoryKey) => {
-  const sourceDir = draggingDirectory.value
+const handleCategoryDrop = async (categoryKey, event = null) => {
+  const sourceDir = draggingDirectory.value || event?.dataTransfer?.getData?.('text/plain')
   clearCardDrag()
   if (!sourceDir || !hasApi('updateVault')) return
   const targetCategory = categoryKey === '__uncategorized__' ? '' : categoryKey

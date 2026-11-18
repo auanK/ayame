@@ -520,4 +520,35 @@ describe('VaultsPanel', () => {
       category: 'Fantasy',
     }))
   })
+
+  it('creates custom category buckets in Categories view, drops uncategorized vaults into them, and prioritizes pinned vaults in sorted modes', async () => {
+    const v1 = { ...customized, id: '1', name: 'Zebra', directory: 'zebra', category: '', pinned: true, noteCount: 3 }
+    const v2 = { ...customized, id: '2', name: 'Alpha', directory: 'alpha', category: '', pinned: false, noteCount: 10 }
+    const wrapper = await mountPanel([v1, v2])
+
+    // In Name (A-Z) sort mode, pinned vault Zebra stays ahead of unpinned Alpha
+    await wrapper.find('[data-testid="vaults-sort-select"]').setValue('name')
+    expect(wrapper.findAll('[data-testid="vault-row"] h3').map((el) => el.text().trim())).toEqual(['Zebra', 'Alpha'])
+
+    // Clickable heading opens vault
+    await wrapper.find('[data-testid="vault-row"] h3').trigger('click')
+    expect(wrapper.emitted('open')?.[0]?.[0]?.directory).toBe('zebra')
+
+    // Switch to Categories view, create custom bucket, and drop uncategorized vault into it
+    await wrapper.find('[data-testid="view-mode-categories"]').trigger('click')
+    await wrapper.find('[data-testid="add-category-bucket-input"]').setValue('Archives')
+    await wrapper.find('[data-testid="add-category-bucket-form"]').trigger('submit')
+
+    const archivesZone = wrapper.find('[data-testid="category-drop-zone"][data-category-key="Archives"]')
+    expect(archivesZone.exists()).toBe(true)
+
+    const alphaRow = wrapper.find('[data-testid="vault-row"][data-vault-directory="alpha"]')
+    api.getVaults.mockResolvedValueOnce({ vaults: [v1, { ...v2, category: 'Archives' }] })
+    await alphaRow.trigger('dragstart')
+    await archivesZone.trigger('dragover')
+    await archivesZone.trigger('drop')
+    await flushPromises()
+
+    expect(api.updateVault).toHaveBeenCalledWith('alpha', { category: 'Archives' })
+  })
 })

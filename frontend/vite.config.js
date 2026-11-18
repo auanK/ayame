@@ -1,12 +1,14 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
+const backendTarget = process.env.AYAME_BACKEND_URL || 'http://127.0.0.1:3000'
+
 export default defineConfig({
   plugins: [vue()],
   server: {
     proxy: {
-      '/auth': 'http://127.0.0.1:3000',
-      '/vaults': 'http://127.0.0.1:3000',
+      '/auth': backendTarget,
+      '/vaults': backendTarget,
     },
   },
   build: {
