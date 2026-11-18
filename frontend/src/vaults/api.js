@@ -43,8 +43,29 @@ const validateVault = (vault) => {
     name: vault.name,
     directory: vault.directory,
     registered: vault.registered,
+    position: typeof vault.position === 'number' ? vault.position : null,
+    category: typeof vault.category === 'string' ? vault.category : '',
+    tags: Array.isArray(vault.tags) ? vault.tags.filter((t) => typeof t === 'string') : [],
+    description: typeof vault.description === 'string' ? vault.description : '',
+    accentColor: typeof vault.accentColor === 'string' ? vault.accentColor : '',
+    pinned: Boolean(vault.pinned),
+    hasCover: Boolean(vault.hasCover),
+    coverUpdatedAt: typeof vault.coverUpdatedAt === 'number' ? vault.coverUpdatedAt : null,
+    noteCount: typeof vault.noteCount === 'number' ? vault.noteCount : 0,
+    lastModifiedAt: typeof vault.lastModifiedAt === 'number' ? vault.lastModifiedAt : null,
   }
 }
+
+const VAULT_400_CODES = [
+  'INVALID_VAULT_NAME',
+  'INVALID_VAULT_DIRECTORY',
+  'INVALID_VAULT_CATEGORY',
+  'INVALID_VAULT_TAGS',
+  'INVALID_VAULT_DESCRIPTION',
+  'INVALID_VAULT_COLOR',
+  'INVALID_VAULT_PAYLOAD',
+  'INVALID_VAULT_ORDER',
+]
 
 const errorResponseCode = async (response, failureCode) => {
   let code
@@ -52,10 +73,16 @@ const errorResponseCode = async (response, failureCode) => {
     code = (await response.json())?.error
   } catch {}
 
-  if (response.status === 400 && ['INVALID_VAULT_NAME', 'INVALID_VAULT_DIRECTORY'].includes(code)) {
+  if (response.status === 400 && VAULT_400_CODES.includes(code)) {
     return code
   }
-  if (response.status === 409 && code === 'VAULT_ALREADY_REGISTERED') {
+  if (response.status === 409 && ['VAULT_ALREADY_REGISTERED', 'VAULT_ALREADY_EXISTS'].includes(code)) {
+    return code
+  }
+  if (response.status === 413 && ['VAULT_COVER_TOO_LARGE', 'VAULT_ATTACHMENT_TOO_LARGE'].includes(code)) {
+    return code
+  }
+  if (response.status === 415 && code === 'UNSUPPORTED_IMAGE_TYPE') {
     return code
   }
   return failureCode
@@ -82,12 +109,27 @@ export const getVaults = async () => {
   return { vaults: data.vaults.map(validateVault) }
 }
 
-export const registerVault = async ({ name, directory }) => {
+export const registerVault = async ({
+  name,
+  directory,
+  category,
+  tags,
+  description,
+  accentColor,
+  pinned,
+}) => {
+  const payload = { name, directory }
+  if (category !== undefined) payload.category = category
+  if (tags !== undefined) payload.tags = tags
+  if (description !== undefined) payload.description = description
+  if (accentColor !== undefined) payload.accentColor = accentColor
+  if (pinned !== undefined) payload.pinned = pinned
+
   const response = await request('/vaults', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, directory }),
+    body: JSON.stringify(payload),
   }, 'FAILED_TO_REGISTER_VAULT')
 
   if (response.status === 401) {
@@ -107,6 +149,121 @@ export const registerVault = async ({ name, directory }) => {
     throw apiError('INVALID_VAULT_RESPONSE')
   }
   return { vault }
+}
+
+export const createVault = async (payload) => {
+  const response = await request('/vaults/create', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, 'FAILED_TO_CREATE_VAULT')
+
+  if (response.status === 401) {
+    throw apiError('UNAUTHORIZED')
+  }
+  if (response.status !== 201) {
+    throw apiError(await errorResponseCode(response, 'FAILED_TO_CREATE_VAULT'))
+  }
+
+  const data = await readJson(response)
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+  return { vault: validateVault(data.vault) }
+}
+
+export const updateVault = async (directory, patch) => {
+  const response = await request(`/vaults/${encodeURIComponent(directory ?? '')}`, {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }, 'FAILED_TO_UPDATE_VAULT')
+
+  if (response.status === 401) {
+    throw apiError('UNAUTHORIZED')
+  }
+  if (response.status !== 200) {
+    throw apiError(await errorResponseCode(response, 'FAILED_TO_UPDATE_VAULT'))
+  }
+
+  const data = await readJson(response)
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+  return { vault: validateVault(data.vault) }
+}
+
+export const reorderVaults = async (directories) => {
+  const response = await request('/vaults/order', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ directories }),
+  }, 'FAILED_TO_REORDER_VAULTS')
+
+  if (response.status === 401) {
+    throw apiError('UNAUTHORIZED')
+  }
+  if (response.status !== 200) {
+    throw apiError(await errorResponseCode(response, 'FAILED_TO_REORDER_VAULTS'))
+  }
+
+  const data = await readJson(response)
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !Array.isArray(data.vaults)) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+  return { vaults: data.vaults.map(validateVault) }
+}
+
+export const uploadVaultCover = async (directory, blobOrFile) => {
+  const response = await request(`/vaults/${encodeURIComponent(directory ?? '')}/cover`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': blobOrFile?.type || 'application/octet-stream',
+    },
+    body: blobOrFile,
+  }, 'FAILED_TO_UPLOAD_COVER')
+
+  if (response.status === 401) {
+    throw apiError('UNAUTHORIZED')
+  }
+  if (response.status !== 200) {
+    throw apiError(await errorResponseCode(response, 'FAILED_TO_UPLOAD_COVER'))
+  }
+
+  const data = await readJson(response)
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+  return { vault: validateVault(data.vault) }
+}
+
+export const deleteVaultCover = async (directory) => {
+  const response = await request(`/vaults/${encodeURIComponent(directory ?? '')}/cover`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  }, 'FAILED_TO_DELETE_COVER')
+
+  if (response.status === 401) {
+    throw apiError('UNAUTHORIZED')
+  }
+  if (response.status !== 200) {
+    throw apiError(await errorResponseCode(response, 'FAILED_TO_DELETE_COVER'))
+  }
+
+  const data = await readJson(response)
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+  return { vault: validateVault(data.vault) }
+}
+
+export const getVaultCoverUrl = (directory, coverUpdatedAt) => {
+  const base = `/vaults/${encodeURIComponent(directory ?? '')}/cover`
+  return coverUpdatedAt ? `${base}?v=${encodeURIComponent(String(coverUpdatedAt))}` : base
 }
 
 export const unregisterVault = async (id) => {

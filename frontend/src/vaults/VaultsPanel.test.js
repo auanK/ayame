@@ -6,6 +6,12 @@ import * as api from './api.js'
 vi.mock('./api.js', () => ({
   getVaults: vi.fn(),
   registerVault: vi.fn(),
+  createVault: vi.fn(),
+  updateVault: vi.fn(),
+  reorderVaults: vi.fn(),
+  uploadVaultCover: vi.fn(),
+  deleteVaultCover: vi.fn(),
+  getVaultCoverUrl: vi.fn((dir, v) => `/vaults/${encodeURIComponent(dir)}/cover${v ? `?v=${v}` : ''}`),
   unregisterVault: vi.fn(),
 }))
 
@@ -41,6 +47,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   api.getVaults.mockResolvedValue({ vaults: [] })
   api.registerVault.mockResolvedValue({ vault: customized })
+  api.createVault.mockResolvedValue({ vault: customized })
+  api.updateVault.mockResolvedValue({ vault: customized })
+  api.reorderVaults.mockResolvedValue({ vaults: [customized] })
+  api.uploadVaultCover.mockResolvedValue({ vault: { ...customized, hasCover: true, coverUpdatedAt: 100 } })
+  api.deleteVaultCover.mockResolvedValue({ vault: { ...customized, hasCover: false, coverUpdatedAt: null } })
   api.unregisterVault.mockResolvedValue({ ok: true })
 })
 
@@ -378,5 +389,135 @@ describe('VaultsPanel', () => {
     refresh.resolve({ vaults: [customized] })
     await flushPromises()
     expect(wrapper.text()).toContain('Customized')
+  })
+
+  it('reorders vault cards via drag-and-drop and accessible move buttons', async () => {
+    const v1 = { ...customized, id: '1', name: 'Alpha', directory: 'alpha', position: 0 }
+    const v2 = { ...customized, id: '2', name: 'Beta', directory: 'beta', position: 1 }
+    const wrapper = await mountPanel([v1, v2])
+
+    api.reorderVaults.mockResolvedValueOnce({ vaults: [v2, v1] })
+    const rows = wrapper.findAll('[data-testid="vault-row"]')
+    await rows[1].trigger('dragstart')
+    await rows[0].trigger('dragover')
+    await rows[0].trigger('drop')
+    await flushPromises()
+
+    expect(api.reorderVaults).toHaveBeenCalledWith(['beta', 'alpha'])
+    expect(wrapper.findAll('[data-testid="vault-row"] h3').map((el) => el.text())).toEqual(['Beta', 'Alpha'])
+
+    api.reorderVaults.mockResolvedValueOnce({ vaults: [v1, v2] })
+    await wrapper.findAll('[data-testid="move-vault-later"]')[0].trigger('click')
+    await flushPromises()
+    expect(api.reorderVaults).toHaveBeenLastCalledWith(['alpha', 'beta'])
+  })
+
+  it('filters cards by search query, category pills, and clickable tags, and reassigns category via drag in Categories view', async () => {
+    const v1 = { ...customized, id: '1', name: 'Isekai Lore', directory: 'isekai', category: 'Worldbuilding', tags: ['rpg', 'lore'], pinned: true, noteCount: 12 }
+    const v2 = { ...customized, id: '2', name: 'Study Notes', directory: 'study', category: 'School', tags: ['math'], pinned: false, noteCount: 5 }
+    const wrapper = await mountPanel([v1, v2])
+
+    // Filter by category pill
+    await wrapper.find('[data-testid="category-filter-Worldbuilding"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="vault-row"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="vault-row"] h3').text()).toBe('Isekai Lore')
+
+    await wrapper.find('[data-testid="category-filter-all"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="vault-row"]')).toHaveLength(2)
+
+    // Filter by tag chip
+    await wrapper.find('[data-testid="tag-filter-math"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="vault-row"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="vault-row"] h3').text()).toBe('Study Notes')
+    await wrapper.find('[data-testid="clear-tag-filter"]').trigger('click')
+
+    // Search query
+    await wrapper.find('[data-testid="vaults-search-input"]').setValue('#rpg')
+    expect(wrapper.findAll('[data-testid="vault-row"]')).toHaveLength(1)
+    await wrapper.find('[data-testid="vaults-search-input"]').setValue('')
+
+    // Categories view drag-and-drop reassignment
+    await wrapper.find('[data-testid="view-mode-categories"]').trigger('click')
+    const studyRow = wrapper.find('[data-testid="vault-row"][data-vault-directory="study"]')
+    const worldZone = wrapper.find('[data-testid="category-drop-zone"][data-category-key="Worldbuilding"]')
+    api.getVaults.mockResolvedValueOnce({ vaults: [v1, { ...v2, category: 'Worldbuilding' }] })
+
+    await studyRow.trigger('dragstart')
+    await worldZone.trigger('dragover')
+    await worldZone.trigger('drop')
+    await flushPromises()
+
+    expect(api.updateVault).toHaveBeenCalledWith('study', { category: 'Worldbuilding' })
+  })
+
+  it('creates new vaults, edits existing customized vaults, pins cards, and manages cover photos', async () => {
+    const existing = {
+      ...customized,
+      id: 'v1',
+      name: 'Isekai',
+      directory: 'Isekai',
+      category: 'Fiction',
+      tags: ['lore'],
+      description: 'Original',
+      accentColor: '#a99aca',
+      pinned: false,
+      hasCover: false,
+    }
+    const wrapper = await mountPanel([existing])
+
+    // Create vault drawer
+    await wrapper.find('[data-testid="new-vault-button"]').trigger('click')
+    const createForm = wrapper.find('[data-testid="create-vault-form"]')
+    expect(createForm.exists()).toBe(true)
+    await createForm.find('#create-vault-name').setValue('New Lab')
+    await createForm.find('#create-vault-category').setValue('Work')
+    await createForm.find('#create-vault-tag-input').setValue('research')
+    await createForm.find('#create-vault-tag-input').trigger('keydown.enter')
+    api.getVaults.mockResolvedValueOnce({ vaults: [existing] })
+    await createForm.trigger('submit')
+    await flushPromises()
+
+    expect(api.createVault).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'New Lab',
+      category: 'Work',
+      tags: ['research'],
+      createWelcomeNote: true,
+    }))
+
+    // Pin toggle
+    api.getVaults.mockResolvedValueOnce({ vaults: [{ ...existing, pinned: true }] })
+    await wrapper.find('[data-testid="pin-vault-button"]').trigger('click')
+    await flushPromises()
+    expect(api.updateVault).toHaveBeenCalledWith('Isekai', { pinned: true })
+
+    // Upload cover via file drop onto card
+    const fakeFile = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10])], 'cover.png', { type: 'image/png' })
+    const withCover = { ...existing, hasCover: true, coverUpdatedAt: 999 }
+    api.getVaults.mockResolvedValueOnce({ vaults: [withCover] })
+    await wrapper.find('[data-testid="vault-row"]').trigger('drop', {
+      dataTransfer: { files: [fakeFile] },
+    })
+    await flushPromises()
+    expect(api.uploadVaultCover).toHaveBeenCalledWith('Isekai', fakeFile)
+    expect(wrapper.find('[data-testid="vault-cover-image"]').attributes('src')).toBe('/vaults/Isekai/cover?v=999')
+
+    // Edit customized vault and remove cover
+    await wrapper.find('[data-testid="edit-vault-button"]').trigger('click')
+    const editor = wrapper.find('[data-testid="vault-editor"]')
+    expect(editor.exists()).toBe(true)
+    api.getVaults.mockResolvedValueOnce({ vaults: [existing] })
+    await editor.find('[data-testid="remove-cover-button"]').trigger('click')
+    await flushPromises()
+    expect(api.deleteVaultCover).toHaveBeenCalledWith('Isekai')
+
+    await editor.find('#vault-name').setValue('Isekai Updated')
+    await editor.find('#edit-vault-category').setValue('Fantasy')
+    api.getVaults.mockResolvedValueOnce({ vaults: [{ ...existing, name: 'Isekai Updated', category: 'Fantasy' }] })
+    await editor.trigger('submit')
+    await flushPromises()
+    expect(api.updateVault).toHaveBeenCalledWith('Isekai', expect.objectContaining({
+      name: 'Isekai Updated',
+      category: 'Fantasy',
+    }))
   })
 })

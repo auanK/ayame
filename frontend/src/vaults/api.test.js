@@ -2,6 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   getVaults,
   registerVault,
+  createVault,
+  updateVault,
+  reorderVaults,
+  uploadVaultCover,
+  deleteVaultCover,
+  getVaultCoverUrl,
   unregisterVault,
   getVaultEntries,
   getVaultMarkdown,
@@ -18,8 +24,20 @@ import {
 } from './api.js'
 
 const originalFetch = globalThis.fetch
-const detected = { id: null, name: 'personal', directory: 'Personal Dir', registered: false }
-const customized = { id: 'vault-1', name: 'Personal Notes', directory: 'personal', registered: true }
+const v2Defaults = {
+  position: null,
+  category: '',
+  tags: [],
+  description: '',
+  accentColor: '',
+  pinned: false,
+  hasCover: false,
+  coverUpdatedAt: null,
+  noteCount: 0,
+  lastModifiedAt: null,
+}
+const detected = { id: null, name: 'personal', directory: 'Personal Dir', registered: false, ...v2Defaults }
+const customized = { id: 'vault-1', name: 'Personal Notes', directory: 'personal', registered: true, ...v2Defaults }
 const revision = 'a'.repeat(64)
 
 const response = (status, body, rejectsJson = false) => ({
@@ -516,6 +534,59 @@ describe('vault API', () => {
 
       globalThis.fetch.mockResolvedValueOnce(response(200, { directory: 'personal', path: 'B.md', type: 'file' }))
       await expect(deleteVaultEntryPermanently('personal', { path: 'B.md' })).resolves.toMatchObject({ path: 'B.md' })
+    })
+
+    it('supports createVault, updateVault, reorderVaults, and vault cover lifecycle', async () => {
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce(response(201, { vault: customized }))
+        .mockResolvedValueOnce(response(200, { vault: { ...customized, category: 'Lore', tags: ['rpg'] } }))
+        .mockResolvedValueOnce(response(200, { vaults: [customized] }))
+        .mockResolvedValueOnce(response(200, { vault: { ...customized, hasCover: true, coverUpdatedAt: 12345 } }))
+        .mockResolvedValueOnce(response(415, { error: 'UNSUPPORTED_IMAGE_TYPE' }))
+        .mockResolvedValueOnce(response(200, { vault: { ...customized, hasCover: false, coverUpdatedAt: null } }))
+
+      const created = await createVault({ name: 'Personal Notes', category: 'Lore', createWelcomeNote: true })
+      expect(created.vault).toEqual(customized)
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(1, '/vaults/create', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Personal Notes', category: 'Lore', createWelcomeNote: true }),
+      })
+
+      const updated = await updateVault('personal', { category: 'Lore', tags: ['rpg'] })
+      expect(updated.vault.category).toBe('Lore')
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(2, '/vaults/personal', {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: 'Lore', tags: ['rpg'] }),
+      })
+
+      const reordered = await reorderVaults(['personal'])
+      expect(reordered.vaults).toEqual([customized])
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(3, '/vaults/order', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directories: ['personal'] }),
+      })
+
+      const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })
+      const covered = await uploadVaultCover('personal', blob)
+      expect(covered.vault.hasCover).toBe(true)
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(4, '/vaults/personal/cover', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'image/png' },
+        body: blob,
+      })
+
+      await expectCode(uploadVaultCover('personal', new Blob(['<svg/>'], { type: 'image/svg+xml' })), 'UNSUPPORTED_IMAGE_TYPE')
+
+      const removed = await deleteVaultCover('personal')
+      expect(removed.vault.hasCover).toBe(false)
+      expect(getVaultCoverUrl('Personal Dir', 999)).toBe('/vaults/Personal%20Dir/cover?v=999')
     })
   })
 })
