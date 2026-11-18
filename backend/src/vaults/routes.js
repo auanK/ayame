@@ -12,6 +12,7 @@ import {
 } from './registry.js'
 import { collectVaultStats } from './discovery.js'
 import { SUPPORTED_IMAGE_MIMES } from './images.js'
+import { MAX_ATTACHMENT_BYTES, saveVaultAttachment, readVaultMedia } from './attachments.js'
 import { listVaultEntries } from './browser.js'
 import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
 import { saveVaultMarkdown } from './writer.js'
@@ -60,6 +61,8 @@ const OPERATION_ERROR_STATUS = {
 const VAULT_META_ERROR_STATUS = {
   INVALID_VAULT_NAME: 400,
   INVALID_VAULT_DIRECTORY: 400,
+  INVALID_VAULT_PATH: 400,
+  VAULT_PATH_NOT_FILE: 400,
   INVALID_VAULT_CATEGORY: 400,
   INVALID_VAULT_TAGS: 400,
   INVALID_VAULT_DESCRIPTION: 400,
@@ -68,10 +71,12 @@ const VAULT_META_ERROR_STATUS = {
   INVALID_VAULT_ORDER: 400,
   INVALID_VAULT_ROOT: 500,
   VAULT_CREATE_FAILED: 500,
+  VAULT_PATH_NOT_FOUND: 404,
   VAULT_COVER_NOT_FOUND: 404,
   VAULT_ALREADY_REGISTERED: 409,
   VAULT_ALREADY_EXISTS: 409,
   VAULT_COVER_TOO_LARGE: 413,
+  VAULT_ATTACHMENT_TOO_LARGE: 413,
   UNSUPPORTED_IMAGE_TYPE: 415,
 }
 
@@ -368,6 +373,42 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
     try {
       const vault = clearVaultCover(db, vaultsRoot, req.params.directory)
       return reply.send({ vault })
+    } catch (err) {
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.post('/vaults/:directory/attachments', {
+    bodyLimit: MAX_ATTACHMENT_BYTES,
+    config: { noStore: true },
+  }, async (req, reply) => {
+    try {
+      const folderPath = req.query?.folderPath ?? 'Attachments'
+      const fileName = req.query?.filename ?? 'image'
+      const saved = saveVaultAttachment(
+        vaultsRoot,
+        req.params.directory,
+        { folderPath, fileName },
+        req.body
+      )
+      return reply.code(201).send(saved)
+    } catch (err) {
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.get('/vaults/:directory/media', async (req, reply) => {
+    try {
+      const media = readVaultMedia(vaultsRoot, req.params.directory, req.query?.path ?? '')
+      reply.header('content-type', media.mimeType)
+      reply.header('content-security-policy', "default-src 'none'")
+      reply.header('x-content-type-options', 'nosniff')
+      reply.header('cache-control', 'private, max-age=300')
+      return reply.send(media.buffer)
     } catch (err) {
       const status = VAULT_META_ERROR_STATUS[err.code]
       if (status) return reply.code(status).send({ error: err.code })

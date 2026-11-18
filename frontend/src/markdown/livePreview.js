@@ -1,10 +1,144 @@
 import { StateEffect, StateField } from '@codemirror/state'
-import { Decoration, EditorView } from '@codemirror/view'
+import { Decoration, EditorView, WidgetType } from '@codemirror/view'
 import { classifyLinkDestination, parseWikilink, resolveLink } from './links.js'
 import { validateTagName } from './properties.js'
 
 export const setLivePreviewContextEffect = StateEffect.define()
 export const setCursorActiveEffect = StateEffect.define()
+
+const IMAGE_EXTENSION_RE = /\.(png|jpe?g|webp|gif)$/i
+
+const safeNormalizeRelativePath = (baseDir, rawTarget) => {
+  if (typeof rawTarget !== 'string') return null
+  let cleaned = rawTarget.trim()
+  if (!cleaned || cleaned.includes('\0') || cleaned.includes('\\') || /^https?:\/\//i.test(cleaned)) {
+    return null
+  }
+  try {
+    cleaned = decodeURIComponent(cleaned)
+  } catch {
+    // Keep original if percent-encoding is malformed
+  }
+  cleaned = cleaned.replace(/^\/+/, '')
+  const segments = (baseDir ? `${baseDir}/${cleaned}` : cleaned).split('/')
+  const resolved = []
+  for (const seg of segments) {
+    if (!seg || seg === '.') continue
+    if (seg === '..') {
+      if (resolved.length === 0) return null
+      resolved.pop()
+      continue
+    }
+    resolved.push(seg)
+  }
+  return resolved.length > 0 ? resolved.join('/') : null
+}
+
+const resolveImageTarget = (rawTarget, sourcePath, allFiles) => {
+  if (typeof rawTarget !== 'string' || !Array.isArray(allFiles) || allFiles.length === 0) {
+    return null
+  }
+  const trimmed = rawTarget.trim()
+  if (!trimmed || !IMAGE_EXTENSION_RE.test(trimmed)) {
+    return null
+  }
+
+  const normalizedFiles = allFiles
+    .map((entry) => (typeof entry === 'string' ? entry : entry?.path))
+    .filter((entry) => typeof entry === 'string' && IMAGE_EXTENSION_RE.test(entry))
+
+  if (normalizedFiles.length === 0) return null
+
+  const cleanDirect = trimmed.replace(/^\.\//, '').replace(/^\/+/, '')
+  const directExact = normalizedFiles.find((file) => file === cleanDirect)
+  if (directExact) return directExact
+
+  const directFold = normalizedFiles.find(
+    (file) => file.toLowerCase() === cleanDirect.toLowerCase()
+  )
+  if (directFold) return directFold
+
+  const sourceDir =
+    typeof sourcePath === 'string' && sourcePath.includes('/')
+      ? sourcePath.slice(0, sourcePath.lastIndexOf('/'))
+      : ''
+  const relCandidate = safeNormalizeRelativePath(sourceDir, trimmed)
+  if (relCandidate) {
+    const relExact = normalizedFiles.find((file) => file === relCandidate)
+    if (relExact) return relExact
+    const relFold = normalizedFiles.find(
+      (file) => file.toLowerCase() === relCandidate.toLowerCase()
+    )
+    if (relFold) return relFold
+  }
+
+  const baseNeedle = cleanDirect.split('/').pop()?.toLowerCase()
+  if (!baseNeedle) return null
+  const suffixNeedle = `/${cleanDirect.toLowerCase()}`
+  const suffixMatch = normalizedFiles.find(
+    (file) => file.toLowerCase() === cleanDirect.toLowerCase() || file.toLowerCase().endsWith(suffixNeedle)
+  )
+  if (suffixMatch) return suffixMatch
+
+  const baseMatches = normalizedFiles
+    .filter((file) => (file.split('/').pop() || '').toLowerCase() === baseNeedle)
+    .sort((a, b) => a.length - b.length || a.localeCompare(b))
+  return baseMatches[0] || null
+}
+
+const buildVaultImageMediaUrl = (directory, filePath) =>
+  `/vaults/${encodeURIComponent(String(directory ?? ''))}/media?path=${encodeURIComponent(String(filePath ?? ''))}`
+
+const parseImageWidthOption = (value) => {
+  if (typeof value !== 'string') return null
+  const match = value.trim().match(/^(\d{2,4})(?:x\d{2,4})?$/i)
+  if (!match) return null
+  const width = Number.parseInt(match[1], 10)
+  return width >= 24 && width <= 2400 ? width : null
+}
+
+class ImageEmbedWidget extends WidgetType {
+  constructor(src, alt, rawTarget, resolvedPath, width = null) {
+    super()
+    this.src = src
+    this.alt = alt
+    this.rawTarget = rawTarget
+    this.resolvedPath = resolvedPath
+    this.width = width
+  }
+
+  eq(other) {
+    return (
+      other instanceof ImageEmbedWidget &&
+      other.src === this.src &&
+      other.alt === this.alt &&
+      other.resolvedPath === this.resolvedPath &&
+      other.width === this.width
+    )
+  }
+
+  toDOM() {
+    const wrap = document.createElement('span')
+    wrap.className = 'cm-live-image-wrap'
+    wrap.setAttribute('data-image-path', this.resolvedPath)
+    wrap.setAttribute('data-link-raw', this.rawTarget)
+
+    const img = document.createElement('img')
+    img.className = 'cm-live-image-embed'
+    img.src = this.src
+    img.alt = this.alt || this.resolvedPath.split('/').pop() || 'Image attachment'
+    img.loading = 'lazy'
+    if (this.width) {
+      img.style.maxWidth = `${this.width}px`
+    }
+    wrap.appendChild(img)
+    return wrap
+  }
+
+  ignoreEvent() {
+    return false
+  }
+}
 
 const rangeIntersectsSelection = (selection, from, to) =>
   selection.ranges.some((range) => range.from <= to && range.to >= from)
@@ -108,6 +242,8 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
     knownFiles = [],
     aliasesByFile = {},
     indexComplete = true,
+    vaultDirectory = '',
+    allFiles = [],
   } = context || {}
 
   let inCodeBlock = false
@@ -443,6 +579,27 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
         const isEmbed = token.type === 'embed'
         const parsed = parseWikilink(token.raw)
         if (!parsed) continue
+
+        if (isEmbed && !tokenHasCursor && vaultDirectory && parsed.target) {
+          const resolvedImagePath = resolveImageTarget(parsed.target, sourcePath, allFiles)
+          if (resolvedImagePath) {
+            const width = parseImageWidthOption(parsed.alias)
+            const altText = width ? '' : parsed.alias || parsed.target
+            decorations.push(
+              Decoration.replace({
+                widget: new ImageEmbedWidget(
+                  buildVaultImageMediaUrl(vaultDirectory, resolvedImagePath),
+                  altText,
+                  token.raw,
+                  resolvedImagePath,
+                  width
+                ),
+              }).range(absFrom, absTo)
+            )
+            continue
+          }
+        }
+
         const resolution = resolveLink({
           sourcePath,
           linkTarget: token.raw,
@@ -499,11 +656,33 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
             }).range(absFrom, absTo)
           )
         }
-      } else if (token.type === 'mdlink') {
-        const m = token.raw.match(/^\[([^\]]*)\]\(([^)\n]+)\)$/)
+      } else if (token.type === 'mdlink' || token.type === 'image') {
+        const isImage = token.type === 'image'
+        const m = token.raw.match(/^!?\[([^\]]*)\]\(([^)\n]+)\)$/)
         if (!m) continue
         const label = m[1]
         const rawDest = m[2].trim()
+
+        if (isImage && !tokenHasCursor && vaultDirectory) {
+          const resolvedImagePath = resolveImageTarget(rawDest, sourcePath, allFiles)
+          if (resolvedImagePath) {
+            const width = parseImageWidthOption(label)
+            const altText = width ? '' : label
+            decorations.push(
+              Decoration.replace({
+                widget: new ImageEmbedWidget(
+                  buildVaultImageMediaUrl(vaultDirectory, resolvedImagePath),
+                  altText,
+                  token.raw,
+                  resolvedImagePath,
+                  width
+                ),
+              }).range(absFrom, absTo)
+            )
+            continue
+          }
+        }
+
         const destClass = classifyLinkDestination(rawDest)
 
         let statusType = 'invalid'
@@ -539,10 +718,10 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
         if (anchor) attrs['data-link-anchor'] = anchor
         if (externalHref) attrs['data-link-href'] = externalHref
 
-        const labelFrom = absFrom + 1
+        const labelFrom = absFrom + (isImage ? 2 : 1)
         const labelTo = labelFrom + label.length
 
-        if (!tokenHasCursor && label.length > 0) {
+        if (!tokenHasCursor && label.length > 0 && !isImage) {
           decorations.push(Decoration.replace({}).range(absFrom, labelFrom))
           decorations.push(
             Decoration.mark({

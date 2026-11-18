@@ -1346,5 +1346,42 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(wrapper.find('[data-testid="markdown-dirty-indicator"]').exists()).toBe(true)
       expect(wrapper.vm.getText()).toContain('Nova linha.')
     })
+
+    it('renders live word count with reading time and saves immediately on Ctrl+S', async () => {
+      const content = '---\ntags: [draft]\n---\nOne two three four.'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'Stats.md',
+        content,
+        revision,
+      })
+      api.saveVaultMarkdown.mockResolvedValueOnce({
+        directory: 'personal',
+        path: 'Stats.md',
+        revision: 'b'.repeat(64),
+      })
+
+      const wrapper = mount(MarkdownViewer, {
+        props: { directory: 'personal', path: 'Stats.md' },
+      })
+      await flushPromises()
+
+      const badge = wrapper.find('[data-testid="markdown-word-count"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('4 words · 1 min read')
+
+      await editNote(wrapper, '---\ntags: [draft]\n---\nSingleWord')
+      expect(wrapper.find('[data-testid="markdown-word-count"]').text()).toBe('1 word · 1 min read')
+      expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
+
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true })
+      )
+      await flushPromises()
+      const statsCalls = api.saveVaultMarkdown.mock.calls.filter((c) => c[1] === 'Stats.md')
+      expect(statsCalls).toHaveLength(1)
+      expect(statsCalls[0][2]).toMatchObject({ content: '---\ntags: [draft]\n---\nSingleWord' })
+      wrapper.unmount()
+    })
   })
 })

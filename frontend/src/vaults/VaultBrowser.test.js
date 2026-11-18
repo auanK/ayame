@@ -2221,4 +2221,169 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     await wrapper.find('[data-testid="navigation-discard-changes"]').trigger('click')
     expect(wrapper.emitted('back')).toBeTruthy()
   })
+
+  it('opens Quick Switcher on Ctrl+O with keyboard navigation and Command Palette on Ctrl+P', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal',
+      complete: true,
+      folders: ['projects'],
+      files: ['README.md', 'projects/Design.md', 'projects/Roadmap.md'],
+      notes: [
+        { path: 'README.md', name: 'README.md', content: '# Home', revision: 'a'.repeat(64) },
+        { path: 'projects/Design.md', name: 'Design.md', content: '# Design', revision: 'b'.repeat(64) },
+        { path: 'projects/Roadmap.md', name: 'Roadmap.md', content: '# Roadmap', revision: 'c'.repeat(64) },
+      ],
+    })
+    const wrapper = await mountBrowser()
+
+    // Ctrl+P opens Command Palette
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="command-palette-modal"]').exists()).toBe(true)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await wrapper.vm.$nextTick()
+
+    // Ctrl+O opens Quick Switcher
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'o', ctrlKey: true, bubbles: true, cancelable: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="quick-switcher-modal"]').exists()).toBe(true)
+
+    const input = wrapper.find('[data-testid="quick-switcher-input"]')
+    await input.setValue('projects/')
+    await wrapper.vm.$nextTick()
+
+    api.getVaultEntries.mockResolvedValue({ directory: 'personal', path: 'projects', entries: projectsEntries })
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal',
+      path: 'projects/Roadmap.md',
+      content: '# Roadmap',
+      revision: 'c'.repeat(64),
+    })
+
+    // First item is projects/Design.md, ArrowDown selects second item projects/Roadmap.md, Enter opens it
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="quick-switcher-modal"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="markdown-filename"]').text()).toBe('Roadmap.md')
+  })
+
+  it('creates and re-opens today daily note inside configured dailyNotesFolder and persists vault settings', async () => {
+    const now = new Date()
+    const yyyy = String(now.getFullYear()).padStart(4, '0')
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const dd = String(now.getDate()).padStart(2, '0')
+    const dateStr = `${yyyy}-${mm}-${dd}`
+    const expectedPath = `Daily/${dateStr}.md`
+
+    const wrapper = await mountBrowser()
+    expect(localStorage.getItem('ayame:vault-settings:personal')).toBeNull()
+
+    // Configure Daily notes folder in Vault Settings modal
+    await wrapper.find('[data-testid="vault-name-trigger"]').trigger('click')
+    await wrapper.find('[data-testid="vault-settings-button"]').trigger('click')
+    expect(wrapper.find('[data-testid="vault-settings-modal"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="setting-daily-notes-folder"]').setValue('Daily')
+    expect(JSON.parse(localStorage.getItem('ayame:vault-settings:personal')).dailyNotesFolder).toBe('Daily')
+
+    // Close modal via Escape
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await wrapper.vm.$nextTick()
+
+    api.createVaultNote.mockResolvedValueOnce({
+      directory: 'personal',
+      path: expectedPath,
+      revision: 'd'.repeat(64),
+    })
+    api.getVaultEntries.mockResolvedValue({ directory: 'personal', path: '', entries: rootEntries })
+    api.getVaultMarkdown.mockResolvedValue({
+      directory: 'personal',
+      path: expectedPath,
+      content: `# ${dateStr}\n\n`,
+      revision: 'd'.repeat(64),
+    })
+
+    await wrapper.find('[data-testid="explorer-add-button"]').trigger('click')
+    await wrapper.find('[data-testid="daily-note-button"]').trigger('click')
+    await flushPromises()
+
+    expect(api.createVaultNote).toHaveBeenCalledWith('personal', {
+      path: expectedPath,
+      content: `# ${dateStr}\n\n`,
+      createParents: true,
+    })
+    expect(wrapper.find('[data-testid="markdown-filename"]').text()).toBe(`${dateStr}.md`)
+
+    // Triggering again opens existing daily note without calling createVaultNote again
+    await wrapper.find('[data-testid="explorer-add-button"]').trigger('click')
+    await wrapper.find('[data-testid="daily-note-button"]').trigger('click')
+    await flushPromises()
+    expect(api.createVaultNote).toHaveBeenCalledTimes(1)
+  })
+
+  it('bookmarks notes via context menu, persists per vault, remaps on rename, and cleans up on delete', async () => {
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal',
+      complete: true,
+      folders: ['projects'],
+      files: ['README.md'],
+      notes: [{ path: 'README.md', name: 'README.md', content: '# Home', revision: 'a'.repeat(64) }],
+    })
+    const wrapper = await mountBrowser()
+
+    await wrapper.find('[data-testid="entry-context-button"][data-entry-path="README.md"]').trigger('click')
+    await wrapper.find('[data-testid="ctx-bookmark"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="explorer-bookmarks"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="bookmark-item"][data-bookmark-path="README.md"]').exists()).toBe(true)
+    expect(JSON.parse(localStorage.getItem('ayame:bookmarks:personal'))).toEqual(['README.md'])
+
+    // Rename README.md -> Guide.md updates bookmark path
+    api.relocateVaultEntry.mockResolvedValueOnce({
+      directory: 'personal',
+      oldPath: 'README.md',
+      newPath: 'Guide.md',
+      type: 'file',
+      updatedFiles: [],
+      failedFiles: [],
+    })
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal',
+      path: '',
+      entries: [
+        { name: 'projects', path: 'projects', type: 'directory' },
+        { name: 'journal', path: 'journal', type: 'directory' },
+        { name: 'Guide.md', path: 'Guide.md', type: 'file' },
+      ],
+    })
+    await wrapper.find('[data-testid="entry-context-button"][data-entry-path="README.md"]').trigger('click')
+    await wrapper.find('[data-testid="ctx-rename"]').trigger('click')
+    await wrapper.find('[data-testid="relocate-input"]').setValue('Guide')
+    await wrapper.find('[data-testid="relocate-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="bookmark-item"][data-bookmark-path="Guide.md"]').exists()).toBe(true)
+    expect(JSON.parse(localStorage.getItem('ayame:bookmarks:personal'))).toEqual(['Guide.md'])
+
+    // Trash Guide.md removes bookmark
+    api.trashVaultEntry.mockResolvedValueOnce({ deleted: true })
+    api.getVaultEntries.mockResolvedValueOnce({
+      directory: 'personal',
+      path: '',
+      entries: [
+        { name: 'projects', path: 'projects', type: 'directory' },
+        { name: 'journal', path: 'journal', type: 'directory' },
+      ],
+    })
+    await wrapper.find('[data-testid="entry-context-button"][data-entry-path="Guide.md"]').trigger('click')
+    await wrapper.find('[data-testid="ctx-delete"]').trigger('click')
+    await wrapper.find('[data-testid="confirm-trash-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="explorer-bookmarks"]').exists()).toBe(false)
+    expect(localStorage.getItem('ayame:bookmarks:personal')).toBeNull()
+  })
 })

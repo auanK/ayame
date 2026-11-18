@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MarkdownEditor from './MarkdownEditor.vue'
 import editorRaw from './MarkdownEditor.vue?raw'
@@ -380,5 +380,108 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
 
     await wrapper.find('.cm-live-tag').trigger('click')
     expect(wrapper.emitted('click-tag')?.[0]).toEqual(['noite-lavanda'])
+  })
+
+  it('11. renders vault image embeds in Live Preview while preserving note embeds', async () => {
+    const doc = [
+      '![[Attachments/diagram.png]]',
+      '',
+      '![[diagram.png|320]]',
+      '',
+      '![Diagram alt](Attachments/diagram.png)',
+      '',
+      '![[Projects/Design]]',
+      '',
+      'Tail cursor line.',
+    ].join('\n')
+
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: doc,
+        vaultDirectory: 'Isekai',
+        sourcePath: 'README.md',
+        knownFiles: ['README.md', 'Projects/Design.md'],
+        allFiles: ['README.md', 'Projects/Design.md', 'Attachments/diagram.png'],
+      },
+    })
+    wrapper.vm.setCursor(doc.length)
+    await wrapper.vm.$nextTick()
+
+    const imgs = wrapper.findAll('img.cm-live-image-embed')
+    expect(imgs).toHaveLength(3)
+    expect(imgs[0].attributes('src')).toBe('/vaults/Isekai/media?path=Attachments%2Fdiagram.png')
+    expect(imgs[1].attributes('style')).toContain('max-width: 320px')
+    expect(imgs[2].attributes('alt')).toBe('Diagram alt')
+    expect(imgs[2].attributes('src')).toBe('/vaults/Isekai/media?path=Attachments%2Fdiagram.png')
+
+    expect(wrapper.find('.cm-live-wikilink.cm-live-embed').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-wikilink.cm-live-embed').text()).toBe('Projects/Design')
+  })
+
+  it('12. provides [[ wikilink and #tag autocomplete, Mod-b formatting, and image paste upload', async () => {
+    const uploadImage = vi.fn().mockResolvedValue({ path: 'Attachments/shot.png' })
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: 'See [[Des',
+        knownFiles: ['Projects/Design.md', 'Ideas.md'],
+        aliasesByFile: { 'Projects/Design.md': ['System Blueprint'] },
+        knownTags: ['roadmap', 'release'],
+        uploadImage,
+      },
+    })
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.setCursor('See [[Des'.length)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="editor-autocomplete"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="editor-autocomplete-item"]').text()).toContain('Design')
+
+    const contentDom = wrapper.vm.getView().contentDOM
+    contentDom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.getText()).toBe('See [[Design]]')
+    expect(wrapper.find('[data-testid="editor-autocomplete"]').exists()).toBe(false)
+
+    // Heading syntax should NOT trigger tag autocomplete, whereas #roa should
+    wrapper.vm.setText('# Heading')
+    wrapper.vm.setCursor('# Heading'.length)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="editor-autocomplete"]').exists()).toBe(false)
+
+    wrapper.vm.setText('Tag #roa')
+    wrapper.vm.setCursor('Tag #roa'.length)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="editor-autocomplete"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="editor-autocomplete-item"]').text()).toContain('#roadmap')
+    await wrapper.find('[data-testid="editor-autocomplete-item"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.getText()).toBe('Tag #roadmap ')
+
+    // Mod-b bold wrap
+    wrapper.vm.setText('hello world')
+    wrapper.vm.setSelection(6, 11)
+    await wrapper.vm.$nextTick()
+    contentDom.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true })
+    )
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.getText()).toBe('hello **world**')
+
+    // Image paste upload
+    wrapper.vm.setText('Shot: ')
+    wrapper.vm.setCursor('Shot: '.length)
+    await wrapper.vm.$nextTick()
+    const file = new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' })
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: { files: [file] },
+    })
+    contentDom.dispatchEvent(pasteEvent)
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.vm.$nextTick()
+
+    expect(uploadImage).toHaveBeenCalledWith(file)
+    expect(wrapper.vm.getText()).toBe('Shot: ![[Attachments/shot.png]]')
   })
 })

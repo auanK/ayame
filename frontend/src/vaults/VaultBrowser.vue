@@ -305,7 +305,10 @@ const globalGroupEvaluation = computed(() =>
 )
 
 // Vault Settings & Modals
-const vaultSettings = ref({
+const VAULT_SETTINGS_KEY_PREFIX = 'ayame:vault-settings:'
+const BOOKMARKS_KEY_PREFIX = 'ayame:bookmarks:'
+
+const DEFAULT_VAULT_SETTINGS = {
   newNoteLocation: 'root',
   newNoteFolder: '',
   linkFormat: 'shortest',
@@ -314,7 +317,105 @@ const vaultSettings = ref({
   deleteBehavior: 'trash',
   defaultFrontmatterOnCreate: false,
   showUnsupportedFiles: false,
-})
+  dailyNotesFolder: '',
+}
+
+const loadSavedVaultSettings = (directory) => {
+  if (!directory) return { ...DEFAULT_VAULT_SETTINGS }
+  try {
+    const raw = localStorage.getItem(`${VAULT_SETTINGS_KEY_PREFIX}${directory}`)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object') {
+        return {
+          ...DEFAULT_VAULT_SETTINGS,
+          newNoteLocation: ['root', 'current', 'folder'].includes(parsed.newNoteLocation)
+            ? parsed.newNoteLocation
+            : DEFAULT_VAULT_SETTINGS.newNoteLocation,
+          newNoteFolder: typeof parsed.newNoteFolder === 'string' ? parsed.newNoteFolder : '',
+          linkFormat:
+            typeof parsed.linkFormat === 'string'
+              ? parsed.linkFormat
+              : DEFAULT_VAULT_SETTINGS.linkFormat,
+          useWikilinks:
+            typeof parsed.useWikilinks === 'boolean'
+              ? parsed.useWikilinks
+              : DEFAULT_VAULT_SETTINGS.useWikilinks,
+          autoUpdateLinks:
+            typeof parsed.autoUpdateLinks === 'boolean'
+              ? parsed.autoUpdateLinks
+              : DEFAULT_VAULT_SETTINGS.autoUpdateLinks,
+          deleteBehavior: ['trash', 'permanent'].includes(parsed.deleteBehavior)
+            ? parsed.deleteBehavior
+            : DEFAULT_VAULT_SETTINGS.deleteBehavior,
+          defaultFrontmatterOnCreate:
+            typeof parsed.defaultFrontmatterOnCreate === 'boolean'
+              ? parsed.defaultFrontmatterOnCreate
+              : DEFAULT_VAULT_SETTINGS.defaultFrontmatterOnCreate,
+          showUnsupportedFiles:
+            typeof parsed.showUnsupportedFiles === 'boolean'
+              ? parsed.showUnsupportedFiles
+              : DEFAULT_VAULT_SETTINGS.showUnsupportedFiles,
+          dailyNotesFolder:
+            typeof parsed.dailyNotesFolder === 'string' ? parsed.dailyNotesFolder : '',
+        }
+      }
+    }
+  } catch {}
+  return { ...DEFAULT_VAULT_SETTINGS }
+}
+
+const persistVaultSettings = () => {
+  const dir = props.vault?.directory
+  if (!dir) return
+  try {
+    localStorage.setItem(`${VAULT_SETTINGS_KEY_PREFIX}${dir}`, JSON.stringify(vaultSettings.value))
+  } catch {}
+}
+
+const loadSavedBookmarks = (directory) => {
+  if (!directory) return []
+  try {
+    const raw = localStorage.getItem(`${BOOKMARKS_KEY_PREFIX}${directory}`)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        return Array.from(new Set(parsed.filter((p) => typeof p === 'string' && p.length > 0)))
+      }
+    }
+  } catch {}
+  return []
+}
+
+const vaultSettings = ref(loadSavedVaultSettings(props.vault.directory))
+const bookmarkedPaths = ref(loadSavedBookmarks(props.vault.directory))
+const bookmarksExpanded = ref(true)
+
+const persistBookmarks = () => {
+  const dir = props.vault?.directory
+  if (!dir) return
+  try {
+    const key = `${BOOKMARKS_KEY_PREFIX}${dir}`
+    if (bookmarkedPaths.value.length === 0) {
+      localStorage.removeItem(key)
+    } else {
+      localStorage.setItem(key, JSON.stringify(bookmarkedPaths.value))
+    }
+  } catch {}
+}
+
+const isBookmarked = (filePath) => Boolean(filePath && bookmarkedPaths.value.includes(filePath))
+
+const toggleBookmark = (filePath) => {
+  if (!filePath) return
+  if (isBookmarked(filePath)) {
+    bookmarkedPaths.value = bookmarkedPaths.value.filter((p) => p !== filePath)
+  } else {
+    bookmarkedPaths.value = [...bookmarkedPaths.value, filePath]
+  }
+  persistBookmarks()
+}
+
 const showSettingsModal = ref(false)
 const showVaultMenu = ref(false)
 const showAddMenu = ref(false)
@@ -367,8 +468,12 @@ const searchQuery = ref('')
 const activeTagFilter = ref('')
 const showCommandPalette = ref(false)
 const commandPaletteQuery = ref('')
+const commandPaletteInputRef = ref(null)
+const commandPaletteActiveIndex = ref(0)
 const showQuickSwitcher = ref(false)
 const quickSwitcherQuery = ref('')
+const quickSwitcherInputRef = ref(null)
+const quickSwitcherActiveIndex = ref(0)
 
 const linkNotice = ref(null)
 const workspaceNotice = ref('')
@@ -552,6 +657,8 @@ const searchResults = computed(() =>
 
 const availableCommands = computed(() => {
   const cmds = [
+    { id: 'quick-switcher', label: 'Open quick switcher', run: () => openQuickSwitcherModal() },
+    { id: 'daily-note', label: "Open today's daily note", run: () => openTodayDailyNote() },
     { id: 'new-note', label: 'New note', run: () => startCreate('note') },
     { id: 'new-folder', label: 'New folder', run: () => startCreate('folder') },
     { id: 'toggle-explorer', label: 'Toggle file explorer', run: () => { explorerCollapsed.value = !explorerCollapsed.value } },
@@ -1864,6 +1971,14 @@ const remapRelocatedPaths = (sourcePath, newPath) => {
   const previousSelected = selectedFile.value
   openTabs.value = openTabs.value.map(remapPath)
   navHistory.value = navHistory.value.map(remapPath)
+  const nextBookmarks = Array.from(new Set(bookmarkedPaths.value.map(remapPath)))
+  if (
+    nextBookmarks.length !== bookmarkedPaths.value.length ||
+    nextBookmarks.some((p, idx) => p !== bookmarkedPaths.value[idx])
+  ) {
+    bookmarkedPaths.value = nextBookmarks
+    persistBookmarks()
+  }
   selectedFile.value = remapPath(selectedFile.value)
   selectedFolderPath.value = remapPath(selectedFolderPath.value)
   if (selectedFile.value !== previousSelected) {
@@ -2217,6 +2332,11 @@ const cleanupAfterDeletedPath = (deletedPath) => {
   const previousSelected = selectedFile.value
   openTabs.value = openTabs.value.filter((t) => !isDeletedOrInside(t))
   navHistory.value = navHistory.value.filter((p) => !isDeletedOrInside(p))
+  const nextBookmarks = bookmarkedPaths.value.filter((p) => !isDeletedOrInside(p))
+  if (nextBookmarks.length !== bookmarkedPaths.value.length) {
+    bookmarkedPaths.value = nextBookmarks
+    persistBookmarks()
+  }
   if (selectedFile.value && isDeletedOrInside(selectedFile.value)) {
     selectedFile.value = openTabs.value[openTabs.value.length - 1] || null
     selectedAnchor.value = null
@@ -2349,23 +2469,193 @@ const handleDeleteTrashPermanently = async (item) => {
   }
 }
 
-// Command Palette & Quick Switcher
+// Daily Notes, Attachments & Command Palette / Quick Switcher
+const getLocalIsoDate = (date = new Date()) => {
+  const yyyy = String(date.getFullYear()).padStart(4, '0')
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+const sanitizeDailyFolder = (rawFolder) => {
+  const trimmed = String(rawFolder || '').trim().replace(/^\/+|\/+$/g, '')
+  if (!trimmed || trimmed.includes('\0') || trimmed.includes('\\')) return ''
+  const parts = trimmed.split('/').filter(Boolean)
+  if (parts.some((p) => p === '.' || p === '..')) return ''
+  return parts.join('/')
+}
+
+const openTodayDailyNote = async () => {
+  const directory = props.vault.directory
+  const dateStr = getLocalIsoDate()
+  const folder = sanitizeDailyFolder(vaultSettings.value.dailyNotesFolder)
+  const targetPath = folder ? `${folder}/${dateStr}.md` : `${dateStr}.md`
+
+  const existing = knownMarkdownFiles.value.find(
+    (f) => f.toLowerCase() === targetPath.toLowerCase()
+  )
+  if (existing) {
+    await expandAncestors(existing)
+    await selectNote(existing)
+    return
+  }
+
+  if (!('createVaultNote' in vaultApi) || typeof vaultApi.createVaultNote !== 'function') {
+    return
+  }
+
+  const initialContent = `# ${dateStr}\n\n`
+  try {
+    const created = await vaultApi.createVaultNote(directory, {
+      path: targetPath,
+      content: initialContent,
+      createParents: Boolean(folder),
+    })
+    if (!isMounted || directory !== props.vault.directory) return
+    const notePath = created?.path || targetPath
+    invalidateVaultIndexRequest()
+    await fetchDirectory('')
+    if (folder) {
+      let acc = ''
+      for (const seg of folder.split('/')) {
+        acc = acc ? `${acc}/${seg}` : seg
+        await fetchDirectory(acc)
+      }
+    }
+    await expandAncestors(notePath)
+    vaultIndexData.value = updateNoteInVaultIndex(vaultIndexData.value, {
+      path: notePath,
+      name: notePath.split('/').pop(),
+      content: initialContent,
+      revision: created?.revision || '',
+    })
+    void fetchVaultIndexSafe()
+    await selectNote(notePath, {
+      initialDoc: {
+        path: notePath,
+        content: initialContent,
+        revision: created?.revision,
+      },
+    })
+  } catch (err) {
+    if (!isMounted) return
+    if (err?.code === 'UNAUTHORIZED') {
+      emit('unauthorized')
+      return
+    }
+    if (err?.code === 'VAULT_ENTRY_EXISTS') {
+      await expandAncestors(targetPath)
+      await selectNote(targetPath)
+      return
+    }
+    addToast(err?.message || 'Could not open daily note.', 'error')
+  }
+}
+
+const handleAttachmentUploaded = async (uploaded) => {
+  if (!uploaded?.path) return
+  if (!vaultIndexData.value.files.includes(uploaded.path)) {
+    vaultIndexData.value = {
+      ...vaultIndexData.value,
+      files: [...vaultIndexData.value.files, uploaded.path].sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: 'base' })
+      ),
+    }
+  }
+  const folder = uploaded.path.includes('/')
+    ? uploaded.path.slice(0, uploaded.path.lastIndexOf('/'))
+    : ''
+  if (folder === '' || folderEntriesMap.value.has(folder)) {
+    await fetchDirectory(folder)
+  }
+  void fetchVaultIndexSafe()
+}
+
 const openCommandPaletteModal = () => {
   commandPaletteQuery.value = ''
+  commandPaletteActiveIndex.value = 0
   showCommandPalette.value = true
+  void nextTick(() => {
+    commandPaletteInputRef.value?.focus?.()
+  })
 }
 
 const openQuickSwitcherModal = () => {
   quickSwitcherQuery.value = ''
+  quickSwitcherActiveIndex.value = 0
   showQuickSwitcher.value = true
+  void nextTick(() => {
+    quickSwitcherInputRef.value?.focus?.()
+  })
 }
+
+const canCreateFromQuickSwitcher = computed(() => {
+  const q = quickSwitcherQuery.value.trim()
+  if (!q) return false
+  return !quickSwitcherResults.value.some((f) => f.toLowerCase() === `${q.toLowerCase()}.md`)
+})
+
+const handleCommandPaletteKeydown = (event) => {
+  const items = commandPaletteItems.value
+  if (items.length === 0) return
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    commandPaletteActiveIndex.value = (commandPaletteActiveIndex.value + 1) % items.length
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    commandPaletteActiveIndex.value = (commandPaletteActiveIndex.value - 1 + items.length) % items.length
+  } else if (event.key === 'Enter') {
+    event.preventDefault()
+    const item = items[commandPaletteActiveIndex.value] || items[0]
+    if (item) {
+      showCommandPalette.value = false
+      item.run()
+    }
+  }
+}
+
+const handleQuickSwitcherKeydown = (event) => {
+  const results = quickSwitcherResults.value
+  const total = results.length + (canCreateFromQuickSwitcher.value ? 1 : 0)
+  if (total === 0) return
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    quickSwitcherActiveIndex.value = (quickSwitcherActiveIndex.value + 1) % total
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    quickSwitcherActiveIndex.value = (quickSwitcherActiveIndex.value - 1 + total) % total
+  } else if (event.key === 'Enter') {
+    event.preventDefault()
+    const idx = quickSwitcherActiveIndex.value
+    if (idx < results.length) {
+      const target = results[idx]
+      showQuickSwitcher.value = false
+      void openCandidateLink(target)
+    } else if (canCreateFromQuickSwitcher.value) {
+      const q = quickSwitcherQuery.value.trim()
+      showQuickSwitcher.value = false
+      void createNoteFromPendingLink(`[[${q}]]`, 'wikilink')
+    }
+  }
+}
+
+watch(commandPaletteQuery, () => {
+  commandPaletteActiveIndex.value = 0
+})
+
+watch(quickSwitcherQuery, () => {
+  quickSwitcherActiveIndex.value = 0
+})
 
 const handleGlobalKeydown = (event) => {
   const mod = event.ctrlKey || event.metaKey
-  if (mod && event.key.toLowerCase() === 'o') {
+  if (mod && event.altKey && event.key.toLowerCase() === 'd') {
     event.preventDefault()
-    openCommandPaletteModal()
-  } else if (mod && event.key.toLowerCase() === 'p') {
+    void openTodayDailyNote()
+  } else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'o') {
+    event.preventDefault()
+    openQuickSwitcherModal()
+  } else if (mod && !event.altKey && event.key.toLowerCase() === 'p') {
     event.preventDefault()
     openCommandPaletteModal()
   } else if (event.key === 'Escape') {
@@ -2430,6 +2720,8 @@ watch(
     const loadedGraph = loadGraphSettings(props.vault.directory)
     graphSettings.value = loadedGraph.settings
     graphStorageWarning.value = loadedGraph.error || ''
+    vaultSettings.value = loadSavedVaultSettings(props.vault.directory)
+    bookmarkedPaths.value = loadSavedBookmarks(props.vault.directory)
     indexLoading.value = false
     indexError.value = false
     navHistory.value = []
@@ -2867,6 +3159,14 @@ defineExpose({
               >
                 New folder
               </button>
+              <button
+                type="button"
+                class="dropdown-menu-item"
+                data-testid="daily-note-button"
+                @click="showAddMenu = false; openTodayDailyNote()"
+              >
+                Today's daily note
+              </button>
             </div>
           </div>
         </div>
@@ -3031,6 +3331,55 @@ defineExpose({
         >
           Could not refresh vault tree. Showing last loaded entries.
         </div>
+
+        <!-- Bookmarked Notes -->
+        <section
+          v-if="bookmarkedPaths.length > 0"
+          class="explorer-bookmarks"
+          data-testid="explorer-bookmarks"
+          aria-label="Bookmarked notes"
+        >
+          <button
+            type="button"
+            class="explorer-bookmarks-header"
+            :aria-expanded="bookmarksExpanded ? 'true' : 'false'"
+            @click="bookmarksExpanded = !bookmarksExpanded"
+          >
+            <span class="tree-chevron" aria-hidden="true">{{ bookmarksExpanded ? '▾' : '▸' }}</span>
+            <span>Bookmarked</span>
+            <span class="explorer-bookmarks-count">{{ bookmarkedPaths.length }}</span>
+          </button>
+          <div v-if="bookmarksExpanded" class="explorer-bookmarks-list">
+            <div
+              v-for="bmPath in bookmarkedPaths"
+              :key="bmPath"
+              class="tree-row-wrapper explorer-bookmark-row"
+            >
+              <button
+                type="button"
+                class="tree-row tree-file explorer-bookmark-btn"
+                :class="{ 'tree-file--active': selectedFile === bmPath }"
+                data-testid="bookmark-item"
+                :data-bookmark-path="bmPath"
+                :title="bmPath"
+                @click="selectNote(bmPath)"
+              >
+                <span class="tree-label">{{ stripMarkdownExtension(bmPath.split('/').pop()) }}</span>
+              </button>
+              <button
+                type="button"
+                class="tree-row-menu-btn"
+                data-testid="remove-bookmark-button"
+                :data-bookmark-path="bmPath"
+                aria-label="Remove bookmark"
+                title="Remove bookmark"
+                @click.stop="toggleBookmark(bmPath)"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </section>
 
         <!-- File Tree -->
         <div
@@ -3351,6 +3700,8 @@ defineExpose({
           :index-complete="vaultIndexData.complete"
           :known-property-names="vaultIndexData.knownPropertyNames"
           :known-property-types="vaultIndexData.knownPropertyTypes"
+          :all-files="vaultIndexData.files"
+          :known-tags="vaultIndexData.allTags.map((t) => t.tag)"
           :anchor="selectedAnchor"
           :initial-document="initialDocument"
           :relocating="Boolean(relocateState?.affectedDocumentPath && (relocateState.stage === 'confirm' || relocateState.loading || relocateState.stage === 'uncertain'))"
@@ -3360,6 +3711,7 @@ defineExpose({
           @select-tag="handleSelectTag"
           @rename-note="handleRenameFromNoteTitle"
           @content-saved="handleContentSaved"
+          @attachment-uploaded="handleAttachmentUploaded"
           @not-found="handleNoteNotFound"
           @unauthorized="emit('unauthorized')"
         />
@@ -3709,6 +4061,14 @@ defineExpose({
           >
             Open in new tab
           </button>
+          <button
+            type="button"
+            class="context-menu-item"
+            data-testid="ctx-bookmark"
+            @click="toggleBookmark(contextMenu.entry.path); closeContextMenu()"
+          >
+            {{ isBookmarked(contextMenu.entry.path) ? 'Remove bookmark' : 'Bookmark note' }}
+          </button>
           <div class="dropdown-divider" />
           <button
             type="button"
@@ -3907,19 +4267,22 @@ defineExpose({
           <button type="button" class="modal-close-btn" aria-label="Close" @click="showCommandPalette = false">×</button>
         </header>
         <input
+          ref="commandPaletteInputRef"
           v-model="commandPaletteQuery"
           type="text"
           class="explorer-create-input"
           data-testid="command-palette-input"
           placeholder="Type a command or note name…"
           autofocus
+          @keydown="handleCommandPaletteKeydown"
         />
         <div class="trash-list">
           <button
-            v-for="cmd in commandPaletteItems"
+            v-for="(cmd, idx) in commandPaletteItems"
             :key="cmd.id"
             type="button"
             class="panel-list-item"
+            :class="{ 'panel-list-item--active': idx === commandPaletteActiveIndex }"
             @click="showCommandPalette = false; cmd.run()"
           >
             <span class="panel-item-title">{{ cmd.label }}</span>
@@ -3946,18 +4309,21 @@ defineExpose({
           <button type="button" class="modal-close-btn" aria-label="Close" @click="showQuickSwitcher = false">×</button>
         </header>
         <input
+          ref="quickSwitcherInputRef"
           v-model="quickSwitcherQuery"
           type="text"
           class="explorer-create-input"
           data-testid="quick-switcher-input"
           placeholder="Note name…"
+          @keydown="handleQuickSwitcherKeydown"
         />
         <div class="trash-list">
           <button
-            v-for="filePath in quickSwitcherResults"
+            v-for="(filePath, idx) in quickSwitcherResults"
             :key="filePath"
             type="button"
             class="panel-list-item"
+            :class="{ 'panel-list-item--active': idx === quickSwitcherActiveIndex }"
             data-testid="quick-switcher-item"
             :data-file-path="filePath"
             @click="showQuickSwitcher = false; openCandidateLink(filePath)"
@@ -3965,9 +4331,10 @@ defineExpose({
             {{ filePath }}
           </button>
           <button
-            v-if="quickSwitcherQuery.trim() && !quickSwitcherResults.includes(`${quickSwitcherQuery.trim()}.md`)"
+            v-if="canCreateFromQuickSwitcher"
             type="button"
             class="panel-list-item panel-list-item--pending"
+            :class="{ 'panel-list-item--active': quickSwitcherActiveIndex === quickSwitcherResults.length }"
             data-testid="quick-switcher-create"
             @click="showQuickSwitcher = false; createNoteFromPendingLink(`[[${quickSwitcherQuery.trim()}]]`, 'wikilink')"
           >
@@ -4001,6 +4368,7 @@ defineExpose({
               v-model="vaultSettings.showUnsupportedFiles"
               type="checkbox"
               data-testid="setting-show-unsupported-files"
+              @change="persistVaultSettings"
             />
           </label>
           <label class="settings-row">
@@ -4009,6 +4377,7 @@ defineExpose({
               v-model="vaultSettings.autoUpdateLinks"
               type="checkbox"
               data-testid="setting-auto-update-links"
+              @change="persistVaultSettings"
             />
           </label>
           <label class="settings-row">
@@ -4017,6 +4386,7 @@ defineExpose({
               v-model="vaultSettings.useWikilinks"
               type="checkbox"
               data-testid="setting-use-wikilinks"
+              @change="persistVaultSettings"
             />
           </label>
           <label class="settings-row">
@@ -4025,10 +4395,23 @@ defineExpose({
               v-model="vaultSettings.deleteBehavior"
               class="explorer-create-input"
               data-testid="setting-delete-behavior"
+              @change="persistVaultSettings"
             >
               <option value="trash">Trash (.trash)</option>
               <option value="permanent">Permanent deletion</option>
             </select>
+          </label>
+          <label class="settings-row">
+            <span>Daily notes folder</span>
+            <input
+              v-model="vaultSettings.dailyNotesFolder"
+              type="text"
+              class="explorer-create-input"
+              data-testid="setting-daily-notes-folder"
+              placeholder="e.g. Daily"
+              @input="persistVaultSettings"
+              @change="persistVaultSettings"
+            />
           </label>
         </div>
       </div>
@@ -5318,5 +5701,54 @@ defineExpose({
   flex-wrap: wrap;
   gap: 0.3rem;
   margin-top: 0.5rem;
+}
+
+.explorer-bookmarks {
+  border-bottom: 1px solid var(--ayame-border, #34323f);
+  padding: 0.35rem 0.35rem 0.45rem;
+}
+
+.explorer-bookmarks-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.2rem 0.35rem;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.explorer-bookmarks-header:hover {
+  color: var(--ayame-text, #eeeaf3);
+  background: rgba(169, 154, 202, 0.08);
+}
+
+.explorer-bookmarks-count {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--ayame-primary, #a99aca);
+}
+
+.explorer-bookmarks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin-top: 0.2rem;
+}
+
+.explorer-bookmark-btn {
+  padding-left: 1rem;
+}
+
+.panel-list-item--active {
+  background: rgba(169, 154, 202, 0.18);
+  border-color: var(--ayame-primary, #a99aca);
 }
 </style>

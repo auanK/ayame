@@ -1,14 +1,67 @@
-import {
-  parseNoteDocument,
-  extractAllNoteTags,
-  matchesTagQuery,
-} from '../markdown/properties.js'
+import * as properties from '../markdown/properties.js'
 import {
   extractHeadings,
   extractBlocks,
   extractNoteReferences,
   resolveLink,
 } from '../markdown/links.js'
+
+const MAX_PARSED_NOTE_CACHE = 2000
+const parsedNoteCache = new Map()
+
+export const clearVaultIndexCache = () => {
+  parsedNoteCache.clear()
+}
+
+const getParsedNoteData = (note) => {
+  const content = typeof note.content === 'string' ? note.content : ''
+  const revision = typeof note.revision === 'string' ? note.revision : ''
+  const key = `${note.path}\0${revision}\0${content.length}`
+  const cached = parsedNoteCache.get(key)
+  if (cached && cached.content === content) {
+    parsedNoteCache.delete(key)
+    parsedNoteCache.set(key, cached)
+    return cached
+  }
+
+  const parsed = properties.parseNoteDocument(content)
+  const aliasesProp = parsed.properties.find(
+    (p) => p.key.toLowerCase() === 'aliases' || p.key.toLowerCase() === 'alias'
+  )
+  const aliases = Array.isArray(aliasesProp?.value)
+    ? aliasesProp.value.map((a) => String(a).trim()).filter(Boolean)
+    : typeof aliasesProp?.value === 'string' && aliasesProp.value.trim()
+      ? [aliasesProp.value.trim()]
+      : []
+
+  const tags = properties.extractAllNoteTags(content)
+  const headings = extractHeadings(parsed.body)
+  const blocks = extractBlocks(parsed.body)
+  const titleProp = parsed.properties.find((p) => p.key.toLowerCase() === 'title')
+  const title =
+    typeof titleProp?.value === 'string' && titleProp.value.trim()
+      ? titleProp.value.trim()
+      : getFileStem(note.path)
+  const refs = extractNoteReferences(content)
+
+  const entry = {
+    content,
+    parsed,
+    aliases,
+    tags,
+    headings,
+    blocks,
+    title,
+    refs,
+  }
+
+  if (parsedNoteCache.size >= MAX_PARSED_NOTE_CACHE) {
+    const oldestKey = parsedNoteCache.keys().next().value
+    parsedNoteCache.delete(oldestKey)
+  }
+  parsedNoteCache.set(key, entry)
+  return entry
+}
 
 const getFileStem = (filePath) => {
   const base = String(filePath || '').split('/').pop() || ''
@@ -42,18 +95,9 @@ export const buildVaultIndex = (rawIndex = {}) => {
 
   for (const note of rawNotes) {
     if (!note || typeof note.path !== 'string') continue
-    const content = typeof note.content === 'string' ? note.content : ''
-    const parsed = parseNoteDocument(content)
+    const data = getParsedNoteData(note)
+    const { parsed, aliases, tags, headings, blocks, title, content } = data
     parsedByFile[note.path] = parsed
-
-    const aliasesProp = parsed.properties.find(
-      (p) => p.key.toLowerCase() === 'aliases' || p.key.toLowerCase() === 'alias'
-    )
-    const aliases = Array.isArray(aliasesProp?.value)
-      ? aliasesProp.value.map((a) => String(a).trim()).filter(Boolean)
-      : typeof aliasesProp?.value === 'string' && aliasesProp.value.trim()
-        ? [aliasesProp.value.trim()]
-        : []
     aliasesByFile[note.path] = aliases
 
     for (const prop of parsed.properties) {
@@ -63,19 +107,9 @@ export const buildVaultIndex = (rawIndex = {}) => {
       }
     }
 
-    const tags = extractAllNoteTags(content)
     tagsByFile[note.path] = tags
-
-    const headings = extractHeadings(parsed.body)
-    const blocks = extractBlocks(parsed.body)
     headingsByFile[note.path] = headings
     blocksByFile[note.path] = blocks
-
-    const titleProp = parsed.properties.find((p) => p.key.toLowerCase() === 'title')
-    const title =
-      typeof titleProp?.value === 'string' && titleProp.value.trim()
-        ? titleProp.value.trim()
-        : getFileStem(note.path)
 
     notesByPath[note.path] = {
       path: note.path,
@@ -89,6 +123,7 @@ export const buildVaultIndex = (rawIndex = {}) => {
       tags,
       headings,
       blocks,
+      refs: data.refs,
     }
   }
 
@@ -109,7 +144,7 @@ export const buildVaultIndex = (rawIndex = {}) => {
   }
 
   for (const [notePath, noteData] of Object.entries(notesByPath)) {
-    const refs = extractNoteReferences(noteData.content)
+    const refs = noteData.refs || extractNoteReferences(noteData.content)
     const resolvedOutgoing = []
 
     for (const ref of refs) {
@@ -275,7 +310,7 @@ export const getNotesByTag = (index, tagQuery) => {
   if (!index || !tagQuery) return []
   const results = []
   for (const [notePath, tags] of Object.entries(index.tagsByFile || {})) {
-    const matchedTags = tags.filter((t) => matchesTagQuery([t], tagQuery))
+    const matchedTags = tags.filter((t) => properties.matchesTagQuery([t], tagQuery))
     if (matchedTags.length > 0) {
       const note = index.notesByPath?.[notePath]
       results.push({

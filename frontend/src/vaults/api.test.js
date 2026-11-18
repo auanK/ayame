@@ -8,6 +8,8 @@ import {
   uploadVaultCover,
   deleteVaultCover,
   getVaultCoverUrl,
+  uploadVaultAttachment,
+  getVaultMediaUrl,
   unregisterVault,
   getVaultEntries,
   getVaultMarkdown,
@@ -587,6 +589,29 @@ describe('vault API', () => {
       const removed = await deleteVaultCover('personal')
       expect(removed.vault.hasCover).toBe(false)
       expect(getVaultCoverUrl('Personal Dir', 999)).toBe('/vaults/Personal%20Dir/cover?v=999')
+    })
+
+    it('supports uploadVaultAttachment and getVaultMediaUrl', async () => {
+      const img = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' })
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(response(201, {
+        directory: 'personal',
+        path: 'Attachments/shot.png',
+        name: 'shot.png',
+        mimeType: 'image/png',
+      }))
+
+      const res = await uploadVaultAttachment('personal', img, { fileName: 'shot.png' })
+      expect(res.path).toBe('Attachments/shot.png')
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/vaults/personal/attachments?folderPath=Attachments&filename=shot.png',
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'image/png' },
+          body: img,
+        }
+      )
+      expect(getVaultMediaUrl('personal', 'Attachments/shot.png')).toBe('/vaults/personal/media?path=Attachments%2Fshot.png')
     })
   })
 })

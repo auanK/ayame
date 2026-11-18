@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import * as properties from '../markdown/properties.js'
 import {
   buildVaultIndex,
   updateNoteInVaultIndex,
@@ -6,6 +7,7 @@ import {
   getOutgoingLinksForNote,
   getNotesByTag,
   searchVaultNotes,
+  clearVaultIndexCache,
 } from './vaultIndex.js'
 
 describe('vaultIndex — Obsidian vault-wide graph, backlinks, outgoing links, tags, and search', () => {
@@ -153,5 +155,29 @@ describe('vaultIndex — Obsidian vault-wide graph, backlinks, outgoing links, t
     const outgoing = getOutgoingLinksForNote(index, 'Indice.md')
     expect(outgoing.unresolved).toHaveLength(1)
     expect(outgoing.unresolved[0].status).toBe('unverified')
+  })
+
+  it('6. memoizes unchanged note parsing across incremental index updates without changing output', () => {
+    clearVaultIndexCache()
+    const spy = vi.spyOn(properties, 'parseNoteDocument')
+    try {
+      const index = buildVaultIndex(sampleRawIndex)
+      const initialCalls = spy.mock.calls.length
+      expect(initialCalls).toBeGreaterThanOrEqual(3)
+
+      spy.mockClear()
+      const updated = updateNoteInVaultIndex(index, {
+        path: 'Indice.md',
+        name: 'Indice.md',
+        revision: 'e'.repeat(64),
+        content: '# Índice Atualizado\n\nVeja [[Cosmologia]].\n',
+      })
+      // Only the single modified note is re-parsed; unchanged notes hit the cache
+      expect(spy.mock.calls.length).toBe(initialCalls / 3)
+      expect(updated.notesByPath['Conhecimento/Filosofia/Cosmologia.md'].title).toBe('Estudo do Cosmos')
+      expect(updated.notesByPath['Indice.md'].headings[0].text).toBe('Índice Atualizado')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

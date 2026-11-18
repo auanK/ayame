@@ -1304,3 +1304,69 @@ test('vault organization endpoints support create, patch metadata, reorder, and 
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
   }
 })
+
+test('attachment upload and media serving enforce magic bytes, deduplicate names, and set strict security headers', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-media-routes-'))
+  const vaultDir = path.join(vaultsRoot, 'personal')
+  fs.mkdirSync(vaultDir)
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 8, 7])
+    const up1 = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/attachments?folderPath=Attachments&filename=diagram.png',
+      headers: { cookie, 'content-type': 'image/png' },
+      payload: pngBytes,
+    })
+    assert.equal(up1.statusCode, 201)
+    assert.equal(up1.headers['cache-control'], 'no-store')
+    assert.deepEqual(up1.json(), {
+      directory: 'personal',
+      path: 'Attachments/diagram.png',
+      name: 'diagram.png',
+      mimeType: 'image/png',
+    })
+
+    // Duplicate filename deduplicates safely
+    const up2 = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/attachments?folderPath=Attachments&filename=diagram.png',
+      headers: { cookie, 'content-type': 'image/png' },
+      payload: pngBytes,
+    })
+    assert.equal(up2.statusCode, 201)
+    assert.equal(up2.json().path, 'Attachments/diagram-1.png')
+
+    // Serves media with CSP default-src 'none' and nosniff
+    const mediaRes = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/media?path=Attachments%2Fdiagram.png',
+      headers: { cookie },
+    })
+    assert.equal(mediaRes.statusCode, 200)
+    assert.equal(mediaRes.headers['content-type'], 'image/png')
+    assert.equal(mediaRes.headers['content-security-policy'], "default-src 'none'")
+    assert.equal(mediaRes.headers['x-content-type-options'], 'nosniff')
+    assert.deepEqual(mediaRes.rawPayload, pngBytes)
+
+    // Rejects SVG & traversal
+    const svgUp = await app.inject({
+      method: 'POST',
+      url: '/vaults/personal/attachments?filename=xss.svg',
+      headers: { cookie, 'content-type': 'image/svg+xml' },
+      payload: '<svg></svg>',
+    })
+    assert.equal(svgUp.statusCode, 415)
+
+    const trav = await app.inject({
+      method: 'GET',
+      url: '/vaults/personal/media?path=..%2Fsecret.png',
+      headers: { cookie },
+    })
+    assert.equal(trav.statusCode, 400)
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})

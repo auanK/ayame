@@ -37,12 +37,15 @@ export function saveEditorPreferences(prefs) {
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { getVaultMarkdown, saveVaultMarkdown, MAX_MARKDOWN_BYTES } from '../vaults/api.js'
+import * as vaultApi from '../vaults/api.js'
 import { findHeadingOffset } from './links.js'
 import { initialMarkdownH1 } from './render.js'
 import { splitFrontmatter, updateBodyInMarkdown } from './properties.js'
 import MarkdownEditor from './MarkdownEditor.vue'
 import PropertiesPanel from './PropertiesPanel.vue'
+
+const { getVaultMarkdown, saveVaultMarkdown, MAX_MARKDOWN_BYTES } = vaultApi
+const hasVaultApi = (name) => name in vaultApi && typeof vaultApi[name] === 'function'
 
 const props = defineProps({
   directory: { type: String, required: true },
@@ -52,6 +55,8 @@ const props = defineProps({
   indexComplete: { type: Boolean, default: true },
   knownPropertyNames: { type: Array, default: () => [] },
   knownPropertyTypes: { type: Object, default: () => ({}) },
+  allFiles: { type: Array, default: () => [] },
+  knownTags: { type: Array, default: () => [] },
   anchor: { type: String, default: null },
   initialDocument: { type: Object, default: null },
   relocating: { type: Boolean, default: false },
@@ -66,6 +71,7 @@ const emit = defineEmits([
   'rename-note',
   'content-saved',
   'not-found',
+  'attachment-uploaded',
 ])
 
 const editorPreferences = ref(loadEditorPreferences())
@@ -145,6 +151,49 @@ const editorText = computed(() => {
     ? normalizeLineEndings(frontmatterSplit.value.body)
     : normalizeLineEndings(draft.value)
 })
+
+const uploadedAttachments = ref([])
+const effectiveAllFiles = computed(() =>
+  Array.from(
+    new Set([
+      ...(Array.isArray(props.allFiles) ? props.allFiles : []),
+      ...(Array.isArray(props.knownFiles) ? props.knownFiles : []),
+      ...uploadedAttachments.value,
+    ])
+  )
+)
+
+const wordStats = computed(() => {
+  const body = String(frontmatterSplit.value?.body || '')
+  const matches = body.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)
+  const words = matches ? matches.length : 0
+  const readingMinutes = words === 0 ? 0 : Math.max(1, Math.ceil(words / 200))
+  return { words, readingMinutes }
+})
+
+const handleUploadImage = async (file) => {
+  if (!hasVaultApi('uploadVaultAttachment')) return null
+  const activeDir = props.directory
+  try {
+    const uploaded = await vaultApi.uploadVaultAttachment(activeDir, file)
+    if (!isMounted || activeDir !== props.directory) return null
+    if (uploaded && typeof uploaded.path === 'string' && uploaded.path) {
+      if (!uploadedAttachments.value.includes(uploaded.path)) {
+        uploadedAttachments.value = [...uploadedAttachments.value, uploaded.path]
+      }
+      emit('attachment-uploaded', uploaded)
+    }
+    return uploaded
+  } catch (err) {
+    if (err?.code === 'UNAUTHORIZED') {
+      emit('unauthorized')
+      return null
+    }
+    saveNotice.value = ''
+    saveError.value = err?.message || 'Could not upload attachment.'
+    return null
+  }
+}
 
 const statusLabel = computed(() => {
   if (reloading.value) return 'Loading server copy…'
@@ -809,6 +858,9 @@ watch(
     }
     preservedRelocationPath = null
     propertyTransferPending = false
+    if (directory !== previousDirectory) {
+      uploadedAttachments.value = []
+    }
     load()
   }
 )
@@ -822,9 +874,15 @@ watch(
 )
 
 const handleKeyDown = (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key === ';') {
+  const mod = event.ctrlKey || event.metaKey
+  if (mod && event.key === ';') {
     event.preventDefault()
     cyclePropertiesMode()
+  } else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+    event.preventDefault()
+    if (dirty.value && !saving.value && !reloading.value && !conflict.value) {
+      void save()
+    }
   }
 }
 
@@ -1055,6 +1113,10 @@ defineExpose({
             :aliases-by-file="aliasesByFile"
             :index-complete="indexComplete"
             :auto-focus="shouldAutoFocus"
+            :vault-directory="directory"
+            :all-files="effectiveAllFiles"
+            :known-tags="knownTags"
+            :upload-image="handleUploadImage"
             @update:model-value="handleEditorUpdate"
             @open-link="handleOpenLink"
             @click-tag="emit('select-tag', $event)"
@@ -1062,6 +1124,13 @@ defineExpose({
         </div>
       </div>
     </main>
+    <div
+      v-if="hasConfirmedContent && !loading && !error"
+      class="editor-word-count"
+      data-testid="markdown-word-count"
+    >
+      {{ wordStats.words }} {{ wordStats.words === 1 ? 'word' : 'words' }} · {{ wordStats.readingMinutes }} min read
+    </div>
   </div>
 </template>
 
@@ -1301,5 +1370,21 @@ defineExpose({
   outline: 2px solid var(--reading-focus-ring);
   outline-offset: 4px;
   border-radius: 3px;
+}
+
+.editor-word-count {
+  position: absolute;
+  bottom: 0.65rem;
+  right: 1.25rem;
+  z-index: 8;
+  font-size: 0.72rem;
+  color: var(--reading-syntax);
+  background: var(--reading-background-elevated);
+  border: 1px solid var(--reading-border);
+  border-radius: 999px;
+  padding: 0.14rem 0.55rem;
+  opacity: 0.85;
+  pointer-events: none;
+  user-select: none;
 }
 </style>

@@ -694,3 +694,39 @@ export const deleteVaultEntryPermanently = async (directory, { path, expectedRev
 
   return handleOperationResponse(response, 'FAILED_TO_DELETE_ENTRY')
 }
+
+export const getVaultMediaUrl = (directory, path) =>
+  `/vaults/${encodeURIComponent(directory ?? '')}/media?path=${encodeURIComponent(path ?? '')}`
+
+export const uploadVaultAttachment = async (
+  directory,
+  fileOrBlob,
+  { folderPath = 'Attachments', fileName } = {}
+) => {
+  const name = fileName || fileOrBlob?.name || 'image'
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/attachments?folderPath=${encodeURIComponent(folderPath)}&filename=${encodeURIComponent(name)}`
+  const response = await request(url, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': fileOrBlob?.type || 'application/octet-stream',
+    },
+    body: fileOrBlob,
+  }, 'FAILED_TO_UPLOAD_ATTACHMENT')
+
+  if (response.status === 401) throw apiError('UNAUTHORIZED')
+  if (response.status !== 201) {
+    throw apiError(await errorResponseCode(response, 'FAILED_TO_UPLOAD_ATTACHMENT'))
+  }
+
+  const data = await readJson(response)
+  if (!data || typeof data !== 'object' || typeof data.path !== 'string' || data.path.length === 0) {
+    throw apiError('INVALID_VAULT_RESPONSE')
+  }
+  return {
+    directory: data.directory,
+    path: data.path,
+    name: data.name,
+    mimeType: data.mimeType,
+  }
+}
