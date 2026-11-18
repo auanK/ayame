@@ -110,12 +110,30 @@ test('ayame installation persists owner, password hash, session, and vault metad
       headers: { cookie },
     })
     assert.equal(listRes.statusCode, 200)
-    assert.deepEqual(listRes.json(), {
-      vaults: [
-        { id: null, name: 'archive', directory: 'archive', registered: false },
-        { id: 'personal-vault', name: 'Personal Notes', directory: 'personal', registered: true },
-      ],
+    const listedVaults = listRes.json().vaults
+    assert.equal(listedVaults.length, 2)
+    assert.deepEqual(listedVaults[0], {
+      id: null,
+      name: 'archive',
+      directory: 'archive',
+      registered: false,
+      position: null,
+      category: '',
+      tags: [],
+      description: '',
+      accentColor: '',
+      pinned: false,
+      hasCover: false,
+      coverUpdatedAt: null,
+      noteCount: 0,
+      lastModifiedAt: null,
     })
+    assert.equal(listedVaults[1].id, 'personal-vault')
+    assert.equal(listedVaults[1].name, 'Personal Notes')
+    assert.equal(listedVaults[1].directory, 'personal')
+    assert.equal(listedVaults[1].registered, true)
+    assert.equal(listedVaults[1].noteCount, 1)
+    assert.ok(typeof listedVaults[1].lastModifiedAt === 'number')
 
     // Navigate entries in root and subdirectory
     const rootEntriesRes = await app.inject({
@@ -156,12 +174,15 @@ test('ayame installation persists owner, password hash, session, and vault metad
       headers: { cookie },
     })
     assert.equal(listAfterDelete.statusCode, 200)
-    assert.deepEqual(listAfterDelete.json(), {
-      vaults: [
-        { id: null, name: 'archive', directory: 'archive', registered: false },
-        { id: null, name: 'personal', directory: 'personal', registered: false },
-      ],
-    })
+    assert.deepEqual(listAfterDelete.json().vaults.map((v) => ({
+      id: v.id,
+      name: v.name,
+      directory: v.directory,
+      registered: v.registered,
+    })), [
+      { id: null, name: 'archive', directory: 'archive', registered: false },
+      { id: null, name: 'personal', directory: 'personal', registered: false },
+    ])
   } finally {
     await app.close()
   }

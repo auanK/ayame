@@ -138,12 +138,32 @@ test('GET /vaults returns discovered unregistered vaults without mutating databa
           name: 'personal',
           directory: 'personal',
           registered: false,
+          position: null,
+          category: '',
+          tags: [],
+          description: '',
+          accentColor: '',
+          pinned: false,
+          hasCover: false,
+          coverUpdatedAt: null,
+          noteCount: 0,
+          lastModifiedAt: null,
         },
         {
           id: null,
           name: 'work',
           directory: 'work',
           registered: false,
+          position: null,
+          category: '',
+          tags: [],
+          description: '',
+          accentColor: '',
+          pinned: false,
+          hasCover: false,
+          coverUpdatedAt: null,
+          noteCount: 0,
+          lastModifiedAt: null,
         },
       ],
     })
@@ -316,6 +336,16 @@ test('DELETE /vaults/:id unregisters metadata and falls back to detected vault',
           name: 'personal',
           directory: 'personal',
           registered: false,
+          position: null,
+          category: '',
+          tags: [],
+          description: '',
+          accentColor: '',
+          pinned: false,
+          hasCover: false,
+          coverUpdatedAt: null,
+          noteCount: 0,
+          lastModifiedAt: null,
         },
       ],
     })
@@ -371,6 +401,16 @@ test('live rescan: external creation and deletion reflected on subsequent GET /v
           name: 'external-vault',
           directory: 'external-vault',
           registered: false,
+          position: null,
+          category: '',
+          tags: [],
+          description: '',
+          accentColor: '',
+          pinned: false,
+          hasCover: false,
+          coverUpdatedAt: null,
+          noteCount: 0,
+          lastModifiedAt: null,
         },
       ],
     })
@@ -1132,6 +1172,133 @@ test('GET /index, POST /relocate, and /trash endpoints enforce authentication, u
     assert.equal(restoreRes.statusCode, 200)
     assert.equal(restoreRes.json().path, 'Knowledge')
     assert.equal(fs.existsSync(path.join(personalDir, 'Knowledge', 'Cosmologia Moderna.md')), true)
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('vault organization endpoints support create, patch metadata, reorder, and cover photo lifecycle', async () => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-org-routes-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'existing'))
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+
+  try {
+    // 1. Create a brand new vault with metadata and welcome note
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/vaults/create',
+      headers: { cookie },
+      payload: {
+        name: 'Campanha Isekai',
+        category: 'Worldbuilding',
+        tags: ['rpg', 'lore'],
+        description: 'Sistema de almas e espirítos',
+        accentColor: '#a99aca',
+        pinned: true,
+        createWelcomeNote: true,
+      },
+    })
+    assert.equal(createRes.statusCode, 201)
+    assert.equal(createRes.headers['cache-control'], 'no-store')
+    const created = createRes.json().vault
+    assert.equal(created.name, 'Campanha Isekai')
+    assert.equal(created.directory, 'Campanha Isekai')
+    assert.equal(created.noteCount, 1)
+    assert.equal(created.pinned, true)
+
+    // 2. Patch metadata on previously unregistered vault
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/vaults/existing',
+      headers: { cookie },
+      payload: {
+        name: 'Existing Hub',
+        category: 'Study',
+        tags: ['#notes', 'review'],
+        accentColor: '#8ccff0',
+      },
+    })
+    assert.equal(patchRes.statusCode, 200)
+    assert.equal(patchRes.headers['cache-control'], 'no-store')
+    assert.equal(patchRes.json().vault.name, 'Existing Hub')
+    assert.deepEqual(patchRes.json().vault.tags, ['notes', 'review'])
+
+    // 3. Reorder vaults
+    const orderRes = await app.inject({
+      method: 'PUT',
+      url: '/vaults/order',
+      headers: { cookie },
+      payload: { directories: ['existing', 'Campanha Isekai'] },
+    })
+    assert.equal(orderRes.statusCode, 200)
+    assert.equal(orderRes.headers['cache-control'], 'no-store')
+    assert.deepEqual(orderRes.json().vaults.map((v) => v.directory), ['existing', 'Campanha Isekai'])
+
+    // 4. Cover photo validation & lifecycle
+    const spoofedRes = await app.inject({
+      method: 'PUT',
+      url: '/vaults/existing/cover',
+      headers: { cookie, 'content-type': 'image/png' },
+      payload: Buffer.from('<svg onload=alert(1)>'),
+    })
+    assert.equal(spoofedRes.statusCode, 415)
+    assert.deepEqual(spoofedRes.json(), { error: 'UNSUPPORTED_IMAGE_TYPE' })
+
+    const svgHeaderRes = await app.inject({
+      method: 'PUT',
+      url: '/vaults/existing/cover',
+      headers: { cookie, 'content-type': 'image/svg+xml' },
+      payload: '<svg></svg>',
+    })
+    assert.equal(svgHeaderRes.statusCode, 415)
+    assert.deepEqual(svgHeaderRes.json(), { error: 'UNSUPPORTED_IMAGE_TYPE' })
+
+    const oversizedRes = await app.inject({
+      method: 'PUT',
+      url: '/vaults/existing/cover',
+      headers: { cookie, 'content-type': 'image/png' },
+      payload: Buffer.alloc(2 * 1024 * 1024 + 10, 0x89),
+    })
+    assert.equal(oversizedRes.statusCode, 413)
+    assert.deepEqual(oversizedRes.json(), { error: 'VAULT_COVER_TOO_LARGE' })
+
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+    const uploadRes = await app.inject({
+      method: 'PUT',
+      url: '/vaults/existing/cover',
+      headers: { cookie, 'content-type': 'image/png' },
+      payload: pngBytes,
+    })
+    assert.equal(uploadRes.statusCode, 200)
+    assert.equal(uploadRes.json().vault.hasCover, true)
+
+    const getCoverRes = await app.inject({
+      method: 'GET',
+      url: '/vaults/existing/cover',
+      headers: { cookie },
+    })
+    assert.equal(getCoverRes.statusCode, 200)
+    assert.equal(getCoverRes.headers['content-type'], 'image/png')
+    assert.equal(getCoverRes.headers['content-security-policy'], "default-src 'none'")
+    assert.equal(getCoverRes.headers['x-content-type-options'], 'nosniff')
+    assert.deepEqual(getCoverRes.rawPayload, pngBytes)
+
+    const delCoverRes = await app.inject({
+      method: 'DELETE',
+      url: '/vaults/existing/cover',
+      headers: { cookie },
+    })
+    assert.equal(delCoverRes.statusCode, 200)
+    assert.equal(delCoverRes.json().vault.hasCover, false)
+
+    const missingCoverRes = await app.inject({
+      method: 'GET',
+      url: '/vaults/existing/cover',
+      headers: { cookie },
+    })
+    assert.equal(missingCoverRes.statusCode, 404)
+    assert.deepEqual(missingCoverRes.json(), { error: 'VAULT_COVER_NOT_FOUND' })
   } finally {
     await app.close()
     fs.rmSync(vaultsRoot, { recursive: true, force: true })

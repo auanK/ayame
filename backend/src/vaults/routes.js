@@ -1,4 +1,17 @@
-import { listVaults, registerVault, unregisterVault } from './registry.js'
+import {
+  MAX_VAULT_COVER_BYTES,
+  listVaults,
+  registerVault,
+  createVault,
+  updateVaultMetadata,
+  reorderVaults,
+  setVaultCover,
+  getVaultCover,
+  clearVaultCover,
+  unregisterVault,
+} from './registry.js'
+import { collectVaultStats } from './discovery.js'
+import { SUPPORTED_IMAGE_MIMES } from './images.js'
 import { listVaultEntries } from './browser.js'
 import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
 import { saveVaultMarkdown } from './writer.js'
@@ -44,7 +57,33 @@ const OPERATION_ERROR_STATUS = {
   VAULT_TRASH_RESULT_UNKNOWN: 500,
 }
 
+const VAULT_META_ERROR_STATUS = {
+  INVALID_VAULT_NAME: 400,
+  INVALID_VAULT_DIRECTORY: 400,
+  INVALID_VAULT_CATEGORY: 400,
+  INVALID_VAULT_TAGS: 400,
+  INVALID_VAULT_DESCRIPTION: 400,
+  INVALID_VAULT_COLOR: 400,
+  INVALID_VAULT_PAYLOAD: 400,
+  INVALID_VAULT_ORDER: 400,
+  INVALID_VAULT_ROOT: 500,
+  VAULT_CREATE_FAILED: 500,
+  VAULT_COVER_NOT_FOUND: 404,
+  VAULT_ALREADY_REGISTERED: 409,
+  VAULT_ALREADY_EXISTS: 409,
+  VAULT_COVER_TOO_LARGE: 413,
+  UNSUPPORTED_IMAGE_TYPE: 415,
+}
+
 export const registerVaultRoutes = (app, db, vaultsRoot) => {
+  app.addContentTypeParser(
+    [...SUPPORTED_IMAGE_MIMES, 'application/octet-stream'],
+    { parseAs: 'buffer' },
+    (_req, body, done) => {
+      done(null, body)
+    }
+  )
+
   app.get('/vaults', async (req, reply) => {
     const vaults = listVaults(db, vaultsRoot)
     return reply.send({ vaults })
@@ -239,27 +278,99 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
   })
 
   app.post('/vaults', { config: { noStore: true } }, async (req, reply) => {
-    const { name, directory } = req.body || {}
+    const { name, directory, category, tags, description, accentColor, pinned } = req.body || {}
     try {
-      const vault = registerVault(db, vaultsRoot, { name, directory })
+      const vault = registerVault(db, vaultsRoot, {
+        name,
+        directory,
+        category,
+        tags,
+        description,
+        accentColor,
+        pinned,
+      })
       return reply.code(201).send({
         vault: {
-          id: vault.id,
-          name: vault.name,
-          directory: vault.directory,
-          registered: true,
+          ...vault,
+          ...collectVaultStats(vaultsRoot, vault.directory),
         },
       })
     } catch (err) {
-      if (err.code === 'INVALID_VAULT_NAME') {
-        return reply.code(400).send({ error: 'INVALID_VAULT_NAME' })
-      }
-      if (err.code === 'INVALID_VAULT_DIRECTORY') {
-        return reply.code(400).send({ error: 'INVALID_VAULT_DIRECTORY' })
-      }
-      if (err.code === 'VAULT_ALREADY_REGISTERED') {
-        return reply.code(409).send({ error: 'VAULT_ALREADY_REGISTERED' })
-      }
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.post('/vaults/create', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const vault = createVault(db, vaultsRoot, req.body || {})
+      return reply.code(201).send({ vault })
+    } catch (err) {
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.put('/vaults/order', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const vaults = reorderVaults(db, vaultsRoot, req.body?.directories)
+      return reply.send({ vaults })
+    } catch (err) {
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.patch('/vaults/:directory', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const vault = updateVaultMetadata(db, vaultsRoot, req.params.directory, req.body || {})
+      return reply.send({ vault })
+    } catch (err) {
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.put('/vaults/:directory/cover', {
+    bodyLimit: MAX_VAULT_COVER_BYTES,
+    config: { noStore: true },
+  }, async (req, reply) => {
+    try {
+      const vault = setVaultCover(db, vaultsRoot, req.params.directory, req.body)
+      return reply.send({ vault })
+    } catch (err) {
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.get('/vaults/:directory/cover', async (req, reply) => {
+    try {
+      const cover = getVaultCover(db, vaultsRoot, req.params.directory)
+      reply.header('content-type', cover.mimeType)
+      reply.header('content-security-policy', "default-src 'none'")
+      reply.header('x-content-type-options', 'nosniff')
+      reply.header('cache-control', 'private, no-cache')
+      return reply.send(cover.buffer)
+    } catch (err) {
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.delete('/vaults/:directory/cover', { config: { noStore: true } }, async (req, reply) => {
+    try {
+      const vault = clearVaultCover(db, vaultsRoot, req.params.directory)
+      return reply.send({ vault })
+    } catch (err) {
+      const status = VAULT_META_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
       throw err
     }
   })

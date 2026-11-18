@@ -73,7 +73,22 @@ test('backend manual smoke sequence (sections 22, 26, 53 & 54)', async (t) => {
     assert.equal(res2.statusCode, 200)
     assert.deepEqual(res2.json(), {
       vaults: [
-        { id: null, name: 'alpha', directory: 'alpha', registered: false },
+        {
+          id: null,
+          name: 'alpha',
+          directory: 'alpha',
+          registered: false,
+          position: null,
+          category: '',
+          tags: [],
+          description: '',
+          accentColor: '',
+          pinned: false,
+          hasCover: false,
+          coverUpdatedAt: null,
+          noteCount: 0,
+          lastModifiedAt: null,
+        },
       ],
     })
 
@@ -112,7 +127,22 @@ test('backend manual smoke sequence (sections 22, 26, 53 & 54)', async (t) => {
     })
     assert.deepEqual(res3.json(), {
       vaults: [
-        { id: personalId, name: 'Personal', directory: 'alpha', registered: true },
+        {
+          id: personalId,
+          name: 'Personal',
+          directory: 'alpha',
+          registered: true,
+          position: null,
+          category: '',
+          tags: [],
+          description: '',
+          accentColor: '',
+          pinned: false,
+          hasCover: false,
+          coverUpdatedAt: null,
+          noteCount: 0,
+          lastModifiedAt: null,
+        },
       ],
     })
 
@@ -132,7 +162,22 @@ test('backend manual smoke sequence (sections 22, 26, 53 & 54)', async (t) => {
     })
     assert.deepEqual(res4.json(), {
       vaults: [
-        { id: null, name: 'alpha', directory: 'alpha', registered: false },
+        {
+          id: null,
+          name: 'alpha',
+          directory: 'alpha',
+          registered: false,
+          position: null,
+          category: '',
+          tags: [],
+          description: '',
+          accentColor: '',
+          pinned: false,
+          hasCover: false,
+          coverUpdatedAt: null,
+          noteCount: 0,
+          lastModifiedAt: null,
+        },
       ],
     })
 

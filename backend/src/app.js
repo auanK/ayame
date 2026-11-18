@@ -77,12 +77,23 @@ export const createApp = ({
   const limiter = createLoginRateLimiter(loginRateLimit)
 
   app.setErrorHandler((err, req, reply) => {
+    const routeUrl = req.routeOptions?.url
+    if (err.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+      if (req.method === 'PUT' && routeUrl === '/vaults/:directory/content') {
+        return reply.code(413).send({ error: 'VAULT_FILE_TOO_LARGE' })
+      }
+      if (req.method === 'PUT' && routeUrl === '/vaults/:directory/cover') {
+        return reply.code(413).send({ error: 'VAULT_COVER_TOO_LARGE' })
+      }
+      if (req.method === 'POST' && routeUrl === '/vaults/:directory/attachments') {
+        return reply.code(413).send({ error: 'VAULT_ATTACHMENT_TOO_LARGE' })
+      }
+    }
     if (
-      err.code === 'FST_ERR_CTP_BODY_TOO_LARGE' &&
-      req.method === 'PUT' &&
-      req.routeOptions?.url === '/vaults/:directory/content'
+      err.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE' &&
+      (routeUrl === '/vaults/:directory/cover' || routeUrl === '/vaults/:directory/attachments')
     ) {
-      return reply.code(413).send({ error: 'VAULT_FILE_TOO_LARGE' })
+      return reply.code(415).send({ error: 'UNSUPPORTED_IMAGE_TYPE' })
     }
     return reply.send(err)
   })

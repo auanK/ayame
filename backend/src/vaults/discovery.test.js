@@ -4,7 +4,20 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { openDatabase, closeDatabase } from '../database.js'
-import { discoverVaultDirectories, mergeVaults } from './discovery.js'
+import { discoverVaultDirectories, mergeVaults, collectVaultStats } from './discovery.js'
+
+const defaultMeta = {
+  position: null,
+  category: '',
+  tags: [],
+  description: '',
+  accentColor: '',
+  pinned: false,
+  hasCover: false,
+  coverUpdatedAt: null,
+  noteCount: 0,
+  lastModifiedAt: null,
+}
 
 test('1. direct child directory is discovered', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-disc-1-'))
@@ -131,6 +144,7 @@ test('9. unregistered vault gets id: null, name: directory, registered: false', 
       name: 'personal',
       directory: 'personal',
       registered: false,
+      ...defaultMeta,
     },
   ])
 })
@@ -142,6 +156,9 @@ test('10. registered metadata overrides fallback name', () => {
       id: 'uuid-1',
       name: 'Personal Notes',
       directory: 'personal',
+      category: 'Life',
+      tags: ['journal'],
+      pinned: true,
     },
   ]
   const merged = mergeVaults(discovered, registered)
@@ -151,6 +168,10 @@ test('10. registered metadata overrides fallback name', () => {
       name: 'Personal Notes',
       directory: 'personal',
       registered: true,
+      ...defaultMeta,
+      category: 'Life',
+      tags: ['journal'],
+      pinned: true,
     },
   ])
 })
@@ -190,6 +211,7 @@ test('12. registry row whose directory is missing is not returned as active vaul
       name: 'Active Notes',
       directory: 'active',
       registered: true,
+      ...defaultMeta,
     },
   ])
 })
@@ -215,6 +237,7 @@ test('13. if missing directory returns, stored metadata applies again', () => {
       name: 'Temporarily Gone',
       directory: 'gone',
       registered: true,
+      ...defaultMeta,
     },
   ])
 })
@@ -225,6 +248,35 @@ test('14. dot-prefixed directory is discovered as a vault', () => {
     fs.mkdirSync(path.join(tempDir, '.private'))
     const discovered = discoverVaultDirectories(tempDir)
     assert.deepEqual(discovered, ['.private'])
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('15. mergeVaults orders explicitly positioned vaults first by position then falls back to name/directory', () => {
+  const merged = mergeVaults(['c', 'a', 'b', 'd'], [
+    { id: '1', name: 'Bravo', directory: 'b', position: 1 },
+    { id: '2', name: 'Alpha', directory: 'a', position: 0 },
+  ])
+  assert.deepEqual(merged.map((v) => v.directory), ['a', 'b', 'c', 'd'])
+})
+
+test('16. collectVaultStats counts markdown notes and skips .trash, .obsidian, and temp artifacts', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-stats-'))
+  try {
+    const vaultDir = path.join(tempDir, 'notes')
+    fs.mkdirSync(path.join(vaultDir, 'sub'), { recursive: true })
+    fs.mkdirSync(path.join(vaultDir, '.trash'), { recursive: true })
+    fs.mkdirSync(path.join(vaultDir, '.obsidian'), { recursive: true })
+    fs.writeFileSync(path.join(vaultDir, 'one.md'), '# One')
+    fs.writeFileSync(path.join(vaultDir, 'sub', 'two.markdown'), '# Two')
+    fs.writeFileSync(path.join(vaultDir, 'image.png'), 'not markdown')
+    fs.writeFileSync(path.join(vaultDir, '.trash', 'deleted.md'), '# Deleted')
+    fs.writeFileSync(path.join(vaultDir, '.obsidian', 'ignored.md'), '# Ignored')
+
+    const stats = collectVaultStats(tempDir, 'notes')
+    assert.equal(stats.noteCount, 2)
+    assert.ok(typeof stats.lastModifiedAt === 'number' && stats.lastModifiedAt > 0)
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true })
   }

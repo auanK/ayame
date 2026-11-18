@@ -7,6 +7,12 @@ import { openDatabase, closeDatabase } from '../database.js'
 import {
   validVaultName,
   registerVault,
+  createVault,
+  updateVaultMetadata,
+  reorderVaults,
+  setVaultCover,
+  getVaultCover,
+  clearVaultCover,
   listRegisteredVaults,
   listVaults,
   unregisterVault,
@@ -59,6 +65,16 @@ test('registerVault registers vault and stores metadata', () => {
       name: 'Personal Vault',
       directory: 'personal',
       registered: true,
+      position: null,
+      category: '',
+      tags: [],
+      description: '',
+      accentColor: '',
+      pinned: false,
+      hasCover: false,
+      coverUpdatedAt: null,
+      noteCount: 0,
+      lastModifiedAt: null,
     })
   } finally {
     closeDatabase(db)
@@ -221,6 +237,16 @@ test('unregister regression: unregistering removes metadata only and falls back 
       name: 'Personal Notes',
       directory: 'personal',
       registered: true,
+      position: null,
+      category: '',
+      tags: [],
+      description: '',
+      accentColor: '',
+      pinned: false,
+      hasCover: false,
+      coverUpdatedAt: null,
+      noteCount: 0,
+      lastModifiedAt: null,
     })
 
     // 2. Unregister vault
@@ -240,6 +266,16 @@ test('unregister regression: unregistering removes metadata only and falls back 
       name: 'personal',
       directory: 'personal',
       registered: false,
+      position: null,
+      category: '',
+      tags: [],
+      description: '',
+      accentColor: '',
+      pinned: false,
+      hasCover: false,
+      coverUpdatedAt: null,
+      noteCount: 0,
+      lastModifiedAt: null,
     })
 
     // 5. Idempotent unregister does not throw or mutate
@@ -248,6 +284,135 @@ test('unregister regression: unregistering removes metadata only and falls back 
     const listIdempotent = listVaults(db, vaultsRoot)
     assert.equal(listIdempotent.length, 1)
     assert.equal(listIdempotent[0].id, null)
+  } finally {
+    closeDatabase(db)
+    fs.rmSync(vaultsRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+test('createVault creates physical directory, optional Welcome.md, and registers v2 metadata', () => {
+  const db = openDatabase(':memory:')
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-create-vault-'))
+
+  try {
+    const created = createVault(db, vaultsRoot, {
+      name: 'Estudos RPG',
+      category: 'Criatividade',
+      tags: ['#mundo', 'campanha', '#Mundo'],
+      description: 'Notas de campanha e lore',
+      accentColor: '#a99aca',
+      pinned: true,
+      createWelcomeNote: true,
+    })
+
+    assert.equal(created.name, 'Estudos RPG')
+    assert.equal(created.directory, 'Estudos RPG')
+    assert.equal(created.registered, true)
+    assert.equal(created.category, 'Criatividade')
+    assert.deepEqual(created.tags, ['mundo', 'campanha'])
+    assert.equal(created.description, 'Notas de campanha e lore')
+    assert.equal(created.accentColor, '#a99aca')
+    assert.equal(created.pinned, true)
+    assert.equal(fs.existsSync(path.join(vaultsRoot, 'Estudos RPG', 'Welcome.md')), true)
+
+    const list = listVaults(db, vaultsRoot)
+    assert.equal(list[0].noteCount, 1)
+
+    assert.throws(
+      () => createVault(db, vaultsRoot, { name: 'Outro', directory: 'Estudos RPG' }),
+      (err) => err.code === 'VAULT_ALREADY_EXISTS'
+    )
+  } finally {
+    closeDatabase(db)
+    fs.rmSync(vaultsRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+test('updateVaultMetadata upserts unregistered vaults and updates partial fields safely', () => {
+  const db = openDatabase(':memory:')
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-patch-vault-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'work'))
+
+  try {
+    const first = updateVaultMetadata(db, vaultsRoot, 'work', {
+      category: 'Trabalho',
+      tags: ['projetos', '2026'],
+      pinned: true,
+    })
+    assert.equal(first.registered, true)
+    assert.equal(first.name, 'work')
+    assert.equal(first.category, 'Trabalho')
+    assert.deepEqual(first.tags, ['projetos', '2026'])
+    assert.equal(first.pinned, true)
+
+    const second = updateVaultMetadata(db, vaultsRoot, 'work', {
+      name: 'Work Hub',
+      accentColor: '#8ccff0',
+    })
+    assert.equal(second.id, first.id)
+    assert.equal(second.name, 'Work Hub')
+    assert.equal(second.category, 'Trabalho')
+    assert.equal(second.accentColor, '#8ccff0')
+    assert.equal(second.pinned, true)
+
+    assert.throws(
+      () => updateVaultMetadata(db, vaultsRoot, 'work', { accentColor: 'not-a-color' }),
+      (err) => err.code === 'INVALID_VAULT_COLOR'
+    )
+  } finally {
+    closeDatabase(db)
+    fs.rmSync(vaultsRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+test('reorderVaults persists explicit card positions including unregistered vaults', () => {
+  const db = openDatabase(':memory:')
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-reorder-vaults-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'alpha'))
+  fs.mkdirSync(path.join(vaultsRoot, 'beta'))
+  fs.mkdirSync(path.join(vaultsRoot, 'gamma'))
+
+  try {
+    const ordered = reorderVaults(db, vaultsRoot, ['gamma', 'alpha', 'beta'])
+    assert.deepEqual(ordered.map((v) => v.directory), ['gamma', 'alpha', 'beta'])
+    assert.deepEqual(ordered.map((v) => v.position), [0, 1, 2])
+
+    const persisted = listVaults(db, vaultsRoot)
+    assert.deepEqual(persisted.map((v) => v.directory), ['gamma', 'alpha', 'beta'])
+  } finally {
+    closeDatabase(db)
+    fs.rmSync(vaultsRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+test('cover photo helpers verify magic bytes, store, retrieve, and clear covers safely', () => {
+  const db = openDatabase(':memory:')
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-cover-vault-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'notes'))
+  const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00])
+
+  try {
+    assert.throws(
+      () => setVaultCover(db, vaultsRoot, 'notes', Buffer.from('<svg></svg>')),
+      (err) => err.code === 'UNSUPPORTED_IMAGE_TYPE'
+    )
+
+    const updated = setVaultCover(db, vaultsRoot, 'notes', pngHeader)
+    assert.equal(updated.hasCover, true)
+    assert.ok(typeof updated.coverUpdatedAt === 'number')
+
+    const cover = getVaultCover(db, vaultsRoot, 'notes')
+    assert.equal(cover.mimeType, 'image/png')
+    assert.deepEqual(cover.buffer, pngHeader)
+
+    const cleared = clearVaultCover(db, vaultsRoot, 'notes')
+    assert.equal(cleared.hasCover, false)
+    assert.equal(cleared.coverUpdatedAt, null)
+
+    assert.throws(
+      () => getVaultCover(db, vaultsRoot, 'notes'),
+      (err) => err.code === 'VAULT_COVER_NOT_FOUND'
+    )
   } finally {
     closeDatabase(db)
     fs.rmSync(vaultsRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
