@@ -12,6 +12,12 @@ backend/  → Node.js + Fastify + JavaScript
 
 Requirements: Node.js 22.12 or newer and npm.
 
+### Key Features
+
+- **Account & Session Security**: Singleton owner authentication with Argon2id password hashing, optional 30-day Remember Me sessions, sliding-window login rate limiting, password visibility & Caps Lock indicators, and an in-app Account & Security modal for rotating passwords or revoking other active sessions.
+- **Vaults Hub**: Create new vaults directly on disk, drag-and-drop cards to organize custom vault order, pin favorites, organize by categories, filter by tags and live search, customize accent colors, upload cover photos, and view live note counts and recent modification timestamps across Cards, Categories, and Compact views.
+- **Obsidian-Inspired Markdown Workspace**: CodeMirror 6 Live Preview editor with inline image embeds (`![[image.png]]` and `![alt](path)`), paste/drop image attachment uploads, `[[` wikilink/embed and `#tag` inline autocomplete, formatting shortcuts, interactive YAML Properties panel, Backlinks, Outgoing Links, Document Outline, Vault Tags, Full-Text Search, interactive Graph View, Daily Notes, Bookmarks, Quick Switcher (`Ctrl/Cmd+O`), and Command Palette (`Ctrl/Cmd+P`).
+
 ### Configuration
 
 Storage locations are configured via environment variables:
