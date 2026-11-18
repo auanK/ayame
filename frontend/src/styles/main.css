@@ -69,7 +69,7 @@
   --reading-selection-bg: rgba(169, 154, 202, 0.24);
   --reading-focus-ring: rgba(169, 154, 202, 0.72);
   --reading-font-body: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
-  --reading-font-heading: Georgia, 'Times New Roman', serif;
+  --reading-font-heading: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
   --reading-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --reading-font-size: 1.03125rem;
   --reading-line-height: 1.7;
@@ -198,7 +198,7 @@ a:focus-visible {
 .ayame-wordmark {
   margin: 0;
   color: var(--ayame-text);
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
   font-size: 1.75rem;
   font-weight: 400;
   letter-spacing: 0.04em;

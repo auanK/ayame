@@ -883,8 +883,12 @@ const handleRawYamlInput = (event) => {
 <style scoped>
 .properties-panel {
   margin-bottom: 0.65rem;
+  padding: 0.45rem 0.6rem 0.5rem;
   padding-bottom: 0.5rem;
+  border: 1px solid var(--reading-border-subtle);
   border-bottom: 1px solid var(--reading-border-subtle);
+  border-radius: 7px;
+  background: rgba(27, 28, 37, 0.44);
 }
 
 .properties-header {
@@ -921,7 +925,7 @@ const handleRawYamlInput = (event) => {
 .properties-count {
   font-size: 0.7rem;
   padding: 0.05rem 0.38rem;
-  border-radius: 999px;
+  border-radius: 5px;
   background-color: var(--reading-tag-bg);
   border: 1px solid var(--reading-tag-border);
   color: var(--reading-tag-text);
@@ -1010,14 +1014,19 @@ const handleRawYamlInput = (event) => {
 }
 
 .property-type-select {
+  appearance: none;
   color-scheme: dark;
   width: 7rem;
   flex: 0 0 7rem;
-  padding: 0.25rem 0.4rem;
+  padding: 0.25rem 1.55rem 0.25rem 0.45rem;
   background-color: var(--reading-control-bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5 6 7.5l3-3' stroke='%23aaa6b8' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.45rem center;
+  background-size: 11px 11px;
   color: var(--reading-text);
   border: 1px solid var(--reading-control-border);
-  border-radius: 4px;
+  border-radius: 5px;
   font-size: 0.78rem;
   cursor: pointer;
 }
@@ -1089,7 +1098,7 @@ const handleRawYamlInput = (event) => {
   background-color: var(--reading-link-hover-bg);
   color: var(--reading-link);
   border: 1px solid rgba(140, 207, 240, 0.32);
-  border-radius: 999px;
+  border-radius: 5px;
   font-size: 0.75rem;
   cursor: pointer;
 }
@@ -1117,10 +1126,10 @@ const handleRawYamlInput = (event) => {
   display: inline-flex;
   align-items: center;
   gap: 0.2rem;
-  padding: 0.1rem 0.52rem;
+  padding: 0.1rem 0.48rem;
   background-color: var(--reading-tag-bg);
   border: 1px solid var(--reading-tag-border);
-  border-radius: 999px;
+  border-radius: 5px;
   font-size: 0.78rem;
   color: var(--reading-tag-text);
 }

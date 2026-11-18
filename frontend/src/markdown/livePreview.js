@@ -140,6 +140,148 @@ class ImageEmbedWidget extends WidgetType {
   }
 }
 
+const CALLOUT_LABELS = {
+  note: 'Note',
+  tip: 'Tip',
+  hint: 'Hint',
+  info: 'Info',
+  todo: 'Todo',
+  abstract: 'Abstract',
+  summary: 'Summary',
+  warning: 'Warning',
+  caution: 'Caution',
+  important: 'Important',
+  danger: 'Danger',
+  error: 'Error',
+  bug: 'Bug',
+  success: 'Success',
+  check: 'Check',
+  done: 'Done',
+  question: 'Question',
+  quote: 'Quote',
+  example: 'Example',
+}
+
+const createSvgIcon = (size, paths) => {
+  const ns = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(ns, 'svg')
+  svg.setAttribute('viewBox', '0 0 16 16')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '1.6')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  for (const d of paths) {
+    const p = document.createElementNS(ns, 'path')
+    p.setAttribute('d', d)
+    svg.appendChild(p)
+  }
+  return svg
+}
+
+const calloutIconPaths = (kind) => {
+  if (kind === 'tip' || kind === 'hint') {
+    return ['M8 2.2a3.6 3.6 0 0 0-2.1 6.5c.5.4.8.9.9 1.5h2.4c.1-.6.4-1.1.9-1.5A3.6 3.6 0 0 0 8 2.2Z', 'M6.5 12.2h3', 'M7 14h2']
+  }
+  if (kind === 'success' || kind === 'check' || kind === 'done') {
+    return ['M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12Z', 'M5.5 8.2 7.2 9.9l3.5-3.7']
+  }
+  if (kind === 'warning' || kind === 'caution' || kind === 'important') {
+    return ['M8 2.5 2.3 13h11.4L8 2.5Z', 'M8 6.4v3.4', 'M8 11.7h.01']
+  }
+  if (kind === 'danger' || kind === 'error' || kind === 'bug') {
+    return ['M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12Z', 'M5.8 5.8l4.4 4.4', 'M10.2 5.8l-4.4 4.4']
+  }
+  if (kind === 'info' || kind === 'todo' || kind === 'abstract' || kind === 'summary') {
+    return ['M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12Z', 'M8 7.5v3.6', 'M8 5.2h.01']
+  }
+  return ['M9.8 2.6a.9.9 0 0 1 1.3 0l2.3 2.3a.9.9 0 0 1 0 1.3L6.1 13.5H3.5v-2.6l6.3-8.3Z']
+}
+
+class ChecklistMarkerWidget extends WidgetType {
+  constructor(stateCharPos, checked) {
+    super()
+    this.stateCharPos = stateCharPos
+    this.checked = Boolean(checked)
+  }
+
+  eq(other) {
+    return (
+      other instanceof ChecklistMarkerWidget &&
+      other.stateCharPos === this.stateCharPos &&
+      other.checked === this.checked
+    )
+  }
+
+  toDOM() {
+    const marker = document.createElement('span')
+    marker.className = 'cm-live-checklist-marker'
+    marker.setAttribute('data-checklist-pos', String(this.stateCharPos))
+    marker.setAttribute('data-checklist-checked', this.checked ? 'true' : 'false')
+    marker.setAttribute('role', 'checkbox')
+    marker.setAttribute('aria-checked', this.checked ? 'true' : 'false')
+
+    const box = document.createElement('span')
+    box.className = this.checked ? 'cm-live-checkbox-box cm-live-checkbox-box--checked' : 'cm-live-checkbox-box'
+    box.setAttribute('aria-hidden', 'true')
+    if (this.checked) {
+      box.appendChild(createSvgIcon(11, ['M3.2 8.3 6.3 11.4 12.8 4.8']))
+    }
+    marker.appendChild(box)
+    return marker
+  }
+
+  ignoreEvent() {
+    return false
+  }
+}
+
+class BulletDotWidget extends WidgetType {
+  eq(other) {
+    return other instanceof BulletDotWidget
+  }
+
+  toDOM() {
+    const dot = document.createElement('span')
+    dot.className = 'cm-live-list-bullet cm-live-bullet-dot'
+    dot.setAttribute('aria-hidden', 'true')
+    dot.textContent = '•'
+    return dot
+  }
+}
+
+class CalloutBadgeWidget extends WidgetType {
+  constructor(calloutType, hasCustomTitle) {
+    super()
+    this.calloutType = calloutType
+    this.hasCustomTitle = Boolean(hasCustomTitle)
+  }
+
+  eq(other) {
+    return (
+      other instanceof CalloutBadgeWidget &&
+      other.calloutType === this.calloutType &&
+      other.hasCustomTitle === this.hasCustomTitle
+    )
+  }
+
+  toDOM() {
+    const badge = document.createElement('span')
+    badge.className = 'cm-live-callout-badge cm-live-callout-widget'
+    badge.setAttribute('data-callout-kind', this.calloutType)
+    badge.appendChild(createSvgIcon(14, calloutIconPaths(this.calloutType)))
+    const label = document.createElement('span')
+    label.textContent =
+      CALLOUT_LABELS[this.calloutType] ||
+      `${this.calloutType.charAt(0).toUpperCase()}${this.calloutType.slice(1)}`
+    badge.appendChild(label)
+    return badge
+  }
+}
+
 const rangeIntersectsSelection = (selection, from, to) =>
   selection.ranges.some((range) => range.from <= to && range.to >= from)
 
@@ -263,8 +405,12 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
       if (!inCodeBlock) {
         inCodeBlock = true
         codeFenceChar = fenceMarker
+        const codeLang = (fenceMatch[3] || '').trim().split(/\s+/)[0].slice(0, 18)
         decorations.push(
-          Decoration.line({ class: 'cm-live-codeblock-fence cm-live-codeblock-open' }).range(line.from)
+          Decoration.line({
+            class: 'cm-live-codeblock-fence cm-live-codeblock-open',
+            attributes: { 'data-code-lang': codeLang || 'code' },
+          }).range(line.from)
         )
         if (!lineHasCursor && line.to > line.from) {
           decorations.push(
@@ -327,9 +473,15 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
     if (/^\|.*\|\s*$/.test(text)) {
       activeCalloutType = null
       const isDelimiter = /^\|[\s:|-]+\|\s*$/.test(text)
+      const nextLineText = lineNum < doc.lines ? doc.line(lineNum + 1).text : ''
+      const isHeader = !isDelimiter && /^\|[\s:|-]+\|\s*$/.test(nextLineText)
       decorations.push(
         Decoration.line({
-          class: isDelimiter ? 'cm-live-table-row cm-live-table-delimiter' : 'cm-live-table-row',
+          class: isDelimiter
+            ? 'cm-live-table-row cm-live-table-delimiter'
+            : isHeader
+              ? 'cm-live-table-row cm-live-table-header'
+              : 'cm-live-table-row',
         }).range(line.from)
       )
       for (let i = 0; i < text.length; i++) {
@@ -378,12 +530,14 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
         const quotePrefixLen = calloutHeaderMatch[1].length
         const calloutTagLen = calloutHeaderMatch[2].length
         const calloutType = calloutHeaderMatch[3].toLowerCase()
+        const nextLineText = lineNum < doc.lines ? doc.line(lineNum + 1).text : ''
+        const isLastCalloutLine = !/^>\s?/.test(nextLineText)
         activeCalloutType = calloutType
         inlineStartOffset = quotePrefixLen + calloutTagLen
 
         decorations.push(
           Decoration.line({
-            class: `cm-live-blockquote cm-live-callout cm-live-callout--${calloutType} cm-live-callout-header`,
+            class: `cm-live-blockquote cm-live-callout cm-live-callout--${calloutType} cm-live-callout-header${isLastCalloutLine ? ' cm-live-callout-end' : ''}`,
             attributes: { 'data-callout-type': calloutType },
           }).range(line.from)
         )
@@ -394,17 +548,27 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
             Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.from + quotePrefixLen)
           )
         }
-        decorations.push(
-          Decoration.mark({ class: 'cm-live-callout-badge' }).range(
-            line.from + quotePrefixLen,
-            line.from + quotePrefixLen + calloutTagLen
+        if (!lineHasCursor) {
+          decorations.push(
+            Decoration.replace({
+              widget: new CalloutBadgeWidget(calloutType, Boolean(calloutHeaderMatch[4]?.trim())),
+            }).range(line.from + quotePrefixLen, line.from + quotePrefixLen + calloutTagLen)
           )
-        )
+        } else {
+          decorations.push(
+            Decoration.mark({ class: 'cm-live-callout-badge' }).range(
+              line.from + quotePrefixLen,
+              line.from + quotePrefixLen + calloutTagLen
+            )
+          )
+        }
       } else if (quoteMatch) {
         const prefixLen = quoteMatch[1].length
         inlineStartOffset = prefixLen
+        const nextLineText = lineNum < doc.lines ? doc.line(lineNum + 1).text : ''
+        const isLastCalloutLine = Boolean(activeCalloutType) && !/^>\s?/.test(nextLineText)
         const calloutClasses = activeCalloutType
-          ? ` cm-live-callout cm-live-callout--${activeCalloutType}`
+          ? ` cm-live-callout cm-live-callout--${activeCalloutType}${isLastCalloutLine ? ' cm-live-callout-end' : ''}`
           : ''
         decorations.push(
           Decoration.line({ class: `cm-live-blockquote${calloutClasses}` }).range(line.from)
@@ -419,11 +583,12 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
       } else {
         activeCalloutType = null
         // 6. Checklists
-        const checkMatch = text.match(/^(\s*[-*+]\s+\[)([ xX])(\]\s+)(.*)$/)
+        const checkMatch = text.match(/^(\s*)([-*+]\s+\[)([ xX])(\]\s+)(.*)$/)
         if (checkMatch) {
-          const preBracket = checkMatch[1]
-          const stateChar = checkMatch[2]
-          const postBracket = checkMatch[3]
+          const indentLen = checkMatch[1].length
+          const preBracket = checkMatch[1] + checkMatch[2]
+          const stateChar = checkMatch[3]
+          const postBracket = checkMatch[4]
           const prefixLen = preBracket.length + 1 + postBracket.length
           const stateCharPos = line.from + preBracket.length
           const checked = stateChar.toLowerCase() === 'x'
@@ -434,17 +599,25 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
               class: `cm-live-list-item cm-live-checklist-item${checked ? ' cm-live-checklist-checked' : ''}`,
             }).range(line.from)
           )
-          decorations.push(
-            Decoration.mark({
-              class: 'cm-live-checklist-marker',
-              attributes: {
-                'data-checklist-pos': String(stateCharPos),
-                'data-checklist-checked': checked ? 'true' : 'false',
-                role: 'checkbox',
-                'aria-checked': checked ? 'true' : 'false',
-              },
-            }).range(line.from, line.from + prefixLen)
-          )
+          if (!lineHasCursor) {
+            decorations.push(
+              Decoration.replace({
+                widget: new ChecklistMarkerWidget(stateCharPos, checked),
+              }).range(line.from + indentLen, line.from + prefixLen)
+            )
+          } else {
+            decorations.push(
+              Decoration.mark({
+                class: 'cm-live-checklist-marker',
+                attributes: {
+                  'data-checklist-pos': String(stateCharPos),
+                  'data-checklist-checked': checked ? 'true' : 'false',
+                  role: 'checkbox',
+                  'aria-checked': checked ? 'true' : 'false',
+                },
+              }).range(line.from + indentLen, line.from + prefixLen)
+            )
+          }
           if (line.from + prefixLen < line.to) {
             decorations.push(
               Decoration.mark({ class: 'cm-live-checklist-text' }).range(
@@ -455,19 +628,29 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
           }
         } else {
           // 7. Unordered lists
-          const ulMatch = text.match(/^(\s*[-*+]\s+)(.*)$/)
+          const ulMatch = text.match(/^(\s*)([-*+]\s+)(.*)$/)
           if (ulMatch) {
-            const prefixLen = ulMatch[1].length
+            const indentLen = ulMatch[1].length
+            const prefixLen = indentLen + ulMatch[2].length
             inlineStartOffset = prefixLen
             decorations.push(
               Decoration.line({ class: 'cm-live-list-item cm-live-ul-item' }).range(line.from)
             )
-            decorations.push(
-              Decoration.mark({ class: 'cm-live-list-bullet' }).range(
-                line.from,
-                line.from + prefixLen
+            if (!lineHasCursor) {
+              decorations.push(
+                Decoration.replace({ widget: new BulletDotWidget() }).range(
+                  line.from + indentLen,
+                  line.from + prefixLen
+                )
               )
-            )
+            } else {
+              decorations.push(
+                Decoration.mark({ class: 'cm-live-list-bullet' }).range(
+                  line.from + indentLen,
+                  line.from + prefixLen
+                )
+              )
+            }
           } else {
             // 8. Ordered lists
             const olMatch = text.match(/^(\s*\d+\.\s+)(.*)$/)

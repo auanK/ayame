@@ -40,7 +40,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import * as vaultApi from '../vaults/api.js'
 import { findHeadingOffset } from './links.js'
 import { initialMarkdownH1 } from './render.js'
-import { splitFrontmatter, updateBodyInMarkdown } from './properties.js'
+import { parseNoteDocument, splitFrontmatter, updateBodyInMarkdown } from './properties.js'
 import MarkdownEditor from './MarkdownEditor.vue'
 import PropertiesPanel from './PropertiesPanel.vue'
 
@@ -60,6 +60,10 @@ const props = defineProps({
   anchor: { type: String, default: null },
   initialDocument: { type: Object, default: null },
   relocating: { type: Boolean, default: false },
+  vaultName: { type: String, default: '' },
+  accentColor: { type: String, default: '' },
+  bookmarked: { type: Boolean, default: false },
+  backlinkCount: { type: Number, default: 0 },
 })
 
 const emit = defineEmits([
@@ -72,6 +76,9 @@ const emit = defineEmits([
   'content-saved',
   'not-found',
   'attachment-uploaded',
+  'toggle-bookmark',
+  'open-backlinks',
+  'reveal-in-explorer',
 ])
 
 const editorPreferences = ref(loadEditorPreferences())
@@ -169,6 +176,57 @@ const wordStats = computed(() => {
   const words = matches ? matches.length : 0
   const readingMinutes = words === 0 ? 0 : Math.max(1, Math.ceil(words / 200))
   return { words, readingMinutes }
+})
+
+const folderTrail = computed(() => props.path.split('/').slice(0, -1).filter(Boolean))
+
+const parsedDocMeta = computed(() => parseNoteDocument(draft.value, props.knownPropertyTypes))
+
+const propertyCount = computed(() =>
+  parsedDocMeta.value.valid ? parsedDocMeta.value.properties.length : 0
+)
+
+const frontmatterSummary = computed(() => {
+  if (!parsedDocMeta.value.valid || !parsedDocMeta.value.hasFrontmatter) {
+    return { tags: [], items: [] }
+  }
+  const tags = []
+  const items = []
+  const stemNorm = noteStem.value.trim().toLowerCase()
+  for (const prop of parsedDocMeta.value.properties) {
+    const keyLower = String(prop.key || '').toLowerCase()
+    if (keyLower === 'tags' && Array.isArray(prop.value)) {
+      for (const rawTag of prop.value) {
+        const clean = String(rawTag || '').trim().replace(/^#+/, '')
+        if (clean && !tags.includes(clean)) tags.push(clean)
+      }
+      continue
+    }
+    if (keyLower === 'title' && String(prop.value ?? '').trim().toLowerCase() === stemNorm) {
+      continue
+    }
+    if (prop.value === null || prop.value === undefined || prop.value === '') continue
+    const formatted = Array.isArray(prop.value)
+      ? prop.value.filter(Boolean).join(', ')
+      : typeof prop.value === 'boolean'
+        ? prop.value ? 'yes' : 'no'
+        : String(prop.value).trim()
+    if (!formatted) continue
+    items.push({ key: prop.key, value: formatted })
+  }
+  return { tags, items: items.slice(0, 3) }
+})
+
+const ambientGlowStyle = computed(() => {
+  const color = String(props.accentColor || '').trim()
+  if (/^#[0-9a-f]{6}$/i.test(color)) {
+    return {
+      background: `radial-gradient(ellipse 68% 130px at 50% 0%, ${color}14 0%, transparent 100%)`,
+    }
+  }
+  return {
+    background: 'radial-gradient(ellipse 68% 130px at 50% 0%, rgba(169, 154, 202, 0.065) 0%, transparent 100%)',
+  }
 })
 
 const handleUploadImage = async (file) => {
@@ -950,6 +1008,12 @@ defineExpose({
     </div>
 
     <main class="viewer-body">
+      <div
+        v-if="hasConfirmedContent && !loading && !error"
+        class="viewer-ambient-glow"
+        :style="ambientGlowStyle"
+        aria-hidden="true"
+      />
       <div v-if="loading" class="state-container" data-testid="markdown-loading">
         <div class="loading-spinner"></div>
         <p>Loading note...</p>
@@ -1076,6 +1140,73 @@ defineExpose({
           class="viewer-document-container"
           :class="{ 'viewer-document-container--readable': editorPreferences.readableLineLength }"
         >
+          <div class="note-context-bar" data-testid="note-context-bar">
+            <button
+              v-if="vaultName || folderTrail.length > 0"
+              type="button"
+              class="note-breadcrumbs"
+              data-testid="note-breadcrumbs"
+              title="Reveal note in explorer"
+              @click="emit('reveal-in-explorer')"
+            >
+              <span v-if="vaultName" class="note-crumb-seg">{{ vaultName }}</span>
+              <span v-if="vaultName" class="note-crumb-sep" aria-hidden="true">›</span>
+              <template v-for="(seg, idx) in folderTrail" :key="`${idx}-${seg}`">
+                <span class="note-crumb-seg">{{ seg }}</span>
+                <span class="note-crumb-sep" aria-hidden="true">›</span>
+              </template>
+              <span class="note-crumb-current">{{ noteStem }}</span>
+            </button>
+            <span v-else class="note-breadcrumbs note-breadcrumbs--static">
+              <span class="note-crumb-current">{{ noteStem }}</span>
+            </span>
+
+            <div class="note-quick-tools">
+              <button
+                type="button"
+                class="note-tool-btn"
+                :class="{ 'note-tool-btn--active': editorPreferences.propertiesInDocument !== 'hidden' }"
+                data-testid="note-properties-toggle"
+                title="Cycle note properties view (Ctrl+;)"
+                @click="cyclePropertiesMode"
+              >
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                  <path d="M2.5 4h11M2.5 8h7.5M2.5 12h9" stroke-linecap="round" />
+                </svg>
+                <span>Properties</span>
+                <span v-if="propertyCount > 0" class="note-tool-count">{{ propertyCount }}</span>
+              </button>
+              <button
+                type="button"
+                class="note-tool-btn note-tool-btn--icon"
+                :class="{ 'note-tool-btn--active': !editorPreferences.readableLineLength }"
+                data-testid="note-width-toggle"
+                :title="editorPreferences.readableLineLength ? 'Switch to full width' : 'Switch to readable width'"
+                aria-label="Toggle readable line length"
+                @click="toggleReadableLineLength"
+              >
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                  <path d="M2.5 3.5v9M13.5 3.5v9M5.5 8h5M7 6.5 5.5 8 7 9.5M9 6.5 10.5 8 9 9.5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <button
+                v-if="vaultName"
+                type="button"
+                class="note-tool-btn note-tool-btn--icon"
+                :class="{ 'note-tool-btn--bookmarked': bookmarked }"
+                data-testid="note-bookmark-button"
+                :aria-pressed="bookmarked ? 'true' : 'false'"
+                :title="bookmarked ? 'Remove bookmark' : 'Bookmark note'"
+                aria-label="Toggle bookmark"
+                @click="emit('toggle-bookmark')"
+              >
+                <svg viewBox="0 0 16 16" width="12" height="12" :fill="bookmarked ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                  <path d="M8 2.1l1.8 3.6 4 .6-2.9 2.8.7 4L8 11.2 4.4 13.1l.7-4-2.9-2.8 4-.6L8 2.1Z" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
           <div v-if="editorPreferences.inlineTitle && !inlineTitleDuplicatesHeading" class="note-heading-row">
             <input
               type="text"
@@ -1087,6 +1218,43 @@ defineExpose({
               @change="handleTitleRename($event.target.value)"
               @keydown.enter.prevent="$event.target.blur()"
             />
+          </div>
+
+          <div
+            v-if="
+              editorPreferences.propertiesInDocument === 'hidden' &&
+              !propertyEditPending &&
+              (frontmatterSummary.tags.length > 0 || frontmatterSummary.items.length > 0)
+            "
+            class="note-frontmatter-strip"
+            data-testid="note-frontmatter-strip"
+          >
+            <button
+              v-for="tag in frontmatterSummary.tags"
+              :key="`fm-tag-${tag}`"
+              type="button"
+              class="note-fm-tag"
+              data-testid="frontmatter-tag-chip"
+              @click="emit('select-tag', tag)"
+            >
+              #{{ tag }}
+            </button>
+            <span
+              v-for="item in frontmatterSummary.items"
+              :key="`fm-meta-${item.key}`"
+              class="note-fm-meta"
+            >
+              <span class="note-fm-key">{{ item.key }}</span>
+              <span class="note-fm-val">{{ item.value }}</span>
+            </span>
+            <button
+              type="button"
+              class="note-fm-edit"
+              data-testid="frontmatter-strip-edit"
+              @click="setPropertiesMode('visible')"
+            >
+              Edit
+            </button>
           </div>
 
           <PropertiesPanel
@@ -1126,10 +1294,23 @@ defineExpose({
     </main>
     <div
       v-if="hasConfirmedContent && !loading && !error"
-      class="editor-word-count"
-      data-testid="markdown-word-count"
+      class="editor-bottom-hud"
     >
-      {{ wordStats.words }} {{ wordStats.words === 1 ? 'word' : 'words' }} · {{ wordStats.readingMinutes }} min read
+      <button
+        v-if="backlinkCount > 0"
+        type="button"
+        class="editor-hud-pill editor-hud-pill--interactive"
+        data-testid="note-backlinks-hud"
+        @click="emit('open-backlinks')"
+      >
+        {{ backlinkCount }} {{ backlinkCount === 1 ? 'backlink' : 'backlinks' }}
+      </button>
+      <div
+        class="editor-word-count"
+        data-testid="markdown-word-count"
+      >
+        {{ wordStats.words }} {{ wordStats.words === 1 ? 'word' : 'words' }} · {{ wordStats.readingMinutes }} min read
+      </div>
     </div>
   </div>
 </template>
@@ -1256,6 +1437,22 @@ defineExpose({
   overflow-y: auto;
   padding: 0;
   background: var(--reading-background);
+  position: relative;
+}
+
+.viewer-ambient-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 130px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.content-container {
+  position: relative;
+  z-index: 1;
 }
 
 .viewer-document-container {
@@ -1343,8 +1540,189 @@ defineExpose({
   margin-top: 0.5rem;
 }
 
+.note-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 26px;
+  margin-bottom: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.note-breadcrumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.14rem 0.42rem;
+  margin-left: -0.42rem;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--reading-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.note-breadcrumbs:hover {
+  background: rgba(169, 154, 202, 0.08);
+  color: var(--reading-heading-secondary);
+}
+
+.note-breadcrumbs--static {
+  cursor: default;
+}
+
+.note-breadcrumbs--static:hover {
+  background: transparent;
+  color: var(--reading-muted);
+}
+
+.note-crumb-seg {
+  color: var(--reading-syntax);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-crumb-sep {
+  color: var(--reading-syntax);
+}
+
+.note-crumb-current {
+  color: var(--reading-muted);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-quick-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.note-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  height: 24px;
+  padding: 0 0.48rem;
+  border: 1px solid var(--reading-border-subtle);
+  border-radius: 5px;
+  background: rgba(27, 28, 37, 0.55);
+  color: var(--reading-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.note-tool-btn--icon {
+  padding: 0 0.4rem;
+}
+
+.note-tool-btn:hover {
+  border-color: var(--reading-accent);
+  color: var(--reading-heading);
+  background: var(--ayame-hover, #242530);
+}
+
+.note-tool-btn--active {
+  border-color: rgba(169, 154, 202, 0.45);
+  color: var(--ayame-lavender, #d4cbe4);
+  background: rgba(169, 154, 202, 0.14);
+}
+
+.note-tool-btn--bookmarked {
+  border-color: rgba(230, 195, 135, 0.5);
+  color: #e6c387;
+  background: rgba(230, 195, 135, 0.1);
+}
+
+.note-tool-count {
+  padding: 0 0.28rem;
+  border-radius: 4px;
+  background: rgba(169, 154, 202, 0.14);
+  color: var(--reading-tag-text);
+  font-size: 0.68rem;
+}
+
 .note-heading-row {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.note-frontmatter-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--reading-border-subtle);
+}
+
+.note-fm-tag {
+  padding: 0.14rem 0.46rem;
+  border: 1px solid var(--reading-tag-border);
+  border-radius: 5px;
+  background: var(--reading-tag-bg);
+  color: var(--reading-tag-text);
+  font: inherit;
+  font-size: 0.73rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.note-fm-tag:hover {
+  border-color: var(--reading-accent);
+  background: rgba(169, 154, 202, 0.2);
+}
+
+.note-fm-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.14rem 0.46rem;
+  border: 1px solid var(--reading-border-subtle);
+  border-radius: 5px;
+  background: rgba(27, 28, 37, 0.45);
+  font-size: 0.72rem;
+}
+
+.note-fm-key {
+  color: var(--reading-syntax);
+}
+
+.note-fm-val {
+  color: var(--reading-heading-secondary);
+}
+
+.note-fm-edit {
+  margin-left: auto;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--reading-syntax);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.note-fm-edit:hover {
+  color: var(--reading-heading);
+  border-color: var(--reading-border);
+  background: rgba(27, 28, 37, 0.65);
 }
 
 .note-heading-title {
@@ -1372,19 +1750,43 @@ defineExpose({
   border-radius: 3px;
 }
 
-.editor-word-count {
+.editor-bottom-hud {
   position: absolute;
   bottom: 0.65rem;
   right: 1.25rem;
   z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.editor-hud-pill,
+.editor-word-count {
   font-size: 0.72rem;
   color: var(--reading-syntax);
-  background: var(--reading-background-elevated);
+  background: rgba(27, 28, 37, 0.9);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--reading-border);
-  border-radius: 999px;
-  padding: 0.14rem 0.55rem;
-  opacity: 0.85;
-  pointer-events: none;
+  border-radius: 5px;
+  padding: 0.16rem 0.52rem;
+  opacity: 0.92;
   user-select: none;
+}
+
+.editor-word-count {
+  pointer-events: none;
+}
+
+.editor-hud-pill--interactive {
+  font-family: inherit;
+  color: var(--reading-muted);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.editor-hud-pill--interactive:hover {
+  color: var(--reading-tag-text);
+  border-color: var(--reading-accent);
+  background: rgba(169, 154, 202, 0.12);
 }
 </style>

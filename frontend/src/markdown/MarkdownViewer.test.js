@@ -1383,5 +1383,42 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(statsCalls[0][2]).toMatchObject({ content: '---\ntags: [draft]\n---\nSingleWord' })
       wrapper.unmount()
     })
+
+    it('renders note context bar and frontmatter strip without dirtied drafts, cycling properties and emitting tag filters', async () => {
+      const content = '---\ntags:\n  - lore\nstatus: active\n---\n\n# Compendium\n\nBody text.'
+      api.getVaultMarkdown.mockResolvedValueOnce({
+        directory: 'Isekai',
+        path: 'Kingdoms/Compendium.md',
+        content,
+        revision,
+      })
+
+      const wrapper = mount(MarkdownViewer, {
+        props: {
+          directory: 'Isekai',
+          path: 'Kingdoms/Compendium.md',
+          vaultName: 'Isekai Worldbuilding',
+          bookmarked: true,
+          backlinkCount: 2,
+        },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="note-breadcrumbs"]').text()).toContain('Isekai Worldbuilding')
+      expect(wrapper.find('[data-testid="note-breadcrumbs"]').text()).toContain('Kingdoms')
+      expect(wrapper.find('[data-testid="note-frontmatter-strip"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="frontmatter-tag-chip"]').text()).toBe('#lore')
+      expect(wrapper.find('[data-testid="note-backlinks-hud"]').text()).toBe('2 backlinks')
+
+      await wrapper.find('[data-testid="frontmatter-tag-chip"]').trigger('click')
+      expect(wrapper.emitted('select-tag')?.[0]).toEqual(['lore'])
+
+      await wrapper.find('[data-testid="note-properties-toggle"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.findComponent(PropertiesPanel).exists()).toBe(true)
+      expect(wrapper.find('[data-testid="note-frontmatter-strip"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="markdown-dirty-indicator"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
   })
 })

@@ -2819,7 +2819,11 @@ defineExpose({
 </script>
 
 <template>
-  <section class="vault-browser workspace-shell" data-testid="vault-browser">
+  <section
+    class="vault-browser workspace-shell"
+    data-testid="vault-browser"
+    :style="{ '--vault-accent': vault.accentColor || '#a99aca' }"
+  >
     <!-- Minimal Ayame Workspace Topbar -->
     <header class="workspace-topbar">
       <div class="workspace-topbar-left">
@@ -2832,7 +2836,11 @@ defineExpose({
           title="Toggle file explorer"
           @click="layout.explorerOpen = !layout.explorerOpen; persistLayout()"
         >
-          Explorer
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+            <rect x="2" y="2.5" width="12" height="11" rx="1.6" />
+            <path d="M6 2.5v11" />
+          </svg>
+          <span>Explorer</span>
         </button>
 
         <button
@@ -2857,6 +2865,12 @@ defineExpose({
             title="Vault menu"
             @click.stop="showVaultMenu = !showVaultMenu"
           >
+            <span
+              v-if="vault.accentColor"
+              class="vault-accent-dot"
+              :style="{ backgroundColor: vault.accentColor }"
+              aria-hidden="true"
+            />
             <span class="vault-name">{{ vault.name }}</span>
           </button>
 
@@ -3038,12 +3052,41 @@ defineExpose({
       <div class="workspace-topbar-actions">
         <button
           type="button"
+          class="workspace-text-button workspace-text-button--icon"
+          data-testid="topbar-quick-switcher-button"
+          title="Quick switcher (Ctrl+O)"
+          aria-label="Quick switcher"
+          @click="openQuickSwitcherModal"
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.2" />
+            <path d="m10.2 10.2 3.3 3.3" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="workspace-text-button workspace-text-button--icon"
+          data-testid="topbar-daily-note-button"
+          title="Today's daily note"
+          aria-label="Today's daily note"
+          @click="openTodayDailyNote"
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+            <rect x="2.2" y="3.2" width="11.6" height="10.3" rx="1.6" />
+            <path d="M2.2 6.4h11.6M5.5 2v2.4M10.5 2v2.4" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
           class="workspace-text-button"
           data-testid="command-palette-button"
           title="Commands (Ctrl+P)"
           @click="openCommandPaletteModal"
         >
-          Commands
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+            <path d="M5.5 5.2a1.6 1.6 0 1 1 0 3.2h5a1.6 1.6 0 1 1 0-3.2M5.5 10.8a1.6 1.6 0 1 0 0-3.2m5 3.2a1.6 1.6 0 1 0 0-3.2M6.4 4.8v6.4m3.2-6.4v6.4" stroke-linecap="round" />
+          </svg>
+          <span>Commands</span>
         </button>
         <button
           type="button"
@@ -3054,7 +3097,11 @@ defineExpose({
           title="Toggle contextual panel"
           @click="layout.contextOpen = !layout.contextOpen; persistLayout()"
         >
-          Panel
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+            <rect x="2" y="2.5" width="12" height="11" rx="1.6" />
+            <path d="M10 2.5v11" />
+          </svg>
+          <span>Panel</span>
         </button>
       </div>
     </header>
@@ -3366,6 +3413,9 @@ defineExpose({
                 :title="bmPath"
                 @click="selectNote(bmPath)"
               >
+                <svg class="tree-item-icon tree-bookmark-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+                  <path d="M8 2.1l1.8 3.6 4 .6-2.9 2.8.7 4L8 11.2 4.4 13.1l.7-4-2.9-2.8 4-.6L8 2.1Z" />
+                </svg>
                 <span class="tree-label">{{ stripMarkdownExtension(bmPath.split('/').pop()) }}</span>
               </button>
               <button
@@ -3505,6 +3555,9 @@ defineExpose({
                     @click="toggleFolder(row.entry.path)"
                   >
                     <span class="tree-chevron" aria-hidden="true">{{ row.isExpanded ? '▾' : '▸' }}</span>
+                    <svg class="tree-item-icon tree-folder-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+                      <path d="M2 4.3A1.5 1.5 0 0 1 3.5 2.8h3l1.3 1.5h4.7A1.5 1.5 0 0 1 14 5.8v5.9a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.7V4.3Z" stroke-linejoin="round" />
+                    </svg>
                     <span class="tree-label">{{ row.entry.name }}</span>
                   </button>
                   <button
@@ -3591,7 +3644,10 @@ defineExpose({
                   @click="openFile(row.entry)"
                   @click.middle.prevent="openFile(row.entry, { newTab: true })"
                 >
-                  <span class="tree-chevron tree-chevron--spacer" aria-hidden="true" />
+                  <svg class="tree-item-icon tree-note-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+                    <path d="M4 2.2h5.2l2.8 2.8v8.8H4V2.2Z" stroke-linejoin="round" />
+                    <path d="M9 2.2V5h3" stroke-linejoin="round" />
+                  </svg>
                   <span class="tree-label">{{ stripMarkdownExtension(row.entry.name) }}</span>
                 </button>
                 <button
@@ -3697,6 +3753,10 @@ defineExpose({
           ref="viewerRef"
           :directory="vault.directory"
           :path="selectedFile"
+          :vault-name="vault.name"
+          :accent-color="vault.accentColor || ''"
+          :bookmarked="isBookmarked(selectedFile)"
+          :backlink-count="activeBacklinks.linked.length"
           :known-files="knownMarkdownFiles"
           :aliases-by-file="vaultIndexData.aliasesByFile"
           :index-complete="vaultIndexData.complete"
@@ -3714,6 +3774,9 @@ defineExpose({
           @rename-note="handleRenameFromNoteTitle"
           @content-saved="handleContentSaved"
           @attachment-uploaded="handleAttachmentUploaded"
+          @toggle-bookmark="selectedFile && toggleBookmark(selectedFile)"
+          @open-backlinks="layout.contextOpen = true; rightPanelTab = 'backlinks'; persistLayout()"
+          @reveal-in-explorer="revealActiveFile"
           @not-found="handleNoteNotFound"
           @unauthorized="emit('unauthorized')"
         />
@@ -3751,8 +3814,11 @@ defineExpose({
           data-testid="workspace-empty-state"
         >
           <div class="workspace-empty-card">
+            <AyameMark :size="30" />
             <h3>No note open</h3>
-            <p>Select a note in the explorer on the left or create a new one to get started.</p>
+            <p class="workspace-empty-subtitle">
+              {{ vault.name }} · {{ knownMarkdownFiles.length }} {{ knownMarkdownFiles.length === 1 ? 'note' : 'notes' }} · {{ vaultIndexData.allTags.length }} {{ vaultIndexData.allTags.length === 1 ? 'tag' : 'tags' }}
+            </p>
             <div class="workspace-empty-actions">
               <button
                 type="button"
@@ -3760,6 +3826,48 @@ defineExpose({
                 @click="startCreate('note')"
               >
                 Create new note
+              </button>
+              <button
+                type="button"
+                class="btn-secondary btn-compact"
+                data-testid="welcome-daily-note-button"
+                @click="openTodayDailyNote"
+              >
+                Daily note
+              </button>
+              <button
+                type="button"
+                class="btn-secondary btn-compact"
+                data-testid="welcome-quick-switcher-button"
+                @click="openQuickSwitcherModal"
+              >
+                Quick switcher
+              </button>
+              <button
+                type="button"
+                class="btn-secondary btn-compact"
+                data-testid="welcome-graph-button"
+                @click="openGraphView"
+              >
+                Open graph
+              </button>
+            </div>
+            <div v-if="knownMarkdownFiles.length > 0" class="workspace-empty-recent">
+              <p class="workspace-empty-section-label">Notes in this vault</p>
+              <button
+                v-for="notePath in knownMarkdownFiles.slice(0, 4)"
+                :key="`welcome-${notePath}`"
+                type="button"
+                class="workspace-empty-note-item"
+                data-testid="welcome-recent-note"
+                @click="selectNote(notePath)"
+              >
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+                  <path d="M4 2.2h5.2l2.8 2.8v8.8H4V2.2Z" stroke-linejoin="round" />
+                  <path d="M9 2.2V5h3" stroke-linejoin="round" />
+                </svg>
+                <span class="workspace-empty-note-name">{{ stripMarkdownExtension(notePath.split('/').pop()) }}</span>
+                <span v-if="notePath.includes('/')" class="workspace-empty-note-dir">{{ notePath.slice(0, notePath.lastIndexOf('/')) }}</span>
               </button>
             </div>
           </div>
@@ -4459,6 +4567,7 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.35rem;
   height: 28px;
   min-height: 28px;
   padding: 0 0.55rem;
@@ -4472,6 +4581,11 @@ defineExpose({
   white-space: nowrap;
   user-select: none;
   transition: all 0.12s ease;
+}
+
+.workspace-text-button--icon {
+  width: 28px;
+  padding: 0;
 }
 
 .workspace-text-button:hover,
@@ -4529,6 +4643,13 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vault-accent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .vault-dropdown-menu {
@@ -4953,9 +5074,27 @@ defineExpose({
 }
 
 .tree-file--active {
-  background: rgba(169, 154, 202, 0.16);
+  background: rgba(169, 154, 202, 0.14);
+  box-shadow: inset 2px 0 0 var(--vault-accent, #a99aca);
   color: var(--ayame-lavender, #d4cbe4);
   font-weight: 500;
+}
+
+.tree-item-icon {
+  flex-shrink: 0;
+  color: var(--ayame-text-muted, #aaa6b8);
+  opacity: 0.82;
+}
+
+.tree-folder--selected .tree-folder-icon,
+.tree-file--active .tree-note-icon {
+  color: var(--vault-accent, var(--ayame-lavender, #d4cbe4));
+  opacity: 1;
+}
+
+.tree-bookmark-icon {
+  color: #e6c387;
+  opacity: 0.9;
 }
 
 .tree-file--unsupported {
@@ -5138,6 +5277,7 @@ defineExpose({
 .workspace-tab-item--active {
   background: var(--ayame-background, #111218);
   border-color: var(--ayame-border, #34323f);
+  box-shadow: inset 0 2px 0 var(--vault-accent, #a99aca);
   color: var(--ayame-text, #eeeaf3);
   font-weight: 500;
 }
@@ -5262,18 +5402,19 @@ defineExpose({
   flex-direction: column;
   width: 100%;
   text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 0.35rem 0.45rem;
-  margin-bottom: 0.2rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(238, 234, 243, 0.06);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+  margin-bottom: 0.35rem;
   color: var(--ayame-text, #eeeaf3);
   cursor: pointer;
-  transition: background-color 0.1s ease;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 
 .panel-list-item:hover {
   background: var(--ayame-hover, #242530);
+  border-color: rgba(169, 154, 202, 0.35);
 }
 
 .panel-item-title {
@@ -5627,7 +5768,12 @@ defineExpose({
 }
 
 .workspace-empty-card {
-  max-width: 420px;
+  width: 100%;
+  max-width: 500px;
+  padding: 1.75rem 1.5rem 1.5rem;
+  border: 1px solid var(--ayame-border, #34323f);
+  border-radius: 10px;
+  background: rgba(27, 28, 37, 0.55);
   text-align: center;
   color: var(--ayame-text-muted, #aaa6b8);
   display: flex;
@@ -5637,19 +5783,82 @@ defineExpose({
 }
 
 .workspace-empty-card h3 {
-  margin: 0;
+  margin: 0.25rem 0 0;
   color: var(--ayame-text, #eeeaf3);
   font-size: 1.15rem;
+  font-family: var(--reading-font-heading);
+  font-weight: 600;
 }
 
-.workspace-empty-card p {
+.workspace-empty-subtitle {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: 0.84rem;
   line-height: 1.5;
+  color: var(--ayame-text-muted, #aaa6b8);
 }
 
 .workspace-empty-actions {
-  margin-top: 0.5rem;
+  margin-top: 0.65rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.workspace-empty-recent {
+  width: 100%;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(52, 50, 63, 0.65);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  text-align: left;
+}
+
+.workspace-empty-section-label {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ayame-text-muted, #aaa6b8);
+}
+
+.workspace-empty-note-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  border: 1px solid rgba(238, 234, 243, 0.06);
+  border-radius: 6px;
+  background: rgba(17, 18, 24, 0.45);
+  color: var(--ayame-text, #eeeaf3);
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.workspace-empty-note-item:hover {
+  background: var(--ayame-hover, #242530);
+  border-color: rgba(169, 154, 202, 0.45);
+}
+
+.workspace-empty-note-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-empty-note-dir {
+  margin-left: auto;
+  color: var(--ayame-text-muted, #aaa6b8);
+  font-size: 0.74rem;
+  white-space: nowrap;
 }
 
 /* Buttons */

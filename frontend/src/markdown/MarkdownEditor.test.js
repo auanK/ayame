@@ -484,4 +484,33 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     expect(uploadImage).toHaveBeenCalledWith(file)
     expect(wrapper.vm.getText()).toBe('Shot: ![[Attachments/shot.png]]')
   })
+
+  it('13. renders tactile Live Preview widgets for checklists, bullets, and callout badges off-cursor', async () => {
+    const doc = [
+      '- Bullet item',
+      '- [x] Done task',
+      '> [!TIP] Helpful hint',
+      '> Details here.',
+      'Tail cursor.',
+    ].join('\n')
+
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: doc,
+        sourcePath: 'README.md',
+        knownFiles: ['README.md'],
+      },
+    })
+    wrapper.vm.setCursor(doc.length)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.cm-live-bullet-dot').text()).toBe('•')
+    expect(wrapper.find('.cm-live-checkbox-box--checked').exists()).toBe(true)
+    expect(wrapper.find('.cm-live-callout-widget').text()).toContain('Tip')
+    expect(wrapper.find('.cm-live-callout-end').exists()).toBe(true)
+
+    await wrapper.find('.cm-live-checklist-marker').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.getText()).toContain('- [ ] Done task')
+  })
 })

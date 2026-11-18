@@ -886,8 +886,9 @@ defineExpose({
   font-size: 1.75rem;
   font-weight: 600;
   line-height: 1.25;
-  border-bottom: 1px solid var(--reading-border);
-  margin-bottom: 0.32rem;
+  padding-bottom: 0.28rem;
+  border-bottom: 1px solid var(--reading-border-subtle);
+  margin-bottom: 0.36rem;
 }
 
 :deep(.cm-live-h2) {
@@ -895,9 +896,8 @@ defineExpose({
   font-size: 1.38rem;
   font-weight: 600;
   line-height: 1.3;
-  padding-top: 0.65rem;
-  border-bottom: 1px solid var(--reading-border-subtle);
-  margin-bottom: 0.24rem;
+  padding-top: 0.72rem;
+  margin-bottom: 0.2rem;
 }
 
 :deep(.cm-live-h3) {
@@ -960,9 +960,44 @@ defineExpose({
   padding-inline: 0.85rem;
 }
 
+:deep(.cm-live-codeblock-open) {
+  position: relative;
+  border: 1px solid var(--reading-border);
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  padding-top: 0.24rem;
+  padding-bottom: 0.08rem;
+  margin-top: 0.35rem;
+  line-height: 1.15;
+}
+
+:deep(.cm-live-codeblock-open::after) {
+  content: attr(data-code-lang);
+  position: absolute;
+  right: 0.75rem;
+  top: 0.28rem;
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--reading-syntax);
+  pointer-events: none;
+}
+
+:deep(.cm-live-codeblock-close) {
+  border: 1px solid var(--reading-border);
+  border-top: none;
+  border-radius: 0 0 7px 7px;
+  padding-top: 0;
+  padding-bottom: 0.22rem;
+  margin-bottom: 0.35rem;
+  line-height: 0.65;
+}
+
 :deep(.cm-live-codeblock-fence-hidden) {
   color: var(--reading-syntax);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
+  opacity: 0;
 }
 
 :deep(.cm-live-codeblock-line) {
@@ -970,6 +1005,8 @@ defineExpose({
   font-size: 0.88rem;
   line-height: 1.6;
   background: var(--reading-code-bg);
+  border-left: 1px solid var(--reading-border);
+  border-right: 1px solid var(--reading-border);
   padding-inline: 0.85rem;
   color: var(--reading-code-text);
 }
@@ -982,13 +1019,105 @@ defineExpose({
   font-style: italic;
 }
 
-:deep(.cm-live-callout-badge) {
-  color: var(--reading-accent);
+:deep(.cm-live-callout) {
+  font-style: normal;
+  padding: 0.28rem 0.95rem 0.28rem 1rem;
+  background: rgba(169, 154, 202, 0.065);
+  border-left: 3px solid var(--reading-accent);
+}
+
+:deep(.cm-live-callout-header) {
+  padding-top: 0.56rem;
+  border-top-right-radius: 7px;
+  color: var(--reading-heading);
   font-weight: 600;
 }
 
+:deep(.cm-live-callout-end) {
+  padding-bottom: 0.56rem;
+  border-bottom-right-radius: 7px;
+  margin-bottom: 0.25rem;
+}
+
+:deep(.cm-live-callout-badge) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  color: var(--reading-accent);
+  font-weight: 600;
+  font-size: 0.86rem;
+  margin-right: 0.35rem;
+  vertical-align: -1px;
+}
+
+:deep(.cm-live-callout--tip),
+:deep(.cm-live-callout--hint),
+:deep(.cm-live-callout--success),
+:deep(.cm-live-callout--check),
+:deep(.cm-live-callout--done) {
+  border-left-color: #8fc7a8;
+  background: rgba(143, 199, 168, 0.07);
+}
+
+:deep(.cm-live-callout--tip .cm-live-callout-badge),
+:deep(.cm-live-callout--hint .cm-live-callout-badge),
+:deep(.cm-live-callout--success .cm-live-callout-badge),
+:deep(.cm-live-callout--check .cm-live-callout-badge),
+:deep(.cm-live-callout--done .cm-live-callout-badge) {
+  color: #8fc7a8;
+}
+
+:deep(.cm-live-callout--info),
+:deep(.cm-live-callout--todo),
+:deep(.cm-live-callout--abstract),
+:deep(.cm-live-callout--summary) {
+  border-left-color: #8ccff0;
+  background: rgba(140, 207, 240, 0.07);
+}
+
+:deep(.cm-live-callout--info .cm-live-callout-badge),
+:deep(.cm-live-callout--todo .cm-live-callout-badge),
+:deep(.cm-live-callout--abstract .cm-live-callout-badge),
+:deep(.cm-live-callout--summary .cm-live-callout-badge) {
+  color: #8ccff0;
+}
+
+:deep(.cm-live-callout--warning),
+:deep(.cm-live-callout--caution),
+:deep(.cm-live-callout--important) {
+  border-left-color: #e6c387;
+  background: rgba(230, 195, 135, 0.075);
+}
+
+:deep(.cm-live-callout--warning .cm-live-callout-badge),
+:deep(.cm-live-callout--caution .cm-live-callout-badge),
+:deep(.cm-live-callout--important .cm-live-callout-badge) {
+  color: #e6c387;
+}
+
+:deep(.cm-live-callout--danger),
+:deep(.cm-live-callout--error),
+:deep(.cm-live-callout--bug) {
+  border-left-color: #e2a8b4;
+  background: rgba(226, 168, 180, 0.08);
+}
+
+:deep(.cm-live-callout--danger .cm-live-callout-badge),
+:deep(.cm-live-callout--error .cm-live-callout-badge),
+:deep(.cm-live-callout--bug .cm-live-callout-badge) {
+  color: #e2a8b4;
+}
+
 :deep(.cm-live-list-item) {
-  padding-left: 0.5rem;
+  padding-left: 0.45rem;
+}
+
+:deep(.cm-live-bullet-dot) {
+  display: inline-block;
+  width: 0.95rem;
+  color: var(--reading-accent);
+  font-weight: 700;
+  user-select: none;
 }
 
 :deep(.cm-live-list-bullet),
@@ -996,6 +1125,31 @@ defineExpose({
 :deep(.cm-live-checklist-marker) {
   color: var(--reading-accent);
   font-weight: 600;
+  cursor: pointer;
+}
+
+:deep(.cm-live-checkbox-box) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-right: 0.48rem;
+  border: 1.5px solid #5c5870;
+  border-radius: 4px;
+  background: rgba(17, 18, 24, 0.6);
+  vertical-align: -2.5px;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+:deep(.cm-live-checkbox-box:hover) {
+  border-color: var(--reading-accent);
+}
+
+:deep(.cm-live-checkbox-box--checked) {
+  background: var(--reading-accent);
+  border-color: var(--reading-accent);
+  color: #16171e;
 }
 
 :deep(.cm-live-checklist-marker:focus-visible) {
@@ -1011,16 +1165,24 @@ defineExpose({
 
 :deep(.cm-live-hr) {
   border-bottom: 1px solid var(--reading-border);
-  margin: 0.6rem 0;
+  margin: 0.65rem 0;
   min-height: 0.45rem;
 }
 
 :deep(.cm-live-table-row) {
   font-family: var(--reading-font-mono);
-  font-size: 0.89rem;
+  font-size: 0.88rem;
   background: var(--reading-table-bg);
   border-left: 2px solid var(--reading-border);
-  padding-left: 0.65rem;
+  padding: 0.14rem 0.65rem;
+}
+
+:deep(.cm-live-table-header) {
+  font-weight: 600;
+  color: var(--reading-heading-secondary);
+  background: rgba(169, 154, 202, 0.08);
+  border-top: 1px solid var(--reading-border-subtle);
+  padding-top: 0.24rem;
 }
 
 :deep(.cm-live-table-delimiter) {
