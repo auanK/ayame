@@ -30,6 +30,7 @@ import {
 } from './graphSettings.js'
 import MarkdownViewer from '../markdown/MarkdownViewer.vue'
 import GraphView from './GraphView.vue'
+import AyameMark from '../auth/AyameMark.vue'
 
 const isTestEnv = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test'
 
@@ -2836,14 +2837,15 @@ defineExpose({
 
         <button
           type="button"
-          class="workspace-text-button"
+          class="workspace-text-button workspace-home-button"
           data-testid="workspace-home-button"
           aria-label="Back to vaults"
           title="Back to vaults"
           :disabled="viewerState.saving || viewerState.reloading"
           @click="requestBackToVaults"
         >
-          Home
+          <AyameMark :size="15" />
+          <span>Home</span>
         </button>
 
         <div class="vault-dropdown-wrapper">
@@ -4491,6 +4493,11 @@ defineExpose({
   border-color: var(--ayame-border, #34323f);
 }
 
+.workspace-home-button {
+  gap: 0.38rem;
+  color: var(--ayame-lavender, #d4cbe4);
+}
+
 .vault-dropdown-wrapper {
   position: relative;
 }
@@ -4555,11 +4562,11 @@ defineExpose({
   gap: 0.35rem;
   height: 28px;
   min-height: 28px;
-  padding: 0 0.6rem;
-  background: rgba(169, 154, 202, 0.08);
+  padding: 0 0.58rem;
+  background: transparent;
   border: 1px solid var(--ayame-border, #34323f);
   border-radius: 5px;
-  color: var(--ayame-text, #eeeaf3);
+  color: var(--ayame-text-muted, #aaa6b8);
   font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
@@ -4572,14 +4579,14 @@ defineExpose({
 .workspace-nav-graph:focus-visible {
   background: var(--ayame-hover, #242530);
   color: var(--ayame-text, #eeeaf3);
-  border-color: var(--ayame-primary, #a99aca);
+  border-color: rgba(169, 154, 202, 0.55);
   outline: none;
 }
 
 .workspace-nav-graph--active {
-  background: rgba(169, 154, 202, 0.18);
+  background: rgba(169, 154, 202, 0.16);
   color: var(--ayame-lavender, #d4cbe4);
-  border-color: var(--ayame-primary, #a99aca);
+  border-color: rgba(169, 154, 202, 0.65);
 }
 
 .workspace-graph-icon {
@@ -5286,11 +5293,11 @@ defineExpose({
 }
 
 .tag-cloud-chip {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(169, 154, 202, 0.08);
   border: 1px solid var(--ayame-border, #34323f);
-  color: var(--ayame-text, #eeeaf3);
-  border-radius: 999px;
-  padding: 0.12rem 0.45rem;
+  color: var(--ayame-lavender, #d4cbe4);
+  border-radius: 5px;
+  padding: 0.14rem 0.46rem;
   font-size: 0.75rem;
   cursor: pointer;
 }
@@ -5598,6 +5605,16 @@ defineExpose({
   margin-bottom: 0;
   padding: 0.3rem 0.6rem;
   font-size: 0.8125rem;
+}
+
+.settings-row select.explorer-create-input {
+  appearance: none;
+  padding-right: 1.9rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5 6 7.5l3-3' stroke='%23aaa6b8' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 12px 12px;
+  cursor: pointer;
 }
 
 /* Empty State */

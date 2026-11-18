@@ -9,10 +9,13 @@
       <div>
         <h2 id="vaults-heading">Vaults</h2>
         <p class="status-message">
-          Your vaults
-          <span v-if="hasLoaded && vaults.length > 0" class="vaults-summary">
-            · {{ vaults.length }} {{ vaults.length === 1 ? 'vault' : 'vaults' }} · {{ totalNotesCount }} {{ totalNotesCount === 1 ? 'note' : 'notes' }}
-          </span>
+          <template v-if="hasLoaded && vaults.length > 0">
+            <span class="sr-only">Your vaults · </span>
+            <span class="vaults-summary">
+              {{ vaults.length }} {{ vaults.length === 1 ? 'vault' : 'vaults' }} · {{ totalNotesCount }} {{ totalNotesCount === 1 ? 'note' : 'notes' }}
+            </span>
+          </template>
+          <template v-else>Your vaults</template>
         </p>
       </div>
       <div class="vaults-header-actions">
@@ -276,7 +279,7 @@
               @drop.prevent.stop="handleCardDrop(vault, $event)"
               @dragend="clearCardDrag"
             >
-              <div class="vault-card-banner">
+              <div class="vault-card-banner" :style="bannerStyleFor(vault)">
                 <div
                   v-if="vault.accentColor"
                   class="vault-card-accent-line"
@@ -447,7 +450,7 @@
           @drop.prevent.stop="handleCardDrop(vault, $event)"
           @dragend="clearCardDrag"
         >
-          <div v-if="viewMode === 'cards'" class="vault-card-banner">
+          <div v-if="viewMode === 'cards'" class="vault-card-banner" :style="bannerStyleFor(vault)">
             <div
               v-if="vault.accentColor"
               class="vault-card-accent-line"
@@ -1186,6 +1189,19 @@ const coverUrlFor = (vault) => {
   }
   const base = `/vaults/${encodeURIComponent(vault.directory)}/cover`
   return vault.coverUpdatedAt ? `${base}?v=${encodeURIComponent(String(vault.coverUpdatedAt))}` : base
+}
+
+const bannerStyleFor = (vault) => {
+  if (!vault || vault.hasCover || !vault.accentColor) return undefined
+  const color = String(vault.accentColor).trim()
+  if (/^#[0-9a-f]{6}$/i.test(color)) {
+    return {
+      backgroundImage: `radial-gradient(ellipse at 50% 0%, ${color}28 0%, transparent 72%)`,
+    }
+  }
+  return {
+    backgroundImage: `radial-gradient(ellipse at 50% 0%, color-mix(in srgb, ${color} 16%, transparent) 0%, transparent 72%)`,
+  }
 }
 
 const formatRelativeTime = (ms) => {
