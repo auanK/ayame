@@ -8,13 +8,14 @@
   >
     <header v-if="!resolvedVault" class="ayame-header">
       <div class="ayame-brand-row">
-        <AyameMark :size="30" />
+        <AyameMark :size="view === 'authenticated' ? 20 : 28" />
         <h1 class="ayame-wordmark">ayame</h1>
+        <p v-if="view === 'authenticated'" class="ayame-tagline ayame-tagline--inline">A place to think.</p>
       </div>
       <div v-if="view === 'authenticated'" class="ayame-header-actions">
         <button
           type="button"
-          class="btn btn-secondary"
+          class="btn btn-secondary btn-compact"
           data-testid="account-button"
           :disabled="pending || editorSaving || editorReloading"
           @click="showAccountModal = true"
@@ -23,7 +24,7 @@
         </button>
         <button
           type="button"
-          class="btn btn-secondary"
+          class="btn btn-secondary btn-compact"
           data-testid="logout-button"
           :disabled="pending || editorSaving || editorReloading"
           @click="requestLogout"
@@ -33,10 +34,7 @@
       </div>
     </header>
 
-    <template v-if="!resolvedVault">
-      <p class="ayame-tagline">A place to think.</p>
-      <div class="ayame-divider" aria-hidden="true"></div>
-    </template>
+    <p v-if="!resolvedVault && view !== 'authenticated'" class="ayame-tagline">A place to think.</p>
 
     <div
       v-if="view === 'loading'"
@@ -129,10 +127,36 @@
       @unauthorized="handleVaultUnauthorized"
     />
 
-    <div v-if="logoutConfirm" class="logout-confirm" role="dialog" aria-modal="true" aria-labelledby="logout-title">
-      <p id="logout-title">Discard your unsaved changes and log out?</p>
-      <button type="button" class="btn btn-secondary" data-testid="logout-keep-editing" :disabled="editorSaving || editorReloading" @click="logoutConfirm = false">Keep editing</button>
-      <button type="button" class="btn btn-secondary" data-testid="logout-discard-changes" :disabled="editorSaving || editorReloading" @click="confirmLogout">Discard changes and log out</button>
+    <div
+      v-if="logoutConfirm"
+      class="ayame-modal-backdrop logout-confirm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="logout-title"
+      @click.self="logoutConfirm = false"
+    >
+      <div class="ayame-modal-card">
+        <header class="ayame-modal-header">
+          <div>
+            <h3 id="logout-title">Sign out?</h3>
+            <p class="ayame-modal-subtitle">Pending editor edits</p>
+          </div>
+          <button
+            type="button"
+            class="ayame-modal-close"
+            aria-label="Close"
+            :disabled="editorSaving || editorReloading"
+            @click="logoutConfirm = false"
+          >
+            ×
+          </button>
+        </header>
+        <p class="vaults-muted">Discard your unsaved changes and log out?</p>
+        <div class="ayame-modal-footer">
+          <button type="button" class="btn btn-secondary" data-testid="logout-keep-editing" :disabled="editorSaving || editorReloading" @click="logoutConfirm = false">Keep editing</button>
+          <button type="button" class="btn btn-primary" data-testid="logout-discard-changes" :disabled="editorSaving || editorReloading" @click="confirmLogout">Discard changes and log out</button>
+        </div>
+      </div>
     </div>
   </main>
 </template>

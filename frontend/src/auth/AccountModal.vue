@@ -15,12 +15,12 @@
         </div>
         <button
           type="button"
-          class="btn btn-secondary btn-compact"
+          class="ayame-modal-close"
           data-testid="close-account-modal"
           aria-label="Close account modal"
           @click="$emit('close')"
         >
-          Close
+          ×
         </button>
       </header>
 
@@ -104,9 +104,11 @@
               {{ passwordSuccess }}
             </p>
 
-            <button type="submit" class="btn btn-primary" :disabled="savingPassword">
-              {{ savingPassword ? 'Updating...' : 'Update password' }}
-            </button>
+            <div class="account-form-actions">
+              <button type="submit" class="btn btn-primary" :disabled="savingPassword">
+                {{ savingPassword ? 'Updating...' : 'Update password' }}
+              </button>
+            </div>
           </form>
         </section>
       </div>
@@ -246,69 +248,24 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.ayame-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  background: rgba(11, 12, 16, 0.72);
-  backdrop-filter: blur(4px);
-}
-
-.ayame-modal-card {
-  width: min(100%, 460px);
-  max-height: 90vh;
-  overflow-y: auto;
-  padding: 1.5rem;
-  border: 1px solid var(--ayame-border);
-  border-radius: 10px;
-  background: var(--ayame-surface);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
-}
-
-.ayame-modal-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--ayame-border);
-  margin-bottom: 1rem;
-}
-
-.ayame-modal-header h3 {
-  margin: 0;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 1.25rem;
-  font-weight: 400;
-  color: var(--ayame-text);
-}
-
-.ayame-modal-subtitle {
-  margin: 0.2rem 0 0;
-  color: var(--ayame-primary);
-  font-size: 0.875rem;
-}
-
 .account-sections {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.15rem;
 }
 
 .account-section {
-  padding: 1rem;
-  border: 1px solid var(--ayame-border);
-  border-radius: 8px;
-  background: rgba(17, 18, 24, 0.45);
+  padding-top: 0;
+}
+
+.account-section + .account-section {
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--ayame-border);
 }
 
 .account-section h4 {
-  margin: 0 0 0.85rem;
-  font-size: 0.95rem;
+  margin: 0 0 0.8rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--ayame-text);
 }
@@ -322,18 +279,24 @@ onUnmounted(() => {
 }
 
 .account-muted {
-  margin: 0.25rem 0 0;
+  margin: 0.2rem 0 0;
   color: var(--ayame-text-muted);
-  font-size: 0.84rem;
+  font-size: 0.8rem;
+}
+
+.account-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.25rem;
 }
 
 .account-success {
   margin: 0.75rem 0 0;
-  padding: 0.55rem 0.7rem;
+  padding: 0.5rem 0.7rem;
   border: 1px solid rgba(143, 199, 168, 0.35);
-  border-radius: 4px;
+  border-radius: 6px;
   background: rgba(143, 199, 168, 0.1);
   color: #a9dec0;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 </style>

@@ -40,7 +40,7 @@ const mountPanel = async (vaults = []) => {
 const customize = async (wrapper, name = 'personal') => {
   const row = wrapper.findAll('[data-testid="vault-row"]').find((item) => item.text().includes(name))
   await row.findAll('button').find((button) => button.text() === 'Customize').trigger('click')
-  return row
+  return wrapper.find('[data-testid="vault-editor-modal"]')
 }
 
 beforeEach(() => {
@@ -108,22 +108,27 @@ describe('VaultsPanel', () => {
     expect(wrapper.text()).not.toContain('/private/server/path')
   })
 
-  it('emits open event with the vault object when Open button is clicked', async () => {
+  it('opens the vault when clicking the card directly and keeps action buttons isolated', async () => {
     const wrapper = await mountPanel([detected, customized])
     const rows = wrapper.findAll('[data-testid="vault-row"]')
 
-    const detectedOpenButton = rows[0].findAll('button').find((b) => b.text() === 'Open')
-    expect(detectedOpenButton).toBeDefined()
-    await detectedOpenButton.trigger('click')
-
-    expect(wrapper.emitted('open')).toBeTruthy()
+    // Clicking anywhere on the card opens the vault immediately
+    await rows[0].trigger('click')
+    expect(wrapper.emitted('open')).toHaveLength(1)
     expect(wrapper.emitted('open')[0]).toEqual([detected])
 
-    const customizedOpenButton = rows[1].findAll('button').find((b) => b.text() === 'Open')
-    expect(customizedOpenButton).toBeDefined()
+    // Clicking Open button also works without double-emitting
+    const customizedOpenButton = rows[1].find('[data-testid="open-vault-button"]')
+    expect(customizedOpenButton.exists()).toBe(true)
     await customizedOpenButton.trigger('click')
-
+    expect(wrapper.emitted('open')).toHaveLength(2)
     expect(wrapper.emitted('open')[1]).toEqual([customized])
+
+    // Clicking Edit does not open the vault, and opens a centered floating modal instead
+    await rows[1].find('[data-testid="edit-vault-button"]').trigger('click')
+    expect(wrapper.emitted('open')).toHaveLength(2)
+    expect(wrapper.find('[data-testid="vault-editor-modal"]').exists()).toBe(true)
+    expect(rows[1].find('[data-testid="vault-editor"]').exists()).toBe(false)
   })
 
   it('renders complete 100-character unbroken customized and detected names', async () => {
@@ -391,10 +396,14 @@ describe('VaultsPanel', () => {
     expect(wrapper.text()).toContain('Customized')
   })
 
-  it('reorders vault cards via drag-and-drop and accessible move buttons', async () => {
+  it('reorders vault cards purely via drag-and-drop without arrow buttons or grip icons', async () => {
     const v1 = { ...customized, id: '1', name: 'Alpha', directory: 'alpha', position: 0 }
     const v2 = { ...customized, id: '2', name: 'Beta', directory: 'beta', position: 1 }
     const wrapper = await mountPanel([v1, v2])
+
+    expect(wrapper.find('[data-testid="move-vault-earlier"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="move-vault-later"]').exists()).toBe(false)
+    expect(wrapper.find('.vault-drag-grip').exists()).toBe(false)
 
     api.reorderVaults.mockResolvedValueOnce({ vaults: [v2, v1] })
     const rows = wrapper.findAll('[data-testid="vault-row"]')
@@ -405,11 +414,6 @@ describe('VaultsPanel', () => {
 
     expect(api.reorderVaults).toHaveBeenCalledWith(['beta', 'alpha'])
     expect(wrapper.findAll('[data-testid="vault-row"] h3').map((el) => el.text())).toEqual(['Beta', 'Alpha'])
-
-    api.reorderVaults.mockResolvedValueOnce({ vaults: [v1, v2] })
-    await wrapper.findAll('[data-testid="move-vault-later"]')[0].trigger('click')
-    await flushPromises()
-    expect(api.reorderVaults).toHaveBeenLastCalledWith(['alpha', 'beta'])
   })
 
   it('filters cards by search query, category pills, and clickable tags, and reassigns category via drag in Categories view', async () => {

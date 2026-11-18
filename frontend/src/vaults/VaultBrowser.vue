@@ -4530,11 +4530,11 @@ defineExpose({
   left: 0;
   z-index: 100;
   min-width: 220px;
-  background: var(--ayame-surface, #1b1c25);
+  background: var(--ayame-surface-elevated, #20212c);
   border: 1px solid var(--ayame-border, #34323f);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 0.35rem;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -4746,12 +4746,12 @@ defineExpose({
   top: calc(100% + 4px);
   right: 0;
   z-index: 60;
-  min-width: 150px;
-  background: var(--ayame-surface, #1b1c25);
+  min-width: 165px;
+  background: var(--ayame-surface-elevated, #20212c);
   border: 1px solid var(--ayame-border, #34323f);
-  border-radius: 6px;
-  padding: 0.3rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  padding: 0.35rem;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -5032,15 +5032,15 @@ defineExpose({
 .explorer-context-menu {
   position: fixed;
   z-index: 1200;
-  min-width: 185px;
-  background: var(--ayame-surface, #1b1c25);
+  min-width: 192px;
+  background: var(--ayame-surface-elevated, #20212c);
   border: 1px solid var(--ayame-border, #34323f);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 0.35rem;
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.62);
 }
 
 .context-menu-item {
@@ -5308,40 +5308,58 @@ defineExpose({
 .workspace-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(9, 10, 14, 0.74);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  padding: 1.25rem;
+  z-index: 1100;
 }
 
 .workspace-modal {
   background: var(--ayame-surface, #1b1c25);
   border: 1px solid var(--ayame-border, #34323f);
-  border-radius: 8px;
-  padding: 1.25rem;
-  width: min(540px, 92vw);
-  max-height: 80vh;
+  border-radius: 10px;
+  padding: 1.35rem;
+  width: min(520px, 94vw);
+  max-height: 85vh;
   overflow-y: auto;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  box-shadow:
+    inset 0 1px 0 var(--ayame-border-subtle, rgba(238, 234, 243, 0.08)),
+    0 24px 64px rgba(0, 0, 0, 0.65);
+}
+
+.workspace-modal .explorer-create-input {
+  height: 36px;
+  padding: 0 0.72rem;
+  background: var(--ayame-input-bg, #13141b);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin-bottom: 0.65rem;
 }
 
 .workspace-modal-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--ayame-border, #34323f);
   margin-bottom: 1rem;
 }
 
 .trash-modal-title {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--ayame-text, #eeeaf3);
 }
 
 .trash-modal-subtitle {
   margin: 0.2rem 0 0;
-  font-size: 0.8125rem;
+  font-size: 0.8rem;
   color: var(--ayame-text-muted, #aaa6b8);
 }
 
@@ -5351,15 +5369,16 @@ defineExpose({
   color: var(--ayame-text-muted, #aaa6b8);
   font-size: 1.15rem;
   cursor: pointer;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   line-height: 1;
-  border-radius: 4px;
-  transition: all 0.1s ease;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: all 0.12s ease;
 }
 
 .modal-close-btn:hover,
@@ -5547,16 +5566,38 @@ defineExpose({
 .settings-form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.15rem;
 }
 
 .settings-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  font-size: 0.86rem;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid rgba(238, 234, 243, 0.06);
+  font-size: 0.85rem;
   color: var(--ayame-text, #eeeaf3);
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+.settings-row input[type="checkbox"] {
+  accent-color: var(--ayame-primary, #a99aca);
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.settings-row .explorer-create-input {
+  width: 196px;
+  flex: 0 0 196px;
+  height: 32px;
+  margin-bottom: 0;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8125rem;
 }
 
 /* Empty State */

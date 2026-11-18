@@ -17,16 +17,6 @@
       </div>
       <div class="vaults-header-actions">
         <button
-          v-if="hasLoaded && supportsCreateVault"
-          type="button"
-          class="btn btn-secondary btn-compact"
-          data-testid="new-vault-button"
-          :disabled="Boolean(operation)"
-          @click="toggleCreateForm"
-        >
-          {{ showCreateForm ? 'Close' : 'New vault' }}
-        </button>
-        <button
           type="button"
           class="btn btn-secondary btn-compact"
           data-testid="refresh-vaults-button"
@@ -34,6 +24,16 @@
           @click="refreshVaults"
         >
           {{ operation === 'refreshing' ? 'Refreshing...' : 'Refresh' }}
+        </button>
+        <button
+          v-if="hasLoaded && supportsCreateVault"
+          type="button"
+          class="btn btn-primary btn-compact"
+          data-testid="new-vault-button"
+          :disabled="Boolean(operation)"
+          @click="toggleCreateForm"
+        >
+          New vault
         </button>
       </div>
     </header>
@@ -50,142 +50,6 @@
       data-testid="cover-file-input"
       @change="handleCoverFileSelected"
     />
-
-    <!-- Create New Vault Drawer -->
-    <form
-      v-if="showCreateForm"
-      class="vault-create-drawer"
-      data-testid="create-vault-form"
-      @submit.prevent="submitCreateVault"
-    >
-      <div class="vault-create-header">
-        <h3>Create new vault</h3>
-        <p class="vaults-muted">Creates a new vault folder and registers its card metadata.</p>
-      </div>
-
-      <div class="vault-editor-fields">
-        <div class="form-group">
-          <label class="form-label" for="create-vault-name">Display name</label>
-          <input
-            id="create-vault-name"
-            v-model="createDraft.name"
-            class="form-input"
-            type="text"
-            maxlength="100"
-            placeholder="e.g. Research Hub"
-            :disabled="Boolean(operation)"
-            required
-          />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="create-vault-dir">Folder name (optional)</label>
-          <input
-            id="create-vault-dir"
-            v-model="createDraft.directory"
-            class="form-input"
-            type="text"
-            maxlength="100"
-            placeholder="Auto-derived from display name"
-            :disabled="Boolean(operation)"
-          />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="create-vault-category">Category</label>
-          <input
-            id="create-vault-category"
-            v-model="createDraft.category"
-            class="form-input"
-            type="text"
-            maxlength="60"
-            list="vault-categories-list"
-            placeholder="e.g. Worldbuilding, Study, Work"
-            :disabled="Boolean(operation)"
-          />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="create-vault-description">Description</label>
-          <input
-            id="create-vault-description"
-            v-model="createDraft.description"
-            class="form-input"
-            type="text"
-            maxlength="280"
-            placeholder="Short summary of what lives in this vault"
-            :disabled="Boolean(operation)"
-          />
-        </div>
-      </div>
-
-      <div class="vault-create-extras">
-        <div class="form-group">
-          <label class="form-label" for="create-vault-tag-input">Tags</label>
-          <div class="vault-tag-editor">
-            <span
-              v-for="tag in createDraft.tags"
-              :key="tag"
-              class="vault-tag-chip vault-tag-chip--editable"
-            >
-              #{{ tag }}
-              <button
-                type="button"
-                class="vault-tag-remove"
-                aria-label="Remove tag"
-                @click="removeTagFromList(createDraft.tags, tag)"
-              >
-                ×
-              </button>
-            </span>
-            <input
-              id="create-vault-tag-input"
-              v-model="createTagInput"
-              type="text"
-              class="vault-tag-inline-input"
-              placeholder="Add tag and press Enter"
-              :disabled="Boolean(operation)"
-              @keydown.enter.prevent="addTagFromInput('create')"
-              @keydown.,.prevent="addTagFromInput('create')"
-            />
-          </div>
-        </div>
-
-        <div class="form-group">
-          <span class="form-label">Accent color</span>
-          <div class="vault-color-swatches">
-            <button
-              v-for="color in ACCENT_SWATCHES"
-              :key="color"
-              type="button"
-              class="vault-color-swatch"
-              :class="{ 'vault-color-swatch--active': createDraft.accentColor === color }"
-              :style="{ backgroundColor: color }"
-              :aria-label="`Select accent ${color}`"
-              @click="createDraft.accentColor = createDraft.accentColor === color ? '' : color"
-            />
-          </div>
-        </div>
-      </div>
-
-      <label class="vault-checkbox-row">
-        <input v-model="createDraft.createWelcomeNote" type="checkbox" :disabled="Boolean(operation)" />
-        <span>Create an introductory Welcome.md note</span>
-      </label>
-
-      <p v-if="createError" class="error-message" role="alert" aria-live="polite">
-        {{ createError }}
-      </p>
-
-      <div class="vault-actions">
-        <button type="submit" class="btn btn-primary" data-testid="create-vault-submit" :disabled="Boolean(operation)">
-          {{ operation === 'creating' ? 'Creating...' : 'Create vault' }}
-        </button>
-        <button type="button" class="btn btn-secondary" :disabled="Boolean(operation)" @click="cancelCreateForm">
-          Cancel
-        </button>
-      </div>
-    </form>
 
     <p v-if="errorMessage" class="error-message" role="alert" aria-live="polite">
       {{ errorMessage }}
@@ -204,7 +68,7 @@
     </div>
 
     <template v-else-if="hasLoaded">
-      <!-- Organization Toolbar -->
+      <!-- Minimalist Organization Toolbar -->
       <div class="vaults-toolbar" data-testid="vaults-toolbar">
         <div class="vaults-toolbar-row">
           <input
@@ -261,8 +125,16 @@
           </div>
         </div>
 
-        <div class="vaults-filters-row">
-          <div class="vaults-filter-pills" role="group" aria-label="Filter by category">
+        <div
+          v-if="categoryCounts.length > 0 || pinnedCount > 0 || allVaultTags.length > 0"
+          class="vaults-filters-row"
+        >
+          <div
+            v-if="categoryCounts.length > 0 || pinnedCount > 0"
+            class="vaults-filter-pills"
+            role="group"
+            aria-label="Filter by category"
+          >
             <button
               type="button"
               class="vault-filter-pill"
@@ -388,320 +260,158 @@
               :key="vault.id || vault.directory"
               class="vault-row vault-card"
               :class="{
-                'vault-card--editing': editingDirectory === vault.directory,
                 'vault-card--dragging': draggingDirectory === vault.directory,
                 'vault-card--drop-target': dragOverDirectory === vault.directory && draggingDirectory !== vault.directory,
                 'vault-card--pinned': Boolean(vault.pinned),
               }"
               data-testid="vault-row"
               :data-vault-directory="vault.directory"
-              :draggable="!needsRefresh && !operation && editingDirectory !== vault.directory"
+              :tabindex="needsRefresh ? undefined : 0"
+              :draggable="!needsRefresh && !operation"
+              @click="openVaultFromCard(vault)"
+              @keydown.enter.self="openVaultFromCard(vault)"
               @dragstart="handleCardDragStart(vault, $event)"
               @dragover.prevent="handleCardDragOver(vault, $event)"
               @dragleave="handleCardDragLeave(vault, $event)"
               @drop.prevent.stop="handleCardDrop(vault, $event)"
               @dragend="clearCardDrag"
             >
-              <template v-if="editingDirectory === vault.directory">
-                <form class="vault-editor" data-testid="vault-editor" @submit.prevent="saveVault(vault)">
-                  <h3>Customize vault</h3>
-                  <div class="vault-editor-fields">
-                    <div class="form-group">
-                      <label class="form-label" for="vault-name">Display name</label>
-                      <input
-                        id="vault-name"
-                        v-model="editDraft.name"
-                        class="form-input"
-                        name="name"
-                        type="text"
-                        maxlength="100"
-                        autocomplete="off"
-                        :disabled="Boolean(operation)"
-                        required
-                      />
-                    </div>
-                    <div class="form-group vault-directory-field">
-                      <span class="form-label">Directory</span>
-                      <p class="vault-directory">{{ vault.directory }}/</p>
-                    </div>
-                    <div class="form-group">
-                      <label class="form-label" for="edit-vault-category">Category</label>
-                      <input
-                        id="edit-vault-category"
-                        v-model="editDraft.category"
-                        class="form-input"
-                        type="text"
-                        maxlength="60"
-                        list="vault-categories-list"
-                        placeholder="Uncategorized"
-                        :disabled="Boolean(operation)"
-                      />
-                    </div>
-                    <div class="form-group">
-                      <label class="form-label" for="edit-vault-description">Description</label>
-                      <input
-                        id="edit-vault-description"
-                        v-model="editDraft.description"
-                        class="form-input"
-                        type="text"
-                        maxlength="280"
-                        placeholder="Short summary"
-                        :disabled="Boolean(operation)"
-                      />
-                    </div>
+              <div class="vault-card-banner">
+                <div
+                  v-if="vault.accentColor"
+                  class="vault-card-accent-line"
+                  :style="{ backgroundColor: vault.accentColor }"
+                />
+                <img
+                  v-if="vault.hasCover"
+                  class="vault-cover-img"
+                  data-testid="vault-cover-image"
+                  :src="coverUrlFor(vault)"
+                  :alt="`Cover for ${vault.name}`"
+                />
+                <svg
+                  v-else
+                  class="vault-card-emblem"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  aria-hidden="true"
+                >
+                  <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4.2l1.8 2h7A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" />
+                </svg>
+
+                <div class="vault-banner-top">
+                  <div class="vault-banner-badges">
+                    <span v-if="vault.category" class="vault-category-badge">{{ vault.category }}</span>
                   </div>
-
-                  <div class="vault-editor-extras">
-                    <div class="form-group">
-                      <label class="form-label" for="edit-vault-tag-input">Tags</label>
-                      <div class="vault-tag-editor">
-                        <span
-                          v-for="tag in editDraft.tags"
-                          :key="tag"
-                          class="vault-tag-chip vault-tag-chip--editable"
-                        >
-                          #{{ tag }}
-                          <button
-                            type="button"
-                            class="vault-tag-remove"
-                            aria-label="Remove tag"
-                            @click="removeTagFromList(editDraft.tags, tag)"
-                          >
-                            ×
-                          </button>
-                        </span>
-                        <input
-                          id="edit-vault-tag-input"
-                          v-model="editTagInput"
-                          type="text"
-                          class="vault-tag-inline-input"
-                          placeholder="Add tag + Enter"
-                          :disabled="Boolean(operation)"
-                          @keydown.enter.prevent="addTagFromInput('edit')"
-                          @keydown.,.prevent="addTagFromInput('edit')"
-                        />
-                      </div>
-                    </div>
-
-                    <div class="vault-editor-media-row">
-                      <div>
-                        <span class="form-label">Accent</span>
-                        <div class="vault-color-swatches">
-                          <button
-                            v-for="color in ACCENT_SWATCHES"
-                            :key="color"
-                            type="button"
-                            class="vault-color-swatch"
-                            :class="{ 'vault-color-swatch--active': editDraft.accentColor === color }"
-                            :style="{ backgroundColor: color }"
-                            :aria-label="`Select accent ${color}`"
-                            @click="editDraft.accentColor = editDraft.accentColor === color ? '' : color"
-                          />
-                        </div>
-                      </div>
-
-                      <div class="vault-cover-controls">
-                        <span class="form-label">Cover image</span>
-                        <div class="vault-actions">
-                          <button
-                            type="button"
-                            class="btn btn-secondary btn-compact"
-                            data-testid="editor-upload-cover-button"
-                            :disabled="Boolean(operation)"
-                            @click="triggerCoverInput(vault)"
-                          >
-                            Upload cover
-                          </button>
-                          <button
-                            v-if="vault.hasCover"
-                            type="button"
-                            class="btn btn-secondary btn-compact"
-                            data-testid="remove-cover-button"
-                            :disabled="Boolean(operation)"
-                            @click="removeCover(vault)"
-                          >
-                            Remove cover
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p v-if="editError" class="error-message" role="alert" aria-live="polite">
-                    {{ editError }}
-                  </p>
-                  <div class="vault-actions">
-                    <button type="submit" class="btn btn-primary" :disabled="Boolean(operation)">
-                      {{ operation === 'saving' ? 'Saving...' : 'Save' }}
+                  <div v-if="!needsRefresh" class="vault-banner-actions">
+                    <button
+                      type="button"
+                      class="vault-icon-pill"
+                      :class="{ 'vault-icon-pill--active': vault.pinned }"
+                      data-testid="pin-vault-button"
+                      :aria-pressed="vault.pinned ? 'true' : 'false'"
+                      :aria-label="vault.pinned ? 'Unpin vault' : 'Pin vault'"
+                      :title="vault.pinned ? 'Unpin vault' : 'Pin vault'"
+                      :disabled="Boolean(operation)"
+                      @click.stop="togglePin(vault)"
+                    >
+                      {{ vault.pinned ? '★' : '☆' }}
                     </button>
                     <button
                       type="button"
-                      class="btn btn-secondary"
+                      class="vault-icon-pill"
+                      data-testid="upload-cover-button"
+                      aria-label="Upload cover image"
+                      title="Upload cover image"
                       :disabled="Boolean(operation)"
-                      @click="cancelEdit"
+                      @click.stop="triggerCoverInput(vault)"
                     >
-                      Cancel
+                      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                        <rect x="2" y="3" width="12" height="10" rx="1.8" />
+                        <circle cx="5.7" cy="6.6" r="1.1" />
+                        <path d="m3.5 11.5 2.8-2.6 2 1.8 2.1-2.2 2.1 3" />
+                      </svg>
                     </button>
                   </div>
-                </form>
-              </template>
-
-              <template v-else>
-                <div
-                  class="vault-card-banner"
-                  :style="bannerStyle(vault)"
-                >
-                  <img
-                    v-if="vault.hasCover"
-                    class="vault-cover-img"
-                    data-testid="vault-cover-image"
-                    :src="coverUrlFor(vault)"
-                    :alt="`Cover for ${vault.name}`"
-                  />
-                  <div class="vault-banner-top">
-                    <div class="vault-banner-badges">
-                      <span v-if="!needsRefresh" class="vault-drag-grip" aria-hidden="true" title="Drag card to reorder">⋮⋮</span>
-                      <span v-if="vault.category" class="vault-category-badge">{{ vault.category }}</span>
-                      <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
-                    </div>
-                    <div v-if="!needsRefresh" class="vault-banner-actions">
-                      <button
-                        type="button"
-                        class="vault-icon-pill"
-                        :class="{ 'vault-icon-pill--active': vault.pinned }"
-                        data-testid="pin-vault-button"
-                        :aria-pressed="vault.pinned ? 'true' : 'false'"
-                        :title="vault.pinned ? 'Unpin vault' : 'Pin vault'"
-                        :disabled="Boolean(operation)"
-                        @click.stop="togglePin(vault)"
-                      >
-                        {{ vault.pinned ? '★' : '☆' }}
-                      </button>
-                      <button
-                        type="button"
-                        class="vault-icon-pill"
-                        data-testid="upload-cover-button"
-                        title="Upload cover image"
-                        :disabled="Boolean(operation)"
-                        @click.stop="triggerCoverInput(vault)"
-                      >
-                        Photo
-                      </button>
-                    </div>
-                  </div>
                 </div>
+              </div>
 
-                <div class="vault-card-body">
-                  <div class="vault-details">
-                    <div class="vault-title-line">
-                      <h3
-                        class="vault-card-heading"
-                        :class="{ 'vault-card-heading--clickable': !needsRefresh && !operation }"
-                        @click.stop="!needsRefresh && !operation && $emit('open', vault)"
-                      >
-                        {{ vault.name }}
-                      </h3>
-                    </div>
-                    <p class="vault-directory">{{ vault.directory }}/</p>
-                    <p v-if="vault.description" class="vault-description">{{ vault.description }}</p>
+              <div class="vault-card-body">
+                <div class="vault-details">
+                  <div class="vault-title-line">
+                    <h3>{{ vault.name }}</h3>
                   </div>
-
                   <div class="vault-card-meta">
-                    <span>{{ vault.noteCount || 0 }} {{ (vault.noteCount || 0) === 1 ? 'note' : 'notes' }}</span>
+                    <span class="vault-directory">{{ vault.directory }}/</span>
+                    <span>· {{ vault.noteCount || 0 }} {{ (vault.noteCount || 0) === 1 ? 'note' : 'notes' }}</span>
                     <span v-if="vault.lastModifiedAt">· {{ formatRelativeTime(vault.lastModifiedAt) }}</span>
                   </div>
+                  <p v-if="vault.description" class="vault-description">{{ vault.description }}</p>
+                </div>
 
-                  <div v-if="vault.tags && vault.tags.length > 0" class="vault-card-tags">
-                    <template v-if="!needsRefresh">
-                      <button
-                        v-for="tag in vault.tags"
-                        :key="tag"
-                        type="button"
-                        class="vault-tag-chip"
-                        :class="{ 'vault-tag-chip--active': selectedTag.toLowerCase() === tag.toLowerCase() }"
-                        @click.stop="toggleTagFilter(tag)"
-                      >
-                        #{{ tag }}
-                      </button>
-                    </template>
+                <div v-if="vault.tags && vault.tags.length > 0" class="vault-card-tags">
+                  <template v-if="!needsRefresh">
+                    <button
+                      v-for="tag in vault.tags"
+                      :key="tag"
+                      type="button"
+                      class="vault-tag-chip"
+                      :class="{ 'vault-tag-chip--active': selectedTag.toLowerCase() === tag.toLowerCase() }"
+                      @click.stop="toggleTagFilter(tag)"
+                    >
+                      #{{ tag }}
+                    </button>
+                  </template>
+                  <template v-else>
+                    <span v-for="tag in vault.tags" :key="tag" class="vault-tag-chip">#{{ tag }}</span>
+                  </template>
+                </div>
+
+                <div v-if="!needsRefresh" class="vault-card-footer">
+                  <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
+                  <div class="vault-actions">
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-open-vault"
+                      data-testid="open-vault-button"
+                      :disabled="Boolean(operation)"
+                      @click.stop="$emit('open', vault)"
+                    >
+                      Open
+                    </button>
+                    <button
+                      v-if="!vault.registered"
+                      type="button"
+                      class="btn btn-ghost"
+                      :disabled="Boolean(operation)"
+                      @click.stop="startEdit(vault)"
+                    >
+                      Customize
+                    </button>
                     <template v-else>
-                      <span
-                        v-for="tag in vault.tags"
-                        :key="tag"
-                        class="vault-tag-chip"
+                      <button
+                        type="button"
+                        class="btn btn-ghost"
+                        data-testid="edit-vault-button"
+                        :disabled="Boolean(operation)"
+                        @click.stop="startEdit(vault)"
                       >
-                        #{{ tag }}
-                      </span>
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost"
+                        :disabled="Boolean(operation)"
+                        @click.stop="resetVault(vault)"
+                      >
+                        {{ operation === 'resetting' ? 'Resetting...' : 'Reset' }}
+                      </button>
                     </template>
-                  </div>
-
-                  <div v-if="!needsRefresh" class="vault-card-footer">
-                    <div class="vault-reorder-btns">
-                      <button
-                        type="button"
-                        class="btn btn-secondary btn-compact"
-                        data-testid="move-vault-earlier"
-                        aria-label="Move earlier"
-                        title="Move earlier"
-                        :disabled="Boolean(operation) || isFirstInOrder(vault)"
-                        @click.stop="moveVaultOffset(vault, -1)"
-                      >
-                        ←
-                      </button>
-                      <button
-                        type="button"
-                        class="btn btn-secondary btn-compact"
-                        data-testid="move-vault-later"
-                        aria-label="Move later"
-                        title="Move later"
-                        :disabled="Boolean(operation) || isLastInOrder(vault)"
-                        @click.stop="moveVaultOffset(vault, 1)"
-                      >
-                        →
-                      </button>
-                    </div>
-                    <div class="vault-actions">
-                      <button
-                        type="button"
-                        class="btn btn-secondary btn-open-vault"
-                        data-testid="open-vault-button"
-                        :disabled="Boolean(operation)"
-                        @click="$emit('open', vault)"
-                      >
-                        Open
-                      </button>
-                      <button
-                        v-if="!vault.registered"
-                        type="button"
-                        class="btn btn-secondary"
-                        :disabled="Boolean(operation)"
-                        @click="startEdit(vault)"
-                      >
-                        Customize
-                      </button>
-                      <template v-else>
-                        <button
-                          type="button"
-                          class="btn btn-secondary"
-                          data-testid="edit-vault-button"
-                          :disabled="Boolean(operation)"
-                          @click="startEdit(vault)"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          class="btn btn-secondary"
-                          :disabled="Boolean(operation)"
-                          @click="resetVault(vault)"
-                        >
-                          {{ operation === 'resetting' ? 'Resetting...' : 'Reset' }}
-                        </button>
-                      </template>
-                    </div>
                   </div>
                 </div>
-              </template>
+              </div>
             </li>
           </ul>
         </section>
@@ -720,7 +430,6 @@
           :class="[
             viewMode === 'compact' ? 'vault-card-compact' : 'vault-card',
             {
-              'vault-card--editing': editingDirectory === vault.directory,
               'vault-card--dragging': draggingDirectory === vault.directory,
               'vault-card--drop-target': dragOverDirectory === vault.directory && draggingDirectory !== vault.directory,
               'vault-card--pinned': Boolean(vault.pinned),
@@ -728,332 +437,519 @@
           ]"
           data-testid="vault-row"
           :data-vault-directory="vault.directory"
-          :draggable="!needsRefresh && !operation && editingDirectory !== vault.directory"
+          :tabindex="needsRefresh ? undefined : 0"
+          :draggable="!needsRefresh && !operation"
+          @click="openVaultFromCard(vault)"
+          @keydown.enter.self="openVaultFromCard(vault)"
           @dragstart="handleCardDragStart(vault, $event)"
           @dragover.prevent="handleCardDragOver(vault, $event)"
           @dragleave="handleCardDragLeave(vault, $event)"
           @drop.prevent.stop="handleCardDrop(vault, $event)"
           @dragend="clearCardDrag"
         >
-          <template v-if="editingDirectory === vault.directory">
-            <form class="vault-editor" data-testid="vault-editor" @submit.prevent="saveVault(vault)">
-              <h3>Customize vault</h3>
-              <div class="vault-editor-fields">
-                <div class="form-group">
-                  <label class="form-label" for="vault-name">Display name</label>
-                  <input
-                    id="vault-name"
-                    v-model="editDraft.name"
-                    class="form-input"
-                    name="name"
-                    type="text"
-                    maxlength="100"
-                    autocomplete="off"
-                    :disabled="Boolean(operation)"
-                    required
-                  />
-                </div>
-                <div class="form-group vault-directory-field">
-                  <span class="form-label">Directory</span>
-                  <p class="vault-directory">{{ vault.directory }}/</p>
-                </div>
-                <div class="form-group">
-                  <label class="form-label" for="edit-vault-category">Category</label>
-                  <input
-                    id="edit-vault-category"
-                    v-model="editDraft.category"
-                    class="form-input"
-                    type="text"
-                    maxlength="60"
-                    list="vault-categories-list"
-                    placeholder="Uncategorized"
-                    :disabled="Boolean(operation)"
-                  />
-                </div>
-                <div class="form-group">
-                  <label class="form-label" for="edit-vault-description">Description</label>
-                  <input
-                    id="edit-vault-description"
-                    v-model="editDraft.description"
-                    class="form-input"
-                    type="text"
-                    maxlength="280"
-                    placeholder="Short summary"
-                    :disabled="Boolean(operation)"
-                  />
-                </div>
+          <div v-if="viewMode === 'cards'" class="vault-card-banner">
+            <div
+              v-if="vault.accentColor"
+              class="vault-card-accent-line"
+              :style="{ backgroundColor: vault.accentColor }"
+            />
+            <img
+              v-if="vault.hasCover"
+              class="vault-cover-img"
+              data-testid="vault-cover-image"
+              :src="coverUrlFor(vault)"
+              :alt="`Cover for ${vault.name}`"
+            />
+            <svg
+              v-else
+              class="vault-card-emblem"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4.2l1.8 2h7A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z" />
+            </svg>
+
+            <div class="vault-banner-top">
+              <div class="vault-banner-badges">
+                <span v-if="vault.category" class="vault-category-badge">{{ vault.category }}</span>
               </div>
-
-              <div class="vault-editor-extras">
-                <div class="form-group">
-                  <label class="form-label" for="edit-vault-tag-input">Tags</label>
-                  <div class="vault-tag-editor">
-                    <span
-                      v-for="tag in editDraft.tags"
-                      :key="tag"
-                      class="vault-tag-chip vault-tag-chip--editable"
-                    >
-                      #{{ tag }}
-                      <button
-                        type="button"
-                        class="vault-tag-remove"
-                        aria-label="Remove tag"
-                        @click="removeTagFromList(editDraft.tags, tag)"
-                      >
-                        ×
-                      </button>
-                    </span>
-                    <input
-                      id="edit-vault-tag-input"
-                      v-model="editTagInput"
-                      type="text"
-                      class="vault-tag-inline-input"
-                      placeholder="Add tag + Enter"
-                      :disabled="Boolean(operation)"
-                      @keydown.enter.prevent="addTagFromInput('edit')"
-                      @keydown.,.prevent="addTagFromInput('edit')"
-                    />
-                  </div>
-                </div>
-
-                <div class="vault-editor-media-row">
-                  <div>
-                    <span class="form-label">Accent</span>
-                    <div class="vault-color-swatches">
-                      <button
-                        v-for="color in ACCENT_SWATCHES"
-                        :key="color"
-                        type="button"
-                        class="vault-color-swatch"
-                        :class="{ 'vault-color-swatch--active': editDraft.accentColor === color }"
-                        :style="{ backgroundColor: color }"
-                        :aria-label="`Select accent ${color}`"
-                        @click="editDraft.accentColor = editDraft.accentColor === color ? '' : color"
-                      />
-                    </div>
-                  </div>
-
-                  <div class="vault-cover-controls">
-                    <span class="form-label">Cover image</span>
-                    <div class="vault-actions">
-                      <button
-                        type="button"
-                        class="btn btn-secondary btn-compact"
-                        data-testid="editor-upload-cover-button"
-                        :disabled="Boolean(operation)"
-                        @click="triggerCoverInput(vault)"
-                      >
-                        Upload cover
-                      </button>
-                      <button
-                        v-if="vault.hasCover"
-                        type="button"
-                        class="btn btn-secondary btn-compact"
-                        data-testid="remove-cover-button"
-                        :disabled="Boolean(operation)"
-                        @click="removeCover(vault)"
-                      >
-                        Remove cover
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <p v-if="editError" class="error-message" role="alert" aria-live="polite">
-                {{ editError }}
-              </p>
-              <div class="vault-actions">
-                <button type="submit" class="btn btn-primary" :disabled="Boolean(operation)">
-                  {{ operation === 'saving' ? 'Saving...' : 'Save' }}
+              <div v-if="!needsRefresh" class="vault-banner-actions">
+                <button
+                  type="button"
+                  class="vault-icon-pill"
+                  :class="{ 'vault-icon-pill--active': vault.pinned }"
+                  data-testid="pin-vault-button"
+                  :aria-pressed="vault.pinned ? 'true' : 'false'"
+                  :aria-label="vault.pinned ? 'Unpin vault' : 'Pin vault'"
+                  :title="vault.pinned ? 'Unpin vault' : 'Pin vault'"
+                  :disabled="Boolean(operation)"
+                  @click.stop="togglePin(vault)"
+                >
+                  {{ vault.pinned ? '★' : '☆' }}
                 </button>
                 <button
                   type="button"
-                  class="btn btn-secondary"
+                  class="vault-icon-pill"
+                  data-testid="upload-cover-button"
+                  aria-label="Upload cover image"
+                  title="Upload cover image"
                   :disabled="Boolean(operation)"
-                  @click="cancelEdit"
+                  @click.stop="triggerCoverInput(vault)"
                 >
-                  Cancel
+                  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                    <rect x="2" y="3" width="12" height="10" rx="1.8" />
+                    <circle cx="5.7" cy="6.6" r="1.1" />
+                    <path d="m3.5 11.5 2.8-2.6 2 1.8 2.1-2.2 2.1 3" />
+                  </svg>
                 </button>
               </div>
-            </form>
-          </template>
-
-          <template v-else>
-            <div
-              v-if="viewMode === 'cards'"
-              class="vault-card-banner"
-              :style="bannerStyle(vault)"
-            >
-              <img
-                v-if="vault.hasCover"
-                class="vault-cover-img"
-                data-testid="vault-cover-image"
-                :src="coverUrlFor(vault)"
-                :alt="`Cover for ${vault.name}`"
-              />
-              <div class="vault-banner-top">
-                <div class="vault-banner-badges">
-                  <span v-if="!needsRefresh" class="vault-drag-grip" aria-hidden="true" title="Drag card to reorder">⋮⋮</span>
-                  <span v-if="vault.category" class="vault-category-badge">{{ vault.category }}</span>
-                  <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
-                </div>
-                <div v-if="!needsRefresh" class="vault-banner-actions">
-                  <button
-                    type="button"
-                    class="vault-icon-pill"
-                    :class="{ 'vault-icon-pill--active': vault.pinned }"
-                    data-testid="pin-vault-button"
-                    :aria-pressed="vault.pinned ? 'true' : 'false'"
-                    :title="vault.pinned ? 'Unpin vault' : 'Pin vault'"
-                    :disabled="Boolean(operation)"
-                    @click.stop="togglePin(vault)"
-                  >
-                    {{ vault.pinned ? '★' : '☆' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="vault-icon-pill"
-                    data-testid="upload-cover-button"
-                    title="Upload cover image"
-                    :disabled="Boolean(operation)"
-                    @click.stop="triggerCoverInput(vault)"
-                  >
-                    Photo
-                  </button>
-                </div>
-              </div>
             </div>
+          </div>
 
-            <div class="vault-card-body">
-              <div class="vault-details">
-                <div class="vault-title-line">
-                  <span
-                    v-if="viewMode === 'compact' && !needsRefresh"
-                    class="vault-drag-grip"
-                    aria-hidden="true"
-                    title="Drag card to reorder"
-                  >⋮⋮</span>
-                  <h3
-                    class="vault-card-heading"
-                    :class="{ 'vault-card-heading--clickable': !needsRefresh && !operation }"
-                    @click.stop="!needsRefresh && !operation && $emit('open', vault)"
-                  >
-                    {{ vault.name }}
-                  </h3>
-                  <span v-if="viewMode === 'compact'" class="vault-status">
-                    {{ vault.registered ? 'Customized' : 'Detected' }}
-                  </span>
-                  <span v-if="viewMode === 'compact' && vault.category" class="vault-category-badge">
-                    {{ vault.category }}
-                  </span>
-                </div>
-                <p class="vault-directory">{{ vault.directory }}/</p>
-                <p v-if="vault.description && viewMode === 'cards'" class="vault-description">
-                  {{ vault.description }}
-                </p>
+          <div class="vault-card-body">
+            <div class="vault-details">
+              <div class="vault-title-line">
+                <h3>{{ vault.name }}</h3>
+                <span v-if="viewMode === 'compact' && vault.category" class="vault-category-badge">
+                  {{ vault.category }}
+                </span>
               </div>
-
               <div class="vault-card-meta">
-                <span>{{ vault.noteCount || 0 }} {{ (vault.noteCount || 0) === 1 ? 'note' : 'notes' }}</span>
+                <span class="vault-directory">{{ vault.directory }}/</span>
+                <span>· {{ vault.noteCount || 0 }} {{ (vault.noteCount || 0) === 1 ? 'note' : 'notes' }}</span>
                 <span v-if="vault.lastModifiedAt">· {{ formatRelativeTime(vault.lastModifiedAt) }}</span>
               </div>
+              <p v-if="vault.description && viewMode === 'cards'" class="vault-description">
+                {{ vault.description }}
+              </p>
+            </div>
 
-              <div v-if="vault.tags && vault.tags.length > 0" class="vault-card-tags">
-                <template v-if="!needsRefresh">
-                  <button
-                    v-for="tag in vault.tags"
-                    :key="tag"
-                    type="button"
-                    class="vault-tag-chip"
-                    :class="{ 'vault-tag-chip--active': selectedTag.toLowerCase() === tag.toLowerCase() }"
-                    @click.stop="toggleTagFilter(tag)"
-                  >
-                    #{{ tag }}
-                  </button>
-                </template>
+            <div v-if="vault.tags && vault.tags.length > 0" class="vault-card-tags">
+              <template v-if="!needsRefresh">
+                <button
+                  v-for="tag in vault.tags"
+                  :key="tag"
+                  type="button"
+                  class="vault-tag-chip"
+                  :class="{ 'vault-tag-chip--active': selectedTag.toLowerCase() === tag.toLowerCase() }"
+                  @click.stop="toggleTagFilter(tag)"
+                >
+                  #{{ tag }}
+                </button>
+              </template>
+              <template v-else>
+                <span v-for="tag in vault.tags" :key="tag" class="vault-tag-chip">#{{ tag }}</span>
+              </template>
+            </div>
+
+            <div v-if="!needsRefresh" class="vault-card-footer">
+              <span class="vault-status">{{ vault.registered ? 'Customized' : 'Detected' }}</span>
+              <div class="vault-actions">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-open-vault"
+                  data-testid="open-vault-button"
+                  :disabled="Boolean(operation)"
+                  @click.stop="$emit('open', vault)"
+                >
+                  Open
+                </button>
+                <button
+                  v-if="!vault.registered"
+                  type="button"
+                  class="btn btn-ghost"
+                  :disabled="Boolean(operation)"
+                  @click.stop="startEdit(vault)"
+                >
+                  Customize
+                </button>
                 <template v-else>
-                  <span
-                    v-for="tag in vault.tags"
-                    :key="tag"
-                    class="vault-tag-chip"
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    data-testid="edit-vault-button"
+                    :disabled="Boolean(operation)"
+                    @click.stop="startEdit(vault)"
                   >
-                    #{{ tag }}
-                  </span>
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    :disabled="Boolean(operation)"
+                    @click.stop="resetVault(vault)"
+                  >
+                    {{ operation === 'resetting' ? 'Resetting...' : 'Reset' }}
+                  </button>
                 </template>
-              </div>
-
-              <div v-if="!needsRefresh" class="vault-card-footer">
-                <div class="vault-reorder-btns">
-                  <button
-                    type="button"
-                    class="btn btn-secondary btn-compact"
-                    data-testid="move-vault-earlier"
-                    aria-label="Move earlier"
-                    title="Move earlier"
-                    :disabled="Boolean(operation) || isFirstInOrder(vault)"
-                    @click.stop="moveVaultOffset(vault, -1)"
-                  >
-                    ←
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-secondary btn-compact"
-                    data-testid="move-vault-later"
-                    aria-label="Move later"
-                    title="Move later"
-                    :disabled="Boolean(operation) || isLastInOrder(vault)"
-                    @click.stop="moveVaultOffset(vault, 1)"
-                  >
-                    →
-                  </button>
-                </div>
-
-                <div class="vault-actions">
-                  <button
-                    type="button"
-                    class="btn btn-secondary btn-open-vault"
-                    data-testid="open-vault-button"
-                    :disabled="Boolean(operation)"
-                    @click="$emit('open', vault)"
-                  >
-                    Open
-                  </button>
-                  <button
-                    v-if="!vault.registered"
-                    type="button"
-                    class="btn btn-secondary"
-                    :disabled="Boolean(operation)"
-                    @click="startEdit(vault)"
-                  >
-                    Customize
-                  </button>
-                  <template v-else>
-                    <button
-                      type="button"
-                      class="btn btn-secondary"
-                      data-testid="edit-vault-button"
-                      :disabled="Boolean(operation)"
-                      @click="startEdit(vault)"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-secondary"
-                      :disabled="Boolean(operation)"
-                      @click="resetVault(vault)"
-                    >
-                      {{ operation === 'resetting' ? 'Resetting...' : 'Reset' }}
-                    </button>
-                  </template>
-                </div>
               </div>
             </div>
-          </template>
+          </div>
         </li>
       </ul>
     </template>
+
+    <!-- Floating Modal: Create New Vault -->
+    <div
+      v-if="showCreateForm"
+      class="ayame-modal-backdrop"
+      data-testid="create-vault-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-vault-modal-title"
+      @click.self="cancelCreateForm"
+    >
+      <div class="ayame-modal-card ayame-modal-card--wide">
+        <form
+          class="vault-editor"
+          data-testid="create-vault-form"
+          @submit.prevent="submitCreateVault"
+        >
+        <header class="ayame-modal-header">
+          <div>
+            <h3 id="create-vault-modal-title">Create new vault</h3>
+            <p class="ayame-modal-subtitle">Creates a vault folder and registers its hub metadata.</p>
+          </div>
+          <button
+            type="button"
+            class="ayame-modal-close"
+            aria-label="Close"
+            :disabled="Boolean(operation)"
+            @click="cancelCreateForm"
+          >
+            ×
+          </button>
+        </header>
+
+        <div class="ayame-modal-body">
+          <div class="vault-editor-fields">
+            <div class="form-group">
+              <label class="form-label" for="create-vault-name">Display name</label>
+              <input
+                id="create-vault-name"
+                v-model="createDraft.name"
+                class="form-input"
+                type="text"
+                maxlength="100"
+                placeholder="e.g. Research Hub"
+                :disabled="Boolean(operation)"
+                required
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="create-vault-dir">Folder name (optional)</label>
+              <input
+                id="create-vault-dir"
+                v-model="createDraft.directory"
+                class="form-input"
+                type="text"
+                maxlength="100"
+                placeholder="Auto-derived from display name"
+                :disabled="Boolean(operation)"
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="create-vault-category">Category</label>
+              <input
+                id="create-vault-category"
+                v-model="createDraft.category"
+                class="form-input"
+                type="text"
+                maxlength="60"
+                list="vault-categories-list"
+                placeholder="e.g. Worldbuilding, Study"
+                :disabled="Boolean(operation)"
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="create-vault-description">Description</label>
+              <input
+                id="create-vault-description"
+                v-model="createDraft.description"
+                class="form-input"
+                type="text"
+                maxlength="280"
+                placeholder="Short summary"
+                :disabled="Boolean(operation)"
+              />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="create-vault-tag-input">Tags</label>
+            <div class="vault-tag-editor">
+              <span
+                v-for="tag in createDraft.tags"
+                :key="tag"
+                class="vault-tag-chip vault-tag-chip--editable"
+              >
+                #{{ tag }}
+                <button
+                  type="button"
+                  class="vault-tag-remove"
+                  aria-label="Remove tag"
+                  @click="removeTagFromList(createDraft.tags, tag)"
+                >
+                  ×
+                </button>
+              </span>
+              <input
+                id="create-vault-tag-input"
+                v-model="createTagInput"
+                type="text"
+                class="vault-tag-inline-input"
+                placeholder="Add tag and press Enter"
+                :disabled="Boolean(operation)"
+                @keydown.enter.prevent="addTagFromInput('create')"
+                @keydown.,.prevent="addTagFromInput('create')"
+              />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <span class="form-label">Accent</span>
+            <div class="vault-color-swatches">
+              <button
+                type="button"
+                class="vault-color-swatch vault-color-swatch--none"
+                :class="{ 'vault-color-swatch--active': !createDraft.accentColor }"
+                aria-label="No accent color"
+                title="No accent color"
+                @click="createDraft.accentColor = ''"
+              >
+                ∅
+              </button>
+              <button
+                v-for="color in ACCENT_SWATCHES"
+                :key="color"
+                type="button"
+                class="vault-color-swatch"
+                :class="{ 'vault-color-swatch--active': createDraft.accentColor === color }"
+                :style="{ backgroundColor: color }"
+                :aria-label="`Select accent ${color}`"
+                @click="createDraft.accentColor = createDraft.accentColor === color ? '' : color"
+              />
+            </div>
+          </div>
+
+          <label class="vault-checkbox-row">
+            <input v-model="createDraft.createWelcomeNote" type="checkbox" :disabled="Boolean(operation)" />
+            <span>Create an introductory Welcome.md note</span>
+          </label>
+
+          <p v-if="createError" class="error-message" role="alert" aria-live="polite">
+            {{ createError }}
+          </p>
+        </div>
+
+        <div class="ayame-modal-footer">
+          <button type="button" class="btn btn-secondary" :disabled="Boolean(operation)" @click="cancelCreateForm">
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary" data-testid="create-vault-submit" :disabled="Boolean(operation)">
+            {{ operation === 'creating' ? 'Creating...' : 'Create vault' }}
+          </button>
+        </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Floating Modal: Customize / Edit Vault -->
+    <div
+      v-if="editingVault"
+      class="ayame-modal-backdrop"
+      data-testid="vault-editor-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-vault-modal-title"
+      @click.self="cancelEdit"
+    >
+      <div class="ayame-modal-card ayame-modal-card--wide">
+        <form
+          class="vault-editor"
+          data-testid="vault-editor"
+          @submit.prevent="saveVault(editingVault)"
+        >
+        <header class="ayame-modal-header">
+          <div>
+            <h3 id="edit-vault-modal-title">Customize vault</h3>
+            <p class="vault-directory">{{ editingVault.directory }}/</p>
+          </div>
+          <button
+            type="button"
+            class="ayame-modal-close"
+            aria-label="Close"
+            :disabled="Boolean(operation)"
+            @click="cancelEdit"
+          >
+            ×
+          </button>
+        </header>
+
+        <div class="ayame-modal-body">
+          <div class="vault-editor-fields">
+            <div class="form-group">
+              <label class="form-label" for="vault-name">Display name</label>
+              <input
+                id="vault-name"
+                v-model="editDraft.name"
+                class="form-input"
+                name="name"
+                type="text"
+                maxlength="100"
+                autocomplete="off"
+                :disabled="Boolean(operation)"
+                required
+              />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="edit-vault-category">Category</label>
+              <input
+                id="edit-vault-category"
+                v-model="editDraft.category"
+                class="form-input"
+                type="text"
+                maxlength="60"
+                list="vault-categories-list"
+                placeholder="Uncategorized"
+                :disabled="Boolean(operation)"
+              />
+            </div>
+
+            <div class="form-group vault-editor-field-full">
+              <label class="form-label" for="edit-vault-description">Description</label>
+              <input
+                id="edit-vault-description"
+                v-model="editDraft.description"
+                class="form-input"
+                type="text"
+                maxlength="280"
+                placeholder="Short summary of this vault"
+                :disabled="Boolean(operation)"
+              />
+            </div>
+          </div>
+
+          <div class="vault-editor-extras">
+            <div class="form-group">
+              <label class="form-label" for="edit-vault-tag-input">Tags</label>
+              <div class="vault-tag-editor">
+                <span
+                  v-for="tag in editDraft.tags"
+                  :key="tag"
+                  class="vault-tag-chip vault-tag-chip--editable"
+                >
+                  #{{ tag }}
+                  <button
+                    type="button"
+                    class="vault-tag-remove"
+                    aria-label="Remove tag"
+                    @click="removeTagFromList(editDraft.tags, tag)"
+                  >
+                    ×
+                  </button>
+                </span>
+                <input
+                  id="edit-vault-tag-input"
+                  v-model="editTagInput"
+                  type="text"
+                  class="vault-tag-inline-input"
+                  placeholder="Add tag + Enter"
+                  :disabled="Boolean(operation)"
+                  @keydown.enter.prevent="addTagFromInput('edit')"
+                  @keydown.,.prevent="addTagFromInput('edit')"
+                />
+              </div>
+            </div>
+
+            <div class="vault-editor-media-row">
+              <div>
+                <span class="form-label">Accent</span>
+                <div class="vault-color-swatches">
+                  <button
+                    type="button"
+                    class="vault-color-swatch vault-color-swatch--none"
+                    :class="{ 'vault-color-swatch--active': !editDraft.accentColor }"
+                    aria-label="No accent color"
+                    title="No accent color"
+                    @click="editDraft.accentColor = ''"
+                  >
+                    ∅
+                  </button>
+                  <button
+                    v-for="color in ACCENT_SWATCHES"
+                    :key="color"
+                    type="button"
+                    class="vault-color-swatch"
+                    :class="{ 'vault-color-swatch--active': editDraft.accentColor === color }"
+                    :style="{ backgroundColor: color }"
+                    :aria-label="`Select accent ${color}`"
+                    @click="editDraft.accentColor = editDraft.accentColor === color ? '' : color"
+                  />
+                </div>
+              </div>
+
+              <div class="vault-cover-controls">
+                <span class="form-label">Cover image</span>
+                <div class="vault-cover-preview">
+                  <img
+                    v-if="editingVault.hasCover"
+                    :src="coverUrlFor(editingVault)"
+                    class="vault-cover-thumb"
+                    alt=""
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-compact"
+                    data-testid="editor-upload-cover-button"
+                    :disabled="Boolean(operation)"
+                    @click="triggerCoverInput(editingVault)"
+                  >
+                    Upload cover
+                  </button>
+                  <button
+                    v-if="editingVault.hasCover"
+                    type="button"
+                    class="btn btn-secondary btn-compact"
+                    data-testid="remove-cover-button"
+                    :disabled="Boolean(operation)"
+                    @click="removeCover(editingVault)"
+                  >
+                    Remove cover
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p v-if="editError" class="error-message" role="alert" aria-live="polite">
+            {{ editError }}
+          </p>
+        </div>
+
+        <div class="ayame-modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            :disabled="Boolean(operation)"
+            @click="cancelEdit"
+          >
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary" data-testid="save-vault-button" :disabled="Boolean(operation)">
+            {{ operation === 'saving' ? 'Saving...' : 'Save' }}
+          </button>
+        </div>
+        </form>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -1130,6 +1026,11 @@ let mounted = true
 const hasApi = (name) => name in api && typeof api[name] === 'function'
 
 const supportsCreateVault = computed(() => hasApi('createVault'))
+
+const editingVault = computed(() => {
+  if (!editingDirectory.value) return null
+  return vaults.value.find((v) => v.directory === editingDirectory.value) || null
+})
 
 const totalNotesCount = computed(() =>
   vaults.value.reduce((sum, v) => sum + (typeof v.noteCount === 'number' ? v.noteCount : 0), 0)
@@ -1287,15 +1188,6 @@ const coverUrlFor = (vault) => {
   return vault.coverUpdatedAt ? `${base}?v=${encodeURIComponent(String(vault.coverUpdatedAt))}` : base
 }
 
-const bannerStyle = (vault) => {
-  if (vault.hasCover) return {}
-  const accent = vault.accentColor || '#a99aca'
-  return {
-    background: `linear-gradient(135deg, ${accent}33 0%, rgba(27, 28, 37, 0.96) 70%, rgba(17, 18, 24, 1) 100%)`,
-    borderBottomColor: `${accent}44`,
-  }
-}
-
 const formatRelativeTime = (ms) => {
   if (!ms || typeof ms !== 'number') return ''
   const diffSec = Math.max(0, Math.floor((Date.now() - ms) / 1000))
@@ -1307,6 +1199,11 @@ const formatRelativeTime = (ms) => {
   const diffDays = Math.floor(diffHr / 24)
   if (diffDays < 30) return `${diffDays}d ago`
   return new Date(ms).toLocaleDateString()
+}
+
+const openVaultFromCard = (vault) => {
+  if (needsRefresh.value || operation.value) return
+  emit('open', vault)
 }
 
 const showUnauthorized = () => {
@@ -1518,7 +1415,7 @@ const refreshAfterMutation = async (failureMessage) => {
 }
 
 const saveVault = async (vault) => {
-  if (operation.value || needsRefresh.value || editingDirectory.value !== vault.directory) {
+  if (!vault || operation.value || needsRefresh.value || editingDirectory.value !== vault.directory) {
     return
   }
 
@@ -1671,20 +1568,6 @@ const persistOrderDirectories = async (nextDirectories) => {
   }
 }
 
-const isFirstInOrder = (vault) => vaults.value[0]?.directory === vault.directory
-const isLastInOrder = (vault) => vaults.value[vaults.value.length - 1]?.directory === vault.directory
-
-const moveVaultOffset = async (vault, delta) => {
-  const dirs = vaults.value.map((v) => v.directory)
-  const idx = dirs.indexOf(vault.directory)
-  const targetIdx = idx + delta
-  if (idx < 0 || targetIdx < 0 || targetIdx >= dirs.length) return
-  const next = [...dirs]
-  const [item] = next.splice(idx, 1)
-  next.splice(targetIdx, 0, item)
-  await persistOrderDirectories(next)
-}
-
 const clearCardDrag = () => {
   draggingDirectory.value = null
   dragOverDirectory.value = null
@@ -1692,7 +1575,7 @@ const clearCardDrag = () => {
 }
 
 const handleCardDragStart = (vault, event) => {
-  if (operation.value || needsRefresh.value || editingDirectory.value === vault.directory) {
+  if (operation.value || needsRefresh.value || editingDirectory.value) {
     event.preventDefault?.()
     return
   }
@@ -1718,7 +1601,7 @@ const handleCardDragLeave = (vault, event) => {
 
 const handleCardDrop = async (targetVault, event) => {
   const droppedFile = event.dataTransfer?.files?.[0]
-  if (droppedFile && (!draggingDirectory.value)) {
+  if (droppedFile && !draggingDirectory.value) {
     clearCardDrag()
     await uploadCoverFile(targetVault, droppedFile)
     return
@@ -1866,7 +1749,17 @@ const removeCover = async (vault) => {
   }
 }
 
+const handleModalEscape = (event) => {
+  if (event.key !== 'Escape' || operation.value) return
+  if (editingDirectory.value) {
+    cancelEdit()
+  } else if (showCreateForm.value) {
+    cancelCreateForm()
+  }
+}
+
 onMounted(() => {
+  window.addEventListener('keydown', handleModalEscape)
   if (Array.isArray(props.initialVaults)) {
     vaults.value = props.initialVaults
     hasLoaded.value = true
@@ -1879,5 +1772,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   mounted = false
+  window.removeEventListener('keydown', handleModalEscape)
 })
 </script>
