@@ -636,3 +636,164 @@ test('restart preserves owner and session', async (t) => {
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('POST /auth/login extends session to 30 days with rememberMe and rate limits repeated failures', async (t) => {
+  const db = openDatabase(':memory:')
+  const app = createApp({
+    db,
+    vaultsRoot: defaultTestVaultsRoot,
+    loginRateLimit: { maxAttempts: 3, windowMs: 60_000 },
+  })
+  t.after(() => app.close())
+
+  await app.inject({
+    method: 'POST',
+    url: '/auth/owner',
+    payload: { username: 'auank', password: 'password123' },
+  })
+
+  for (let i = 0; i < 3; i++) {
+    const fail = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { username: 'auank', password: 'wrong' },
+    })
+    assert.equal(fail.statusCode, 401)
+  }
+
+  const throttled = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'password123' },
+  })
+  assert.equal(throttled.statusCode, 429)
+  assert.ok(Number(throttled.headers['retry-after']) >= 1)
+  assert.deepEqual(throttled.json(), { error: 'TOO_MANY_ATTEMPTS' })
+
+  const appFresh = createApp({
+    db,
+    vaultsRoot: defaultTestVaultsRoot,
+    loginRateLimit: { maxAttempts: 5, windowMs: 60_000 },
+  })
+  t.after(() => appFresh.close())
+
+  const before = Date.now()
+  const remembered = await appFresh.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'password123', rememberMe: true },
+  })
+  assert.equal(remembered.statusCode, 204)
+  const cookie = remembered.headers['set-cookie']
+  const token = cookie.match(/ayame_session=([0-9a-f]{64})/)[1]
+  const row = getSession(db, hashToken(token))
+  assert.ok(row.expires_at >= before + 29 * 24 * 60 * 60 * 1000)
+})
+
+test('account security routes expose account info, change password, and revoke other sessions', async (t) => {
+  const db = openDatabase(':memory:')
+  const app = createTestApp({ db })
+  t.after(() => app.close())
+
+  const unauthAccount = await app.inject({ method: 'GET', url: '/auth/account' })
+  assert.equal(unauthAccount.statusCode, 401)
+  assert.equal(unauthAccount.headers['cache-control'], 'no-store')
+
+  await app.inject({
+    method: 'POST',
+    url: '/auth/owner',
+    payload: { username: 'auank', password: 'password123' },
+  })
+
+  const login1 = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'password123' },
+  })
+  const login2 = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'password123' },
+  })
+  const login3 = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'password123' },
+  })
+  const cookie1 = login1.headers['set-cookie']
+  const cookie2 = login2.headers['set-cookie']
+  const cookie3 = login3.headers['set-cookie']
+
+  const accountRes = await app.inject({
+    method: 'GET',
+    url: '/auth/account',
+    headers: { cookie: cookie1 },
+  })
+  assert.equal(accountRes.statusCode, 200)
+  assert.equal(accountRes.headers['cache-control'], 'no-store')
+  assert.deepEqual(accountRes.json(), { username: 'auank', activeSessions: 3 })
+
+  const revokeOthers = await app.inject({
+    method: 'POST',
+    url: '/auth/logout-others',
+    headers: { cookie: cookie1 },
+  })
+  assert.equal(revokeOthers.statusCode, 200)
+  assert.equal(revokeOthers.headers['cache-control'], 'no-store')
+  assert.deepEqual(revokeOthers.json(), { revoked: 2 })
+
+  assert.equal((await app.inject({ method: 'GET', url: '/auth/account', headers: { cookie: cookie2 } })).statusCode, 401)
+  assert.equal((await app.inject({ method: 'GET', url: '/auth/account', headers: { cookie: cookie3 } })).statusCode, 401)
+
+  const login4 = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'password123' },
+  })
+  const cookie4 = login4.headers['set-cookie']
+
+  const badNewPass = await app.inject({
+    method: 'PUT',
+    url: '/auth/password',
+    headers: { cookie: cookie1 },
+    payload: { currentPassword: 'password123', newPassword: '' },
+  })
+  assert.equal(badNewPass.statusCode, 400)
+  assert.deepEqual(badNewPass.json(), { error: 'INVALID_PASSWORD' })
+
+  const wrongCurPass = await app.inject({
+    method: 'PUT',
+    url: '/auth/password',
+    headers: { cookie: cookie1 },
+    payload: { currentPassword: 'wrong', newPassword: 'new-password-456' },
+  })
+  assert.equal(wrongCurPass.statusCode, 401)
+  assert.deepEqual(wrongCurPass.json(), { error: 'INVALID_CURRENT_PASSWORD' })
+
+  const changeOk = await app.inject({
+    method: 'PUT',
+    url: '/auth/password',
+    headers: { cookie: cookie1 },
+    payload: { currentPassword: 'password123', newPassword: 'new-password-456' },
+  })
+  assert.equal(changeOk.statusCode, 204)
+  assert.equal(changeOk.headers['cache-control'], 'no-store')
+
+  // Current session stays valid, cookie4 revoked, new password works
+  assert.equal((await app.inject({ method: 'GET', url: '/auth/account', headers: { cookie: cookie1 } })).json().activeSessions, 1)
+  assert.equal((await app.inject({ method: 'GET', url: '/auth/account', headers: { cookie: cookie4 } })).statusCode, 401)
+
+  const oldLogin = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'password123' },
+  })
+  assert.equal(oldLogin.statusCode, 401)
+
+  const newLogin = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { username: 'auank', password: 'new-password-456' },
+  })
+  assert.equal(newLogin.statusCode, 204)
+})

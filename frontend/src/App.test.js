@@ -11,6 +11,9 @@ vi.mock('./auth/api.js', () => ({
   createOwner: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
+  getAccount: vi.fn(),
+  changePassword: vi.fn(),
+  logoutOtherSessions: vi.fn(),
 }))
 
 vi.mock('./vaults/api.js', () => ({
@@ -326,6 +329,73 @@ describe('App authentication flow', () => {
 
       resolveLogin({ ok: true })
       await flushPromises()
+    })
+
+    it('supports password visibility toggle, rememberMe option, and TOO_MANY_ATTEMPTS message', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: false })
+      const throttledError = Object.assign(new Error('TOO_MANY_ATTEMPTS'), { code: 'TOO_MANY_ATTEMPTS' })
+      api.login.mockRejectedValueOnce(throttledError).mockResolvedValueOnce({ ok: true })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      const passwordInput = wrapper.find('input#login-password')
+      expect(passwordInput.attributes('type')).toBe('password')
+      await wrapper.find('[data-testid="toggle-password-visibility"]').trigger('click')
+      expect(passwordInput.attributes('type')).toBe('text')
+
+      await wrapper.find('input[name="username"]').setValue('auank')
+      await passwordInput.setValue('password123')
+      await wrapper.find('[data-testid="remember-me-checkbox"]').setValue(true)
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+
+      expect(api.login).toHaveBeenCalledWith({
+        username: 'auank',
+        password: 'password123',
+        rememberMe: true,
+      })
+      expect(wrapper.find('[role="alert"]').text()).toContain('Too many login attempts')
+
+      await passwordInput.setValue('password123')
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(true)
+    })
+
+    it('opens Account & Security modal from authenticated header and supports session revocation & password change', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.getAccount.mockResolvedValue({ username: 'auank', activeSessions: 3 })
+      api.logoutOtherSessions.mockResolvedValue({ revoked: 2 })
+      api.changePassword.mockResolvedValue({ ok: true })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      await wrapper.find('[data-testid="account-button"]').trigger('click')
+      await flushPromises()
+
+      const modal = wrapper.find('[data-testid="account-modal"]')
+      expect(modal.exists()).toBe(true)
+      expect(modal.text()).toContain('@auank')
+      expect(modal.text()).toContain('3 active sessions')
+
+      await modal.find('[data-testid="logout-other-sessions-button"]').trigger('click')
+      await flushPromises()
+      expect(api.logoutOtherSessions).toHaveBeenCalledTimes(1)
+      expect(modal.text()).toContain('Signed out 2 other sessions.')
+
+      await modal.find('#account-current-password').setValue('oldpass')
+      await modal.find('#account-new-password').setValue('newpass123')
+      await modal.find('#account-confirm-password').setValue('newpass123')
+      await modal.find('[data-testid="change-password-form"]').trigger('submit')
+      await flushPromises()
+
+      expect(api.changePassword).toHaveBeenCalledWith({
+        currentPassword: 'oldpass',
+        newPassword: 'newpass123',
+      })
+      expect(modal.text()).toContain('Password updated.')
     })
   })
 

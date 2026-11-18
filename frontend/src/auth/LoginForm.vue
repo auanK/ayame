@@ -1,7 +1,9 @@
 <template>
-  <section class="auth-section" data-testid="login-form">
-    <h2>Login</h2>
-    <p class="status-message">Sign in to continue.</p>
+  <section class="auth-section auth-card" data-testid="login-form">
+    <div class="auth-card-header">
+      <h2>Welcome back</h2>
+      <p class="status-message">Sign in to access your vaults.</p>
+    </div>
 
     <div v-if="errorMessage" class="error-message" role="alert" aria-live="polite">
       {{ errorMessage }}
@@ -17,6 +19,8 @@
           type="text"
           class="form-input"
           autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
           required
           :disabled="pending"
         />
@@ -24,17 +28,46 @@
 
       <div class="form-group">
         <label for="login-password" class="form-label">Password</label>
+        <div class="password-field">
+          <input
+            id="login-password"
+            v-model="password"
+            name="password"
+            :type="showPassword ? 'text' : 'password'"
+            class="form-input form-input--with-toggle"
+            autocomplete="current-password"
+            required
+            :disabled="pending"
+            @keydown="handleKeyState"
+            @keyup="handleKeyState"
+            @blur="capsLockOn = false"
+          />
+          <button
+            type="button"
+            class="password-toggle-btn"
+            data-testid="toggle-password-visibility"
+            :aria-label="showPassword ? 'Hide password' : 'Show password'"
+            :aria-pressed="showPassword ? 'true' : 'false'"
+            :disabled="pending"
+            @click="showPassword = !showPassword"
+          >
+            {{ showPassword ? 'Hide' : 'Show' }}
+          </button>
+        </div>
+        <p v-if="capsLockOn" class="auth-caps-warning" data-testid="caps-lock-warning" role="status">
+          Caps Lock is on
+        </p>
+      </div>
+
+      <label class="auth-remember-row">
         <input
-          id="login-password"
-          v-model="password"
-          name="password"
-          type="password"
-          class="form-input"
-          autocomplete="current-password"
-          required
+          v-model="rememberMe"
+          type="checkbox"
+          data-testid="remember-me-checkbox"
           :disabled="pending"
         />
-      </div>
+        <span>Keep me signed in (30 days)</span>
+      </label>
 
       <button
         type="submit"
@@ -69,6 +102,9 @@ const emit = defineEmits(['submit'])
 
 const username = ref(props.initialUsername)
 const password = ref('')
+const showPassword = ref(false)
+const rememberMe = ref(false)
+const capsLockOn = ref(false)
 
 watch(
   () => props.initialUsername,
@@ -79,15 +115,26 @@ watch(
   }
 )
 
+const handleKeyState = (event) => {
+  if (typeof event.getModifierState === 'function') {
+    capsLockOn.value = Boolean(event.getModifierState('CapsLock'))
+  }
+}
+
 const handleSubmit = () => {
   if (props.pending) {
     return
   }
   const submittedPassword = password.value
   password.value = ''
-  emit('submit', {
+  showPassword.value = false
+  const payload = {
     username: username.value,
     password: submittedPassword,
-  })
+  }
+  if (rememberMe.value) {
+    payload.rememberMe = true
+  }
+  emit('submit', payload)
 }
 </script>

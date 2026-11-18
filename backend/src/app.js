@@ -1,6 +1,11 @@
 import Fastify from 'fastify'
 import fastifyCookie from '@fastify/cookie'
-import { getOwner, closeDatabase } from './database.js'
+import {
+  getOwner,
+  closeDatabase,
+  countActiveSessions,
+  pruneExpiredSessions,
+} from './database.js'
 import {
   validUsername,
   validPassword,
@@ -9,13 +14,57 @@ import {
   createSession,
   validateSession,
   destroySession,
+  changeOwnerPassword,
+  revokeOtherSessions,
 } from './auth/authentication.js'
 import { registerVaultRoutes } from './vaults/routes.js'
+
+const createLoginRateLimiter = ({ maxAttempts = 10, windowMs = 15 * 60 * 1000 } = {}) => {
+  const attemptsByKey = new Map()
+  const MAX_TRACKED_KEYS = 1024
+
+  const pruneWindow = (key, now) => {
+    const existing = attemptsByKey.get(key)
+    if (!existing) return []
+    const recent = existing.filter((ts) => ts > now - windowMs)
+    if (recent.length === 0) {
+      attemptsByKey.delete(key)
+      return []
+    }
+    attemptsByKey.set(key, recent)
+    return recent
+  }
+
+  return {
+    check(key, now = Date.now()) {
+      if (!maxAttempts || maxAttempts <= 0) return { allowed: true, retryAfterSeconds: 0 }
+      const recent = pruneWindow(key, now)
+      if (recent.length >= maxAttempts) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((recent[0] + windowMs - now) / 1000))
+        return { allowed: false, retryAfterSeconds }
+      }
+      return { allowed: true, retryAfterSeconds: 0 }
+    },
+    recordFailure(key, now = Date.now()) {
+      if (!attemptsByKey.has(key) && attemptsByKey.size >= MAX_TRACKED_KEYS) {
+        const oldestKey = attemptsByKey.keys().next().value
+        attemptsByKey.delete(oldestKey)
+      }
+      const recent = pruneWindow(key, now)
+      recent.push(now)
+      attemptsByKey.set(key, recent)
+    },
+    clear(key) {
+      attemptsByKey.delete(key)
+    },
+  }
+}
 
 export const createApp = ({
   db,
   vaultsRoot,
   secure = process.env.NODE_ENV === 'production',
+  loginRateLimit = { maxAttempts: 10, windowMs: 15 * 60 * 1000 },
 } = {}) => {
   if (!db) {
     throw new TypeError('Database is required')
@@ -25,6 +74,7 @@ export const createApp = ({
   }
 
   const app = Fastify({ exposeHeadRoutes: false })
+  const limiter = createLoginRateLimiter(loginRateLimit)
 
   app.setErrorHandler((err, req, reply) => {
     if (
@@ -101,14 +151,24 @@ export const createApp = ({
   })
 
   app.post('/auth/login', { config: { public: true } }, async (req, reply) => {
-    const { username, password } = req.body || {}
+    const key = req.ip || 'local'
+    const limitStatus = limiter.check(key)
+    if (!limitStatus.allowed) {
+      reply.header('retry-after', String(limitStatus.retryAfterSeconds))
+      return reply.code(429).send({ error: 'TOO_MANY_ATTEMPTS' })
+    }
+
+    const { username, password, rememberMe } = req.body || {}
 
     const owner = await authenticateUser(db, { username, password })
     if (!owner) {
+      limiter.recordFailure(key)
       return reply.code(401).send({ error: 'UNAUTHORIZED' })
     }
 
-    const session = createSession(db)
+    limiter.clear(key)
+    pruneExpiredSessions(db)
+    const session = createSession(db, { rememberMe: rememberMe === true })
     reply.setCookie('ayame_session', session.rawToken, {
       path: '/',
       httpOnly: true,
@@ -125,6 +185,42 @@ export const createApp = ({
     }
     reply.clearCookie('ayame_session', { path: '/' })
     return reply.code(204).send()
+  })
+
+  app.get('/auth/account', { config: { noStore: true } }, async (req, reply) => {
+    const owner = getOwner(db)
+    if (!owner) {
+      return reply.code(401).send({ error: 'UNAUTHORIZED' })
+    }
+    return reply.send({
+      username: owner.username,
+      activeSessions: countActiveSessions(db),
+    })
+  })
+
+  app.put('/auth/password', { config: { noStore: true } }, async (req, reply) => {
+    const { currentPassword, newPassword } = req.body || {}
+    try {
+      await changeOwnerPassword(db, {
+        currentPassword,
+        newPassword,
+        keepSessionToken: req.sessionToken,
+      })
+      return reply.code(204).send()
+    } catch (err) {
+      if (err.code === 'INVALID_PASSWORD') {
+        return reply.code(400).send({ error: 'INVALID_PASSWORD' })
+      }
+      if (err.code === 'INVALID_CURRENT_PASSWORD') {
+        return reply.code(401).send({ error: 'INVALID_CURRENT_PASSWORD' })
+      }
+      throw err
+    }
+  })
+
+  app.post('/auth/logout-others', { config: { noStore: true } }, async (req, reply) => {
+    const result = revokeOtherSessions(db, req.sessionToken)
+    return reply.send(result)
   })
 
   registerVaultRoutes(app, db, vaultsRoot)

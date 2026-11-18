@@ -130,14 +130,18 @@ a:focus-visible {
 }
 
 .ayame-app {
-  width: min(100%, 420px);
+  width: min(100%, 440px);
   min-height: 100vh;
   margin-inline: auto;
-  padding: clamp(2.25rem, 9vh, 5rem) 1.5rem 3rem;
+  padding: clamp(2rem, 8vh, 4.5rem) 1.5rem 3rem;
+}
+
+.ayame-app:not(.ayame-app--workspace):not(.ayame-app--fullscreen) {
+  background-image: radial-gradient(circle at 50% 0%, rgba(169, 154, 202, 0.08), transparent 58%);
 }
 
 .ayame-app--workspace {
-  width: min(100%, 1240px);
+  width: min(100%, 1280px);
   padding-top: 1.75rem;
 }
 
@@ -165,6 +169,18 @@ a:focus-visible {
   justify-content: center;
 }
 
+.ayame-brand-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.ayame-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .ayame-wordmark {
   margin: 0;
   color: var(--ayame-text);
@@ -176,7 +192,7 @@ a:focus-visible {
 }
 
 .ayame-tagline {
-  margin: 0.45rem 0 1.5rem;
+  margin: 0.45rem 0 1.35rem;
   color: var(--ayame-text-muted);
   font-size: 0.9375rem;
   text-align: center;
@@ -188,8 +204,131 @@ a:focus-visible {
 
 .ayame-divider {
   height: 1px;
-  margin-bottom: 2.25rem;
+  margin-bottom: 1.75rem;
   background: var(--ayame-border);
+}
+
+.auth-card {
+  padding: 1.6rem 1.5rem 1.65rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(27, 28, 37, 0.95) 0%, rgba(22, 23, 30, 0.98) 100%);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
+}
+
+.auth-card-header .status-message {
+  margin-bottom: 1.25rem;
+}
+
+.password-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.form-input--with-toggle {
+  padding-right: 4.25rem;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 0.45rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: 4px;
+  background: var(--ayame-background);
+  color: var(--ayame-text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.password-toggle-btn:hover:not(:disabled),
+.password-toggle-btn:focus-visible:not(:disabled) {
+  color: var(--ayame-text);
+  border-color: var(--ayame-primary);
+  outline: none;
+}
+
+.password-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-caps-warning {
+  margin: 0.35rem 0 0;
+  color: #e6c387;
+  font-size: 0.8rem;
+}
+
+.auth-remember-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 1.2rem;
+  color: var(--ayame-text-muted);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.auth-remember-row input {
+  accent-color: var(--ayame-primary);
+}
+
+.auth-field-hint {
+  margin: 0.35rem 0 0;
+  color: var(--ayame-text-muted);
+  font-size: 0.78rem;
+}
+
+.auth-field-hint--valid {
+  color: #8fc7a8;
+}
+
+.auth-field-hint--warn {
+  color: var(--ayame-error);
+}
+
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.password-strength-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(170, 166, 184, 0.16);
+  overflow: hidden;
+}
+
+.password-strength-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 160ms ease, background-color 160ms ease;
+}
+
+.password-strength-fill--weak {
+  background: var(--ayame-error);
+}
+
+.password-strength-fill--medium {
+  background: #e6c387;
+}
+
+.password-strength-fill--strong {
+  background: #8fc7a8;
+}
+
+.password-strength-label {
+  font-size: 0.75rem;
+  color: var(--ayame-text-muted);
+  min-width: 3rem;
+  text-align: right;
 }
 
 h2 {

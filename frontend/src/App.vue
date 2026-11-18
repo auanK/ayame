@@ -7,17 +7,30 @@
     }"
   >
     <header v-if="!resolvedVault" class="ayame-header">
-      <h1 class="ayame-wordmark">ayame</h1>
-      <button
-        v-if="view === 'authenticated'"
-        type="button"
-        class="btn btn-secondary"
-        data-testid="logout-button"
-        :disabled="pending || editorSaving || editorReloading"
-        @click="requestLogout"
-      >
-        {{ pending ? 'Signing out...' : 'Logout' }}
-      </button>
+      <div class="ayame-brand-row">
+        <AyameMark :size="30" />
+        <h1 class="ayame-wordmark">ayame</h1>
+      </div>
+      <div v-if="view === 'authenticated'" class="ayame-header-actions">
+        <button
+          type="button"
+          class="btn btn-secondary"
+          data-testid="account-button"
+          :disabled="pending || editorSaving || editorReloading"
+          @click="showAccountModal = true"
+        >
+          Account
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary"
+          data-testid="logout-button"
+          :disabled="pending || editorSaving || editorReloading"
+          @click="requestLogout"
+        >
+          {{ pending ? 'Signing out...' : 'Logout' }}
+        </button>
+      </div>
     </header>
 
     <template v-if="!resolvedVault">
@@ -82,6 +95,7 @@
         @unauthorized="handleVaultUnauthorized"
         @state="handleEditorState"
         @logout="requestLogout"
+        @open-account="showAccountModal = true"
       />
       <div
         v-else-if="resolvingVault"
@@ -109,6 +123,12 @@
       </p>
     </section>
 
+    <AccountModal
+      v-if="showAccountModal && view === 'authenticated'"
+      @close="showAccountModal = false"
+      @unauthorized="handleVaultUnauthorized"
+    />
+
     <div v-if="logoutConfirm" class="logout-confirm" role="dialog" aria-modal="true" aria-labelledby="logout-title">
       <p id="logout-title">Discard your unsaved changes and log out?</p>
       <button type="button" class="btn btn-secondary" data-testid="logout-keep-editing" :disabled="editorSaving || editorReloading" @click="logoutConfirm = false">Keep editing</button>
@@ -119,11 +139,13 @@
 
 <script setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
+import AyameMark from './auth/AyameMark.vue'
 import SetupForm from './auth/SetupForm.vue'
 import LoginForm from './auth/LoginForm.vue'
+import AccountModal from './auth/AccountModal.vue'
 import VaultsPanel from './vaults/VaultsPanel.vue'
 import VaultBrowser from './vaults/VaultBrowser.vue'
-import { getAuthStatus, createOwner, login, logout } from './auth/api.js'
+import * as authApi from './auth/api.js'
 import { getVaults } from './vaults/api.js'
 import { isValidVaultDirectory, useAyameRouter } from './router/index.js'
 
@@ -141,6 +163,7 @@ const editorDirty = ref(false)
 const editorSaving = ref(false)
 const editorReloading = ref(false)
 const logoutConfirm = ref(false)
+const showAccountModal = ref(false)
 
 let isMounted = true
 let authGeneration = 0
@@ -302,7 +325,7 @@ const fetchStatus = async () => {
   errorMessage.value = ''
   await ensureInitialRouteReady()
   try {
-    const status = await getAuthStatus()
+    const status = await authApi.getAuthStatus()
     if (!isMounted || currentAuthGen !== authGeneration) return
     if (!status.initialized) {
       view.value = 'setup'
@@ -327,7 +350,7 @@ const handleSetupSubmit = async ({ username, password }) => {
   errorMessage.value = ''
 
   try {
-    await createOwner({ username, password })
+    await authApi.createOwner({ username, password })
     if (!isMounted) return
     preservedUsername.value = username
     view.value = 'login'
@@ -351,7 +374,7 @@ const handleSetupSubmit = async ({ username, password }) => {
   }
 }
 
-const handleLoginSubmit = async ({ username, password }) => {
+const handleLoginSubmit = async ({ username, password, rememberMe }) => {
   if (pending.value) {
     return
   }
@@ -359,7 +382,10 @@ const handleLoginSubmit = async ({ username, password }) => {
   errorMessage.value = ''
 
   try {
-    await login({ username, password })
+    const payload = rememberMe === true
+      ? { username, password, rememberMe: true }
+      : { username, password }
+    await authApi.login(payload)
     if (!isMounted) return
     authGeneration++
     view.value = 'authenticated'
@@ -369,6 +395,8 @@ const handleLoginSubmit = async ({ username, password }) => {
     if (!isMounted) return
     if (err.code === 'UNAUTHORIZED') {
       errorMessage.value = 'Invalid username or password.'
+    } else if (err.code === 'TOO_MANY_ATTEMPTS') {
+      errorMessage.value = 'Too many login attempts. Wait a moment and try again.'
     } else {
       errorMessage.value = 'Ayame could not reach the server.'
     }
@@ -411,6 +439,7 @@ const clearAuthenticatedState = () => {
   editorSaving.value = false
   editorReloading.value = false
   logoutConfirm.value = false
+  showAccountModal.value = false
 }
 
 const handleLogout = async () => {
@@ -421,7 +450,7 @@ const handleLogout = async () => {
   errorMessage.value = ''
 
   try {
-    await logout()
+    await authApi.logout()
     if (!isMounted) return
     clearAuthenticatedState()
     view.value = 'login'

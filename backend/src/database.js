@@ -2,6 +2,29 @@ import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
 
+const OWNER_COLS = ['id', 'username', 'password_hash']
+const SESSION_COLS = ['token_hash', 'expires_at']
+const V1_VAULT_COLS = ['id', 'name', 'directory']
+const V2_VAULT_COLS = [
+  'id',
+  'name',
+  'directory',
+  'position',
+  'category',
+  'tags_json',
+  'description',
+  'accent_color',
+  'pinned',
+  'cover_mime',
+  'cover_blob',
+  'cover_updated_at',
+]
+
+const hasExactColumns = (db, table, expected) => {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name)
+  return cols.length === expected.length && expected.every((col) => cols.includes(col))
+}
+
 const failCorruption = (db, message = 'Database corrupted') => {
   db.close()
   throw new Error(message)
@@ -26,15 +49,17 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
     .map((r) => r.name)
     .sort()
 
-  const isFresh = userTables.length === 0 && userVersion === 0
-  const isCurrentSchema =
-    userVersion === 1 &&
+  const hasExpectedTables =
     userTables.length === 3 &&
     userTables[0] === 'owner' &&
     userTables[1] === 'session' &&
     userTables[2] === 'vault'
 
-  if (!isFresh && !isCurrentSchema) {
+  const isFresh = userTables.length === 0 && userVersion === 0
+  const isV1Schema = userVersion === 1 && hasExpectedTables
+  const isV2Schema = userVersion === 2 && hasExpectedTables
+
+  if (!isFresh && !isV1Schema && !isV2Schema) {
     failCorruption(db, 'Database corrupted: unexpected schema')
   }
 
@@ -75,10 +100,19 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
         CREATE TABLE vault (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
-          directory TEXT NOT NULL UNIQUE
+          directory TEXT NOT NULL UNIQUE,
+          position INTEGER,
+          category TEXT NOT NULL DEFAULT '',
+          tags_json TEXT NOT NULL DEFAULT '[]',
+          description TEXT NOT NULL DEFAULT '',
+          accent_color TEXT NOT NULL DEFAULT '',
+          pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+          cover_mime TEXT,
+          cover_blob BLOB,
+          cover_updated_at INTEGER
         );
       `)
-      db.pragma('user_version = 1')
+      db.pragma('user_version = 2')
     })
     try {
       initialize()
@@ -86,15 +120,43 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
       db.close()
       throw err
     }
-  } else if (isCurrentSchema) {
+  } else if (isV1Schema) {
     validateOwnerSessionInvariants()
-    const cols = db.prepare('PRAGMA table_info(vault)').all().map((c) => c.name)
-    const hasExpectedColumns =
-      cols.length === 3 &&
-      cols.includes('id') &&
-      cols.includes('name') &&
-      cols.includes('directory')
-    if (!hasExpectedColumns) {
+    if (
+      !hasExactColumns(db, 'owner', OWNER_COLS) ||
+      !hasExactColumns(db, 'session', SESSION_COLS) ||
+      !hasExactColumns(db, 'vault', V1_VAULT_COLS)
+    ) {
+      failCorruption(db, 'Database corrupted: unexpected vault schema')
+    }
+
+    const migrateV1ToV2 = db.transaction(() => {
+      db.exec(`
+        ALTER TABLE vault ADD COLUMN position INTEGER;
+        ALTER TABLE vault ADD COLUMN category TEXT NOT NULL DEFAULT '';
+        ALTER TABLE vault ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE vault ADD COLUMN description TEXT NOT NULL DEFAULT '';
+        ALTER TABLE vault ADD COLUMN accent_color TEXT NOT NULL DEFAULT '';
+        ALTER TABLE vault ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1));
+        ALTER TABLE vault ADD COLUMN cover_mime TEXT;
+        ALTER TABLE vault ADD COLUMN cover_blob BLOB;
+        ALTER TABLE vault ADD COLUMN cover_updated_at INTEGER;
+      `)
+      db.pragma('user_version = 2')
+    })
+    try {
+      migrateV1ToV2()
+    } catch (err) {
+      db.close()
+      throw err
+    }
+  } else if (isV2Schema) {
+    validateOwnerSessionInvariants()
+    if (
+      !hasExactColumns(db, 'owner', OWNER_COLS) ||
+      !hasExactColumns(db, 'session', SESSION_COLS) ||
+      !hasExactColumns(db, 'vault', V2_VAULT_COLS)
+    ) {
       failCorruption(db, 'Database corrupted: unexpected vault schema')
     }
   }
@@ -116,6 +178,10 @@ export const insertOwner = (database, username, passwordHash) => {
   )
 }
 
+export const updateOwnerPassword = (database, passwordHash) => {
+  database.prepare('UPDATE owner SET password_hash = ? WHERE id = 1').run(passwordHash)
+}
+
 export const getSession = (database, tokenHash) => {
   return database.prepare('SELECT token_hash, expires_at FROM session WHERE token_hash = ?').get(tokenHash)
 }
@@ -126,6 +192,18 @@ export const insertSession = (database, tokenHash, expiresAt) => {
 
 export const deleteSession = (database, tokenHash) => {
   database.prepare('DELETE FROM session WHERE token_hash = ?').run(tokenHash)
+}
+
+export const countActiveSessions = (database, now = Date.now()) => {
+  return database.prepare('SELECT COUNT(*) AS count FROM session WHERE expires_at > ?').get(now).count
+}
+
+export const deleteOtherSessions = (database, keepTokenHash) => {
+  return database.prepare('DELETE FROM session WHERE token_hash != ?').run(keepTokenHash).changes
+}
+
+export const pruneExpiredSessions = (database, now = Date.now()) => {
+  return database.prepare('DELETE FROM session WHERE expires_at <= ?').run(now).changes
 }
 
 export const closeDatabase = (database) => {

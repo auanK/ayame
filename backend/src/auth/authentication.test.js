@@ -21,6 +21,8 @@ import {
   createSession,
   validateSession,
   destroySession,
+  changeOwnerPassword,
+  revokeOtherSessions,
 } from './authentication.js'
 
 test('validUsername enforces username contract', () => {
@@ -626,5 +628,71 @@ test('closeDatabase preserves WAL journal mode persistently without switching to
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
+})
+
+test('createSession supports 30-day rememberMe expiry alongside 7-day default', (t) => {
+  const db = openDatabase(':memory:')
+  t.after(() => db.close())
+
+  const now = 1_000_000
+  const thirtyDays = 30 * 24 * 60 * 60 * 1000
+  const remembered = createSession(db, { now, rememberMe: true })
+  assert.equal(remembered.expiresAt, now + thirtyDays)
+  assert.ok(validateSession(db, remembered.rawToken, { now: now + thirtyDays - 1 }))
+  assert.equal(validateSession(db, remembered.rawToken, { now: now + thirtyDays }), null)
+})
+
+test('changeOwnerPassword validates current/new passwords, updates hash, and revokes other sessions', async (t) => {
+  const db = openDatabase(':memory:')
+  t.after(() => db.close())
+
+  await createOwner(db, { username: 'auank', password: 'old-password-123' })
+  const currentSession = createSession(db)
+  const otherSession = createSession(db)
+
+  await assert.rejects(
+    () => changeOwnerPassword(db, {
+      currentPassword: 'old-password-123',
+      newPassword: '',
+      keepSessionToken: currentSession.rawToken,
+    }),
+    (err) => err.code === 'INVALID_PASSWORD'
+  )
+
+  await assert.rejects(
+    () => changeOwnerPassword(db, {
+      currentPassword: 'wrong-password',
+      newPassword: 'new-password-456',
+      keepSessionToken: currentSession.rawToken,
+    }),
+    (err) => err.code === 'INVALID_CURRENT_PASSWORD'
+  )
+
+  await changeOwnerPassword(db, {
+    currentPassword: 'old-password-123',
+    newPassword: 'new-password-456',
+    keepSessionToken: currentSession.rawToken,
+  })
+
+  assert.equal(await authenticateUser(db, { username: 'auank', password: 'old-password-123' }), null)
+  assert.ok(await authenticateUser(db, { username: 'auank', password: 'new-password-456' }))
+  assert.ok(validateSession(db, currentSession.rawToken))
+  assert.equal(validateSession(db, otherSession.rawToken), null)
+})
+
+test('revokeOtherSessions deletes other sessions and preserves current session', async (t) => {
+  const db = openDatabase(':memory:')
+  t.after(() => db.close())
+
+  await createOwner(db, { username: 'auank', password: 'password123' })
+  const s1 = createSession(db)
+  const s2 = createSession(db)
+  const s3 = createSession(db)
+
+  const res = revokeOtherSessions(db, s1.rawToken)
+  assert.equal(res.revoked, 2)
+  assert.ok(validateSession(db, s1.rawToken))
+  assert.equal(validateSession(db, s2.rawToken), null)
+  assert.equal(validateSession(db, s3.rawToken), null)
 })
 

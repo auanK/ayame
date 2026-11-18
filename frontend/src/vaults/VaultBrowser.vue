@@ -52,7 +52,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['back', 'unauthorized', 'state', 'logout'])
+const emit = defineEmits(['back', 'unauthorized', 'state', 'logout', 'open-account'])
 
 const { router, route } = useAyameRouter({
   initialVaultDirectory: props.vault.directory,
@@ -2625,6 +2625,14 @@ defineExpose({
               <span>Toggle properties</span>
             </button>
             <div class="dropdown-divider" />
+            <button
+              type="button"
+              class="dropdown-menu-item"
+              data-testid="account-settings-button"
+              @click="showVaultMenu = false; emit('open-account')"
+            >
+              <span>Account &amp; security…</span>
+            </button>
             <button
               type="button"
               class="dropdown-menu-item dropdown-menu-item--danger"

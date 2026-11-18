@@ -11,13 +11,17 @@ import {
   getSession,
   insertOwner,
   insertSession,
+  updateOwnerPassword,
+  countActiveSessions,
+  deleteOtherSessions,
+  pruneExpiredSessions,
 } from './database.js'
 
-test('fresh DB initializes schema version 1 with owner, session, and vault', () => {
+test('fresh DB initializes schema version 2 with owner, session, and v2 vault columns', () => {
   const db = openDatabase(':memory:')
   try {
     const version = db.pragma('user_version', { simple: true })
-    assert.equal(version, 1)
+    assert.equal(version, 2)
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
@@ -26,6 +30,22 @@ test('fresh DB initializes schema version 1 with owner, session, and vault', () 
       .sort()
 
     assert.deepEqual(tables, ['owner', 'session', 'vault'])
+
+    const vaultCols = db.prepare('PRAGMA table_info(vault)').all().map((c) => c.name)
+    assert.deepEqual(vaultCols, [
+      'id',
+      'name',
+      'directory',
+      'position',
+      'category',
+      'tags_json',
+      'description',
+      'accent_color',
+      'pinned',
+      'cover_mime',
+      'cover_blob',
+      'cover_updated_at',
+    ])
   } finally {
     closeDatabase(db)
   }
@@ -91,22 +111,38 @@ test('user_version 0 with existing owner and session tables is rejected without 
   }
 })
 
-test('version 1 schema reopens and preserves owner, session, and vault rows', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-v1-reopen-'))
+test('version 1 schema migrates cleanly to version 2 and preserves owner, session, and vault rows', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-v1-to-v2-'))
   const dbPath = path.join(tempDir, 'v1.sqlite')
 
   try {
     const expiresAt = Date.now() + 1000000
-    const db1 = openDatabase(dbPath)
-    assert.equal(db1.pragma('user_version', { simple: true }), 1)
-    insertOwner(db1, 'auank', 'hash-1234')
-    insertSession(db1, 'tok-hash-1', expiresAt)
-    db1.prepare('INSERT INTO vault (id, name, directory) VALUES (?, ?, ?)').run('v-1', 'Notes', 'notes')
-    closeDatabase(db1)
+    const rawDb = new Database(dbPath)
+    rawDb.exec(`
+      CREATE TABLE owner (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      CREATE TABLE session (
+        token_hash TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE vault (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        directory TEXT NOT NULL UNIQUE
+      );
+    `)
+    rawDb.pragma('user_version = 1')
+    rawDb.prepare('INSERT INTO owner (id, username, password_hash) VALUES (1, ?, ?)').run('auank', 'hash-1234')
+    rawDb.prepare('INSERT INTO session (token_hash, expires_at) VALUES (?, ?)').run('tok-hash-1', expiresAt)
+    rawDb.prepare('INSERT INTO vault (id, name, directory) VALUES (?, ?, ?)').run('v-1', 'Notes', 'notes')
+    rawDb.close()
 
     const db2 = openDatabase(dbPath)
     try {
-      assert.equal(db2.pragma('user_version', { simple: true }), 1)
+      assert.equal(db2.pragma('user_version', { simple: true }), 2)
       const tables = db2
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
         .all()
@@ -116,14 +152,105 @@ test('version 1 schema reopens and preserves owner, session, and vault rows', ()
       assert.deepEqual(getOwner(db2), { id: 1, username: 'auank', password_hash: 'hash-1234' })
       assert.deepEqual(getSession(db2, 'tok-hash-1'), { token_hash: 'tok-hash-1', expires_at: expiresAt })
       assert.deepEqual(
-        db2.prepare('SELECT id, name, directory FROM vault').all(),
+        db2.prepare('SELECT id, name, directory, position, category, tags_json, description, accent_color, pinned, cover_mime, cover_blob, cover_updated_at FROM vault').all(),
+        [{
+          id: 'v-1',
+          name: 'Notes',
+          directory: 'notes',
+          position: null,
+          category: '',
+          tags_json: '[]',
+          description: '',
+          accent_color: '',
+          pinned: 0,
+          cover_mime: null,
+          cover_blob: null,
+          cover_updated_at: null,
+        }]
+      )
+    } finally {
+      closeDatabase(db2)
+    }
+
+    const db3 = openDatabase(dbPath)
+    try {
+      assert.equal(db3.pragma('user_version', { simple: true }), 2)
+      assert.deepEqual(
+        db3.prepare('SELECT id, name, directory FROM vault').all(),
         [{ id: 'v-1', name: 'Notes', directory: 'notes' }]
+      )
+    } finally {
+      closeDatabase(db3)
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+test('version 2 schema reopens and preserves owner, session, and v2 vault metadata', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-v2-reopen-'))
+  const dbPath = path.join(tempDir, 'v2.sqlite')
+
+  try {
+    const expiresAt = Date.now() + 1000000
+    const db1 = openDatabase(dbPath)
+    assert.equal(db1.pragma('user_version', { simple: true }), 2)
+    insertOwner(db1, 'auank', 'hash-1234')
+    insertSession(db1, 'tok-hash-1', expiresAt)
+    db1.prepare(`
+      INSERT INTO vault (id, name, directory, position, category, tags_json, description, accent_color, pinned)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('v-1', 'Notes', 'notes', 0, 'Personal', '["knowledge"]', 'My notes', '#a99aca', 1)
+    closeDatabase(db1)
+
+    const db2 = openDatabase(dbPath)
+    try {
+      assert.equal(db2.pragma('user_version', { simple: true }), 2)
+      assert.deepEqual(getOwner(db2), { id: 1, username: 'auank', password_hash: 'hash-1234' })
+      assert.deepEqual(
+        db2.prepare('SELECT id, name, directory, position, category, tags_json, description, accent_color, pinned FROM vault').all(),
+        [{
+          id: 'v-1',
+          name: 'Notes',
+          directory: 'notes',
+          position: 0,
+          category: 'Personal',
+          tags_json: '["knowledge"]',
+          description: 'My notes',
+          accent_color: '#a99aca',
+          pinned: 1,
+        }]
       )
     } finally {
       closeDatabase(db2)
     }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+test('database helpers update owner password, count active sessions, delete others, and prune expired', () => {
+  const db = openDatabase(':memory:')
+  try {
+    insertOwner(db, 'auank', 'old-hash')
+    updateOwnerPassword(db, 'new-hash')
+    assert.equal(getOwner(db).password_hash, 'new-hash')
+
+    const now = 100_000
+    insertSession(db, 'active-1', now + 5000)
+    insertSession(db, 'active-2', now + 9000)
+    insertSession(db, 'expired-1', now - 10)
+    insertSession(db, 'expired-boundary', now)
+
+    assert.equal(countActiveSessions(db, now), 2)
+    assert.equal(pruneExpiredSessions(db, now), 2)
+    assert.equal(countActiveSessions(db, now), 2)
+
+    assert.equal(deleteOtherSessions(db, 'active-1'), 1)
+    assert.ok(getSession(db, 'active-1'))
+    assert.equal(getSession(db, 'active-2'), undefined)
+  } finally {
+    closeDatabase(db)
   }
 })
 
@@ -184,7 +311,7 @@ test('unknown future user_version fails closed', () => {
         root_path TEXT NOT NULL UNIQUE
       );
     `)
-    rawDb.pragma('user_version = 2')
+    rawDb.pragma('user_version = 3')
     rawDb.close()
 
     assert.throws(
@@ -368,6 +495,55 @@ test('discarded root_path vault schema is rejected without mutation', () => {
       assert.equal(cols.includes('root_path'), true)
       assert.equal(cols.includes('directory'), false)
       assert.equal(inspectDb.pragma('user_version', { simple: true }), 1)
+    } finally {
+      inspectDb.close()
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+})
+
+test('user_version 2 with invalid vault schema fails closed without mutation', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-v2-invalid-vault-'))
+  const dbPath = path.join(tempDir, 'v2-invalid.sqlite')
+
+  try {
+    const rawDb = new Database(dbPath)
+    rawDb.pragma('journal_mode = DELETE')
+    rawDb.exec(`
+      CREATE TABLE owner (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      CREATE TABLE session (
+        token_hash TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE vault (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root_path TEXT NOT NULL UNIQUE
+      );
+    `)
+    rawDb.pragma('user_version = 2')
+    rawDb.close()
+
+    assert.throws(
+      () => {
+        const unexpectedDb = openDatabase(dbPath)
+        closeDatabase(unexpectedDb)
+      },
+      (err) => {
+        assert.match(err.message, /Database corrupt/i)
+        return true
+      }
+    )
+
+    const inspectDb = new Database(dbPath)
+    try {
+      assert.equal(String(inspectDb.pragma('journal_mode', { simple: true })).toLowerCase(), 'delete')
+      assert.equal(inspectDb.pragma('user_version', { simple: true }), 2)
     } finally {
       inspectDb.close()
     }
