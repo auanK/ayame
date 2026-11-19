@@ -59,15 +59,15 @@ const { router, route } = useAyameRouter({
   initialVaultDirectory: props.vault.directory,
 })
 
-const LAYOUT_STORAGE_KEY = `ayame:layout:${props.vault.directory}`
+const layoutStorageKey = (directory = props.vault.directory) => `ayame:layout:${directory}`
 
-const loadSavedLayout = () => {
+const loadSavedLayout = (directory = props.vault.directory) => {
   try {
-    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY)
+    const raw = localStorage.getItem(layoutStorageKey(directory))
     if (raw) {
       const parsed = JSON.parse(raw)
       return {
-        explorerOpen: typeof parsed.explorerOpen === 'boolean' ? parsed.explorerOpen : true,
+        explorerOpen: true,
         explorerWidth: typeof parsed.explorerWidth === 'number' ? Math.max(180, Math.min(480, parsed.explorerWidth)) : 260,
         contextOpen: typeof parsed.contextOpen === 'boolean' ? parsed.contextOpen : false,
         contextWidth: typeof parsed.contextWidth === 'number' ? Math.max(200, Math.min(480, parsed.contextWidth)) : 280,
@@ -86,7 +86,7 @@ const layout = ref(loadSavedLayout())
 
 const persistLayout = () => {
   try {
-    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout.value))
+    localStorage.setItem(layoutStorageKey(), JSON.stringify(layout.value))
   } catch {}
 }
 
@@ -2723,6 +2723,7 @@ watch(
     graphStorageWarning.value = loadedGraph.error || ''
     vaultSettings.value = loadSavedVaultSettings(props.vault.directory)
     bookmarkedPaths.value = loadSavedBookmarks(props.vault.directory)
+    layout.value = loadSavedLayout(props.vault.directory)
     indexLoading.value = false
     indexError.value = false
     navHistory.value = []
@@ -3638,7 +3639,6 @@ defineExpose({
                   @click="openFile(row.entry)"
                   @click.middle.prevent="openFile(row.entry, { newTab: true })"
                 >
-                  <span class="tree-chevron tree-chevron--spacer" aria-hidden="true" />
                   <span class="tree-label">{{ stripMarkdownExtension(row.entry.name) }}</span>
                 </button>
                 <button
@@ -3663,7 +3663,6 @@ defineExpose({
                 @dragleave.stop="handleDragLeaveTarget(row.entry.path, $event)"
                 @drop.stop.prevent="clearDragState"
               >
-                <span class="tree-chevron tree-chevron--spacer" aria-hidden="true" />
                 <span class="tree-label">{{ row.entry.name }}</span>
               </div>
             </template>
@@ -4811,10 +4810,10 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 38px;
-  min-height: 38px;
-  padding: 0 0.75rem;
-  border-bottom: 1px solid var(--ayame-border, #34323f);
+  height: 32px;
+  min-height: 32px;
+  padding: 0.25rem 0.65rem 0.1rem;
+  border-bottom: none;
 }
 
 .explorer-title {
@@ -4913,7 +4912,7 @@ defineExpose({
 .workspace-tree {
   flex: 1;
   overflow-y: auto;
-  padding: 0.25rem 0.35rem;
+  padding: 0.15rem 0.45rem 0.5rem;
 }
 
 .workspace-tree--drop-valid {
@@ -4928,7 +4927,23 @@ defineExpose({
   display: flex;
   align-items: center;
   width: 100%;
-  margin-bottom: 1px;
+  margin-bottom: 2px;
+  padding-right: 3px;
+  border-radius: 6px;
+  transition: background-color 0.1s ease, box-shadow 0.1s ease;
+}
+
+.tree-row-wrapper:hover {
+  background: var(--ayame-hover, #242530);
+}
+
+.tree-row-wrapper:has(.tree-folder--selected) {
+  background: rgba(169, 154, 202, 0.1);
+}
+
+.tree-row-wrapper:has(.tree-file--active) {
+  background: rgba(169, 154, 202, 0.14);
+  box-shadow: inset 2px 0 0 var(--vault-accent, #a99aca);
 }
 
 .tree-row-wrapper--dragging {
@@ -4959,7 +4974,7 @@ defineExpose({
   padding: 0 0.45rem;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--ayame-text-muted, #aaa6b8);
   font-size: 0.84rem;
   text-align: left;
@@ -4968,7 +4983,6 @@ defineExpose({
 }
 
 .tree-row:hover {
-  background: var(--ayame-hover, #242530);
   color: var(--ayame-text, #eeeaf3);
 }
 
@@ -4994,11 +5008,6 @@ defineExpose({
   line-height: 1;
 }
 
-.tree-chevron--spacer {
-  visibility: hidden;
-  pointer-events: none;
-}
-
 .tree-row:hover .tree-chevron {
   color: var(--ayame-text, #eeeaf3);
 }
@@ -5019,7 +5028,7 @@ defineExpose({
   line-height: 1;
   border-radius: 3px;
   flex-shrink: 0;
-  margin-right: 2px;
+  margin-right: 0;
   transition: opacity 0.1s ease, background-color 0.1s ease, color 0.1s ease;
 }
 
@@ -5042,9 +5051,9 @@ defineExpose({
 
 .tree-row-menu-btn:hover,
 .tree-row-menu-btn:focus-visible {
-  background: var(--ayame-hover, #242530);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--ayame-text, #eeeaf3);
-  border-color: var(--ayame-border, #34323f);
+  border-color: rgba(255, 255, 255, 0.14);
   outline: none;
 }
 
@@ -5055,14 +5064,11 @@ defineExpose({
 }
 
 .tree-folder--selected {
-  background: rgba(169, 154, 202, 0.1);
   color: var(--ayame-text, #eeeaf3);
   font-weight: 500;
 }
 
 .tree-file--active {
-  background: rgba(169, 154, 202, 0.14);
-  box-shadow: inset 2px 0 0 var(--vault-accent, #a99aca);
   color: var(--ayame-lavender, #d4cbe4);
   font-weight: 500;
 }
@@ -5263,6 +5269,15 @@ defineExpose({
   max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.workspace-tab-btn:focus,
+.workspace-tab-btn:focus-visible {
+  outline: none;
+}
+
+.workspace-tab-item:focus-within {
+  border-color: var(--ayame-primary, #a99aca);
 }
 
 .workspace-tab-close {
