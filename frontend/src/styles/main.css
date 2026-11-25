@@ -1,0 +1,1428 @@
+:root {
+  color-scheme: dark;
+
+  --ayame-background: #111218;
+  --ayame-surface: #1b1c25;
+  --ayame-surface-elevated: #20212c;
+  --ayame-input-bg: #13141b;
+  --ayame-hover: #242530;
+
+  --ayame-primary: #a99aca;
+  --ayame-lavender: #d4cbe4;
+
+  --ayame-text: #eeeaf3;
+  --ayame-text-muted: #aaa6b8;
+  --ayame-muted: #aaa6b8;
+  --ayame-border: #34323f;
+  --ayame-border-subtle: rgba(238, 234, 243, 0.08);
+  --ayame-error: #e2a8b4;
+  --ayame-error-border: #684651;
+  --ayame-error-bg: rgba(104, 70, 81, 0.22);
+
+  --ayame-link: #7fc3e6;
+  --ayame-link-hover: #aad9f2;
+  --ayame-link-unresolved: #9da8c4;
+  --ayame-link-ambiguous: #e6c387;
+
+  /* Crisp desktop corner scale: square internals, subtle outer rounding only */
+  --radius-none: 0px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+
+  /* Workspace tokens unified with Ayame identity */
+  --workspace-bg: var(--ayame-background);
+  --workspace-sidebar: var(--ayame-surface);
+  --workspace-editor: #15161d;
+  --workspace-border: var(--ayame-border);
+  --workspace-hover: var(--ayame-hover);
+  --workspace-active: rgba(169, 154, 202, 0.12);
+  --workspace-text: var(--ayame-text);
+  --workspace-muted: var(--ayame-text-muted);
+  --workspace-accent: var(--ayame-primary);
+  --workspace-splitter: var(--ayame-border);
+  --workspace-splitter-hover: var(--ayame-primary);
+
+  /* Reading tokens: harmonized with Ayame dark slate + native system typography */
+  --reading-background: var(--workspace-editor);
+  --reading-background-elevated: var(--ayame-surface);
+  --reading-text: #c9cbd4;
+  --reading-heading: #e7e8ef;
+  --reading-heading-secondary: #d7d8e1;
+  --reading-accent: #b29fd9;
+  --reading-bold: #dfe0e8;
+  --reading-muted: var(--ayame-text-muted);
+  --reading-syntax: #888a98;
+  --reading-caret: #e7e8ef;
+  --reading-border: var(--ayame-border);
+  --reading-border-subtle: rgba(170, 166, 184, 0.14);
+  --reading-control-bg: var(--ayame-surface);
+  --reading-control-border: #686978;
+  --reading-link: var(--ayame-link);
+  --reading-link-hover: var(--ayame-link-hover);
+  --reading-link-visited: #b8a9d8;
+  --reading-link-hover-bg: rgba(127, 195, 230, 0.12);
+  --reading-tag-bg: #22232c;
+  --reading-tag-text: var(--ayame-lavender);
+  --reading-tag-border: #444454;
+  --reading-code-bg: var(--ayame-background);
+  --reading-code-inline-bg: rgba(169, 154, 202, 0.11);
+  --reading-code-text: #d2d2d6;
+  --reading-blockquote-bg: rgba(169, 154, 202, 0.05);
+  --reading-blockquote-text: #ceced2;
+  --reading-blockquote-border: var(--reading-accent);
+  --reading-table-bg: rgba(17, 18, 24, 0.55);
+  --reading-selection-bg: rgba(169, 154, 202, 0.24);
+  --reading-focus-ring: rgba(169, 154, 202, 0.72);
+  --ui-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+  --reading-font-body: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+  --reading-font-heading: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+  --reading-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --reading-font-size: 1rem;
+  --reading-line-height: 1.55;
+
+  font-family: var(--ui-font-sans);
+  color: var(--ayame-text);
+  background: var(--ayame-background);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(169, 154, 202, 0.42);
+  color: var(--ayame-text, #eeeaf3);
+}
+
+.markdown-viewer ::selection {
+  background: var(--reading-selection-bg);
+  color: var(--reading-heading);
+}
+
+.markdown-editor-surface .cm-editor .cm-selectionLayer .cm-selectionBackground {
+  background: var(--reading-selection-bg);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--ayame-background);
+  color: var(--ayame-text);
+  line-height: 1.5;
+}
+
+a {
+  color: var(--ayame-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--ayame-link-hover);
+}
+
+a:focus-visible {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* Centered auth shell (Login / Setup / Error / Loading) */
+.ayame-app {
+  width: min(100%, 400px);
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin-inline: auto;
+  padding: 2rem 1.5rem 2.5rem;
+}
+
+.ayame-app:not(.ayame-app--workspace):not(.ayame-app--fullscreen) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* Full-bleed desktop shell for Vaults Hub */
+.ayame-app--workspace {
+  width: 100%;
+  max-width: none;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Full-bleed locked-viewport shell for Vault Workspace */
+.ayame-app--fullscreen {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* App Header — matches WorkspaceTopbar (40px height, solid surface, 1px border) */
+.ayame-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.ayame-app:not(.ayame-app--workspace) .ayame-header {
+  justify-content: center;
+}
+
+.ayame-header--desktop {
+  height: 40px;
+  min-height: 40px;
+  padding: 0 1rem;
+  background: var(--ayame-surface);
+  border-bottom: 1px solid var(--ayame-border);
+  flex-shrink: 0;
+}
+
+.ayame-brand-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.ayame-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.ayame-wordmark {
+  margin: 0;
+  color: var(--ayame-text);
+  font-family: inherit;
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+}
+
+.ayame-header--desktop .ayame-wordmark {
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+}
+
+.ayame-tagline {
+  margin: 0.45rem 0 1.4rem;
+  color: var(--ayame-text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.ayame-tagline--inline {
+  margin: 0;
+  padding-left: 0.6rem;
+  border-left: 1px solid var(--ayame-border);
+  font-size: 0.78rem;
+  text-align: left;
+}
+
+.ayame-divider {
+  height: 1px;
+  margin-bottom: 1.5rem;
+  background: var(--ayame-border);
+}
+
+/* Auth Forms */
+.auth-section {
+  padding: 1.35rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-sm);
+  background: var(--ayame-surface);
+}
+
+.auth-section .form-input {
+  background: var(--ayame-input-bg);
+}
+
+.auth-section .btn-primary {
+  width: 100%;
+}
+
+.auth-card-header h2 {
+  font-size: 1.08rem;
+  margin-bottom: 0.25rem;
+}
+
+.auth-card-header .status-message {
+  margin-bottom: 1.15rem;
+  font-size: 0.83rem;
+}
+
+.password-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.form-input--with-toggle {
+  padding-right: 3.75rem;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 0.35rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ayame-text-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 110ms ease, background-color 110ms ease;
+}
+
+.password-toggle-btn:hover:not(:disabled),
+.password-toggle-btn:focus-visible:not(:disabled) {
+  color: var(--ayame-text);
+  background: var(--ayame-hover);
+  outline: none;
+}
+
+.password-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-caps-warning {
+  margin: 0.35rem 0 0;
+  color: #e6c387;
+  font-size: 0.78rem;
+}
+
+.auth-remember-row {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1.15rem;
+  color: var(--ayame-text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.auth-remember-row input {
+  accent-color: var(--ayame-primary);
+}
+
+.auth-field-hint {
+  margin: 0.35rem 0 0;
+  color: var(--ayame-text-muted);
+  font-size: 0.76rem;
+}
+
+.auth-field-hint--valid {
+  color: #8fc7a8;
+}
+
+.auth-field-hint--warn {
+  color: var(--ayame-error);
+}
+
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.45rem;
+}
+
+.password-strength-track {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--radius-none);
+  background: rgba(170, 166, 184, 0.16);
+  overflow: hidden;
+}
+
+.password-strength-fill {
+  height: 100%;
+  border-radius: var(--radius-none);
+  transition: width 160ms ease, background-color 160ms ease;
+}
+
+.password-strength-fill--weak {
+  background: var(--ayame-error);
+}
+
+.password-strength-fill--medium {
+  background: #e6c387;
+}
+
+.password-strength-fill--strong {
+  background: #8fc7a8;
+}
+
+.password-strength-label {
+  font-size: 0.74rem;
+  color: var(--ayame-text-muted);
+  min-width: 3rem;
+  text-align: right;
+}
+
+h2 {
+  margin: 0 0 0.3rem;
+  color: var(--ayame-text);
+  font-family: inherit;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.status-message {
+  margin: 0 0 1.25rem;
+  color: var(--ayame-text-muted);
+}
+
+.form-group {
+  margin-bottom: 0.9rem;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--ayame-text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.form-input {
+  display: block;
+  width: 100%;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 0.65rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  outline: none;
+  background: var(--ayame-input-bg);
+  color: var(--ayame-text);
+  font: inherit;
+  font-size: 0.84rem;
+  transition: border-color 110ms ease, background-color 110ms ease;
+}
+
+select.form-input {
+  appearance: none;
+  padding-right: 1.9rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5 6 7.5l3-3' stroke='%23aaa6b8' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 12px 12px;
+  cursor: pointer;
+}
+
+.form-input::placeholder {
+  color: #6f6c7e;
+}
+
+.form-input:focus-visible {
+  border-color: var(--ayame-primary);
+  outline: 1px solid var(--ayame-primary);
+  outline-offset: 0;
+}
+
+.form-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Unified Button System */
+.btn {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 110ms ease, border-color 110ms ease, color 110ms ease;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ayame-lavender);
+  outline-offset: 1px;
+}
+
+.btn-primary {
+  width: auto;
+  border: 1px solid var(--ayame-primary);
+  border-radius: var(--radius-xs);
+  background: var(--ayame-primary);
+  color: var(--ayame-background);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--ayame-lavender);
+  border-color: var(--ayame-lavender);
+}
+
+.btn-secondary {
+  min-height: 32px;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  background: var(--ayame-input-bg);
+  color: var(--ayame-text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: rgba(169, 154, 202, 0.55);
+  background: var(--ayame-hover);
+  color: var(--ayame-text);
+}
+
+.btn-ghost {
+  min-height: 26px;
+  padding: 0.22rem 0.48rem;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ayame-text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--ayame-hover);
+  color: var(--ayame-text);
+}
+
+.btn-compact {
+  min-height: 28px;
+  padding: 0.25rem 0.62rem;
+  font-size: 0.78rem;
+  border-radius: var(--radius-xs);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error-message {
+  margin: 0.75rem 0 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--ayame-error-border);
+  border-left: 2px solid var(--ayame-error);
+  border-radius: var(--radius-xs);
+  background: var(--ayame-error-bg);
+  color: var(--ayame-error);
+  font-size: 0.86rem;
+}
+
+/* Workspace Container */
+.workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+.ayame-app--fullscreen .workspace {
+  height: 100%;
+  overflow: hidden;
+}
+
+.workspace .status-message {
+  margin-bottom: 0;
+}
+
+.workspace-loading-pad,
+.workspace-global-error {
+  margin: 1.25rem 1.5rem;
+}
+
+/* Full-Width Desktop Vaults Hub */
+.vaults-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  background: var(--ayame-background);
+}
+
+.vaults-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 0.85rem 1.5rem;
+  background: var(--workspace-editor);
+  border-bottom: 1px solid var(--ayame-border);
+}
+
+.vaults-panel-title-block {
+  display: flex;
+  align-items: baseline;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.vaults-panel-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.vaults-panel-header .status-message {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.vaults-panel-content {
+  flex: 1;
+  width: 100%;
+  padding: 1rem 1.5rem 2.5rem;
+}
+
+.vaults-empty-state {
+  margin-top: 2rem;
+  padding: 2rem 1.5rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-sm);
+  background: var(--ayame-surface);
+}
+
+.vaults-empty-state h3,
+.vault-row h3,
+.vault-editor h3 {
+  margin: 0;
+  color: var(--ayame-text);
+  font-family: inherit;
+  font-size: 0.96rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+.vault-row h3 {
+  overflow-wrap: anywhere;
+}
+
+.vaults-empty-state p {
+  margin: 0.35rem 0 0;
+  color: var(--ayame-text-muted);
+  font-size: 0.85rem;
+}
+
+.vault-list {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ayame-border);
+}
+
+.vault-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+.vault-details {
+  min-width: 0;
+}
+
+.vault-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+}
+
+.vault-directory {
+  margin: 0.15rem 0 0;
+  color: var(--ayame-text-muted);
+  font-family: var(--reading-font-mono);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.vault-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.vault-editor {
+  width: 100%;
+}
+
+.vault-editor-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.85rem 1rem;
+}
+
+.vault-editor-field-full {
+  grid-column: 1 / -1;
+}
+
+.vault-editor .form-group {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.sr-only,
+.sr-only-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vaults-summary {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--ayame-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vaults-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.vaults-muted {
+  margin: 0;
+  color: var(--ayame-text-muted);
+  font-size: 0.83rem;
+}
+
+/* Unified Floating Modals (BaseModal) */
+.ayame-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(9, 10, 14, 0.72);
+}
+
+.ayame-modal-card {
+  width: min(100%, 460px);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 1.2rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-sm);
+  background: var(--ayame-surface);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.56);
+}
+
+.ayame-modal-card--wide {
+  width: min(100%, 540px);
+}
+
+.ayame-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--ayame-border);
+  margin-bottom: 0.95rem;
+}
+
+.ayame-modal-header h3 {
+  margin: 0;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ayame-text);
+}
+
+.ayame-modal-subtitle {
+  margin: 0.18rem 0 0;
+  color: var(--ayame-text-muted);
+  font-size: 0.79rem;
+}
+
+.ayame-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ayame-text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 110ms ease, color 110ms ease, border-color 110ms ease;
+}
+
+.ayame-modal-close:hover:not(:disabled),
+.ayame-modal-close:focus-visible:not(:disabled) {
+  background: var(--ayame-hover);
+  color: var(--ayame-text);
+  border-color: var(--ayame-border);
+  outline: none;
+}
+
+.ayame-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.ayame-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-top: 1.15rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--ayame-border);
+}
+
+.vault-editor-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.vault-editor-media-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.vault-cover-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-top: 0.15rem;
+}
+
+.vault-cover-controls .form-label {
+  margin-bottom: 0;
+}
+
+.vault-cover-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.vault-cover-thumb {
+  width: 44px;
+  height: 30px;
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+  border: 1px solid var(--ayame-border);
+}
+
+.vault-checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--ayame-text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.vault-checkbox-row input {
+  accent-color: var(--ayame-primary);
+}
+
+/* Vaults Hub Toolbar */
+.vaults-toolbar {
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--ayame-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.vaults-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.vaults-search-input {
+  flex: 1 1 280px;
+  max-width: 420px;
+  height: 32px;
+  min-height: 32px;
+  font-size: 0.82rem;
+}
+
+.vaults-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.vaults-segmented {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  background: var(--ayame-input-bg);
+}
+
+.vaults-seg-btn {
+  padding: 0.25rem 0.6rem;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ayame-text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease;
+}
+
+.vaults-seg-btn:hover {
+  color: var(--ayame-text);
+}
+
+.vaults-seg-btn--active {
+  background: var(--ayame-surface-elevated);
+  color: var(--ayame-lavender);
+}
+
+.vaults-sort-select {
+  width: auto;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 1.9rem 0 0.6rem;
+  font-size: 0.78rem;
+}
+
+.vaults-filters-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.vaults-filter-pills,
+.vaults-tag-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.vault-filter-pill {
+  padding: 0.2rem 0.52rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ayame-text-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: border-color 110ms ease, color 110ms ease, background-color 110ms ease;
+}
+
+.vault-filter-pill--active,
+.vault-filter-pill:hover {
+  border-color: var(--ayame-primary);
+  color: var(--ayame-lavender);
+  background: rgba(169, 154, 202, 0.12);
+}
+
+/* Vault Cards Grid (Full-Width Desktop Columns) */
+.vault-grid {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 0.85rem;
+}
+
+.vault-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-sm);
+  background: var(--ayame-surface);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, opacity 120ms ease;
+}
+
+.vault-card:hover,
+.vault-card:focus-visible {
+  border-color: var(--ayame-primary);
+  background: var(--ayame-surface-elevated);
+  outline: none;
+}
+
+.vault-card--pinned {
+  border-color: rgba(169, 154, 202, 0.55);
+}
+
+.vault-card--dragging {
+  opacity: 0.42;
+  cursor: grabbing;
+}
+
+.vault-card--drop-target {
+  border-color: var(--ayame-lavender);
+  box-shadow: 0 0 0 1px var(--ayame-lavender);
+}
+
+.vault-card-banner {
+  position: relative;
+  height: 68px;
+  border-bottom: 1px solid var(--ayame-border);
+  background-color: var(--workspace-editor);
+  overflow: hidden;
+}
+
+.vault-cover-img {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.vault-banner-top {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  background: transparent;
+}
+
+.vault-banner-top--cover {
+  background: rgba(17, 18, 24, 0.45);
+}
+
+.vault-banner-badges,
+.vault-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.vault-banner-actions {
+  margin-left: auto;
+  opacity: 0.72;
+  transition: opacity 110ms ease;
+}
+
+.vault-card:hover .vault-banner-actions,
+.vault-card:focus-within .vault-banner-actions {
+  opacity: 1;
+}
+
+.vault-category-badge {
+  padding: 0.12rem 0.4rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  background: var(--ayame-background);
+  color: var(--ayame-lavender);
+  font-size: 0.69rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.vault-icon-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  background: var(--ayame-background);
+  color: var(--ayame-text-muted);
+  font: inherit;
+  font-size: 0.76rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 110ms ease, border-color 110ms ease, background-color 110ms ease;
+}
+
+.vault-icon-pill:hover,
+.vault-icon-pill--active {
+  color: #e6c387;
+  border-color: rgba(230, 195, 135, 0.55);
+  background: var(--ayame-surface);
+}
+
+.vault-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 0.85rem 0.8rem;
+}
+
+/* Compact List View — flush desktop rows */
+.vault-card-compact {
+  padding: 0.65rem 0.85rem;
+  border: none;
+  border-bottom: 1px solid var(--ayame-border);
+  border-radius: var(--radius-none);
+  background: transparent;
+  margin-bottom: 0;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+
+.vault-card-compact:hover {
+  background: var(--ayame-surface);
+}
+
+.vault-card-compact .vault-card-body {
+  flex: 1;
+  padding: 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.65rem 1.25rem;
+}
+
+.vault-card-compact .vault-card-footer {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  gap: 0.65rem;
+}
+
+.vault-card-compact .vault-card-footer .vault-actions {
+  opacity: 0.78;
+}
+
+.vault-card-compact:hover .vault-card-footer .vault-actions,
+.vault-card-compact:focus-within .vault-card-footer .vault-actions {
+  opacity: 1;
+}
+
+.vault-description {
+  margin: 0.25rem 0 0;
+  color: var(--ayame-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vault-card-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  color: var(--ayame-text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-card-meta .vault-directory {
+  margin: 0;
+}
+
+.vault-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.vault-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  padding: 0.12rem 0.42rem;
+  border: 1px solid var(--reading-tag-border);
+  border-radius: var(--radius-xs);
+  background: var(--reading-tag-bg);
+  color: var(--ayame-lavender);
+  font: inherit;
+  font-size: 0.71rem;
+  cursor: pointer;
+  transition: border-color 110ms ease, background-color 110ms ease;
+}
+
+.vault-tag-chip:hover {
+  border-color: var(--ayame-primary);
+  background: var(--ayame-hover);
+}
+
+.vault-tag-chip--active {
+  border-color: var(--ayame-primary);
+  background: rgba(169, 154, 202, 0.22);
+}
+
+.vault-tag-chip--editable {
+  cursor: default;
+}
+
+.vault-tag-remove,
+.vault-tag-clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--ayame-text-muted);
+  cursor: pointer;
+  padding: 0 0.15rem;
+  font: inherit;
+  font-size: 0.76rem;
+}
+
+.vault-tag-editor {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-height: 34px;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  background: var(--ayame-input-bg);
+}
+
+.vault-tag-inline-input {
+  flex: 1 1 130px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ayame-text);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+/* Crisp Square Accent Swatches */
+.vault-color-swatches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.2rem 0;
+}
+
+.vault-color-swatch {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: border-color 110ms ease, box-shadow 110ms ease;
+}
+
+.vault-color-swatch:hover {
+  border-color: var(--ayame-text);
+}
+
+.vault-color-swatch--none {
+  background: var(--ayame-input-bg);
+  color: var(--ayame-text-muted);
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.vault-color-swatch--active {
+  border-color: var(--ayame-text);
+  box-shadow: 0 0 0 1px var(--ayame-surface), 0 0 0 3px var(--ayame-primary);
+}
+
+.vault-card-footer {
+  margin-top: auto;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--ayame-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.vault-card-footer .vault-actions {
+  opacity: 0.72;
+  transition: opacity 110ms ease;
+}
+
+.vault-card:hover .vault-card-footer .vault-actions,
+.vault-card:focus-within .vault-card-footer .vault-actions {
+  opacity: 1;
+}
+
+.vault-card-footer .btn {
+  min-height: 24px;
+  padding: 0.18rem 0.48rem;
+  font-size: 0.75rem;
+  border-radius: var(--radius-xs);
+}
+
+.btn-open-vault {
+  color: var(--ayame-lavender);
+}
+
+.btn-open-vault:hover:not(:disabled) {
+  color: var(--ayame-text);
+}
+
+/* Category Groups */
+.vault-category-groups {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.vault-category-section {
+  padding: 0.85rem 1rem 1rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-sm);
+  background: var(--workspace-editor);
+  transition: border-color 110ms ease, background-color 110ms ease;
+}
+
+.vault-category-section--drop {
+  border-color: var(--ayame-lavender);
+  background: rgba(169, 154, 202, 0.08);
+}
+
+.vault-category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.vault-category-header h3 {
+  margin: 0;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ayame-lavender);
+}
+
+.vault-category-count {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ayame-text-muted);
+}
+
+.vault-category-creator {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.vaults-category-creator-input {
+  max-width: 18rem;
+  height: 30px;
+  min-height: 30px;
+}
+
+.vault-category-empty-drop {
+  margin: 0.75rem 0 0.1rem;
+  padding: 0.9rem;
+  border: 1px dashed var(--ayame-border);
+  border-radius: var(--radius-xs);
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--ayame-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
