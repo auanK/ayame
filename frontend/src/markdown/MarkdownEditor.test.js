@@ -513,4 +513,221 @@ describe('MarkdownEditor.vue (CodeMirror 6 Live Preview)', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.getText()).toContain('- [ ] Done task')
   })
+
+  it('14. parses CommonMark Setext headings (=== and ---) distinct from horizontal rules, including the user Energia - Matéria example', async () => {
+    const doc = [
+      '# Energia - Matéria',
+      '',
+      'A **Matéria** é a estrutura física e material fundamental presente nos 11 universos, como descrito em [[Cosmologia - A Gênese]].',
+      '',
+      'Teste',
+      '---',
+      '**Relacionados:**',
+      '- [[_MOC - Cosmologia Fundamental]]',
+      '',
+      'Título Setext H1',
+      '===',
+      '',
+      '---',
+      '',
+      '- - -',
+      '',
+      'Cursor final.',
+    ].join('\n')
+
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: doc,
+        sourcePath: 'Energia - Matéria.md',
+        knownFiles: ['Energia - Matéria.md', 'Cosmologia - A Gênese.md', '_MOC - Cosmologia Fundamental.md'],
+      },
+    })
+    wrapper.vm.setCursor(doc.length)
+    await wrapper.vm.$nextTick()
+
+    const lines = wrapper.findAll('.cm-line')
+    // Line 5 ("Teste") followed immediately by "---" is a CommonMark Setext H2, NOT a paragraph + <hr>
+    expect(lines[4].classes()).toContain('cm-live-h2')
+    expect(lines[4].classes()).toContain('cm-live-setext-heading')
+    expect(lines[4].text()).toBe('Teste')
+    expect(lines[5].classes()).toContain('cm-live-setext-underline-hidden')
+    expect(lines[5].classes()).not.toContain('cm-live-hr')
+
+    // "Título Setext H1" followed by "===" is a Setext H1
+    expect(lines[9].classes()).toContain('cm-live-h1')
+    expect(lines[9].classes()).toContain('cm-live-setext-heading')
+    expect(lines[10].classes()).toContain('cm-live-setext-underline-hidden')
+
+    // Standalone "---" and "- - -" separated by blank lines ARE horizontal rules
+    expect(lines[12].classes()).toContain('cm-live-hr')
+    expect(lines[14].classes()).toContain('cm-live-hr')
+
+    // Moving cursor onto the Setext heading reveals the "---" underline syntax
+    wrapper.vm.setCursor(doc.indexOf('Teste') + 2)
+    await wrapper.vm.$nextTick()
+    const linesEditing = wrapper.findAll('.cm-line')
+    expect(linesEditing[5].classes()).toContain('cm-live-setext-underline')
+    expect(linesEditing[5].text()).toBe('---')
+  })
+
+  it('15. follows CommonMark/GFM rules for nested inline formatting, intra-word underscores, escapes, multi-backtick code, code blocks, GFM tables, and source-mode frontmatter', async () => {
+    const doc = [
+      '---',
+      'title: Teste',
+      'tags:',
+      '  - fisica',
+      '---',
+      '',
+      'Combinado ***negrito e itálico*** e **negrito com *itálico* e [[Alvo]]**.',
+      'Identificador foo_bar_baz e \\*escapado\\* e ``codigo com ` crase``.',
+      '',
+      '````md',
+      '```js',
+      'const inner = 1',
+      '```',
+      '````',
+      '',
+      '    # Not a heading (indented code)',
+      '',
+      'Col A | Col B',
+      '--- | ---',
+      'Val 1 | Val 2',
+      '',
+      '| nao e tabela |',
+      '',
+      'Cursor final.',
+    ].join('\n')
+
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: doc,
+        sourcePath: 'Nota.md',
+        knownFiles: ['Nota.md', 'Alvo.md'],
+      },
+    })
+    wrapper.vm.setCursor(doc.length)
+    await wrapper.vm.$nextTick()
+
+    const lines = wrapper.findAll('.cm-line')
+    // Frontmatter closing "---" must NOT turn "  - fisica" into a Setext heading
+    expect(lines[0].classes()).toContain('cm-live-frontmatter')
+    expect(lines[4].classes()).toContain('cm-live-frontmatter')
+    expect(lines[3].classes()).not.toContain('cm-live-h2')
+
+    // Nested inline formatting works
+    const boldTexts = wrapper.findAll('.cm-live-bold').map((n) => n.text())
+    const italicTexts = wrapper.findAll('.cm-live-italic').map((n) => n.text())
+    expect(boldTexts).toContain('negrito e itálico')
+    expect(italicTexts).toContain('negrito e itálico')
+    expect(italicTexts).toContain('itálico')
+    expect(wrapper.find('.cm-live-wikilink').text()).toBe('Alvo')
+
+    // Intra-word underscores (foo_bar_baz) and escaped asterisks (\*escapado\*) are NOT italic
+    expect(italicTexts).not.toContain('bar')
+    expect(italicTexts).not.toContain('escapado')
+    expect(lines[7].text()).toContain('foo_bar_baz')
+    expect(lines[7].text()).toContain('*escapado*')
+
+    // Multi-backtick inline code preserves inner backtick
+    expect(wrapper.find('.cm-live-inline-code').text()).toBe('codigo com ` crase')
+
+    // 4-backtick fence is NOT closed prematurely by inner 3-backtick fence
+    expect(lines[10].classes()).toContain('cm-live-codeblock-line')
+    expect(lines[11].classes()).toContain('cm-live-codeblock-line')
+    expect(lines[12].classes()).toContain('cm-live-codeblock-line')
+    expect(lines[13].classes()).toContain('cm-live-codeblock-close')
+
+    // Indented 4-space code block is code, not heading
+    expect(lines[15].classes()).toContain('cm-live-codeblock-line')
+    expect(lines[15].classes()).not.toContain('cm-live-h1')
+
+    // GFM pipe-less outer table is recognized, while single piped line is NOT a table
+    expect(lines[17].classes()).toContain('cm-live-table-header')
+    expect(lines[18].classes()).toContain('cm-live-table-delimiter')
+    expect(lines[19].classes()).toContain('cm-live-table-row')
+    expect(lines[21].classes()).not.toContain('cm-live-table-row')
+  })
+
+  it('16. supports CommonMark reference links/images, HTML entities, GFM www autolinks, ordered task lists, multiline %% comments, and footnote definitions', async () => {
+    const doc = [
+      'Links: [Veja][site], [site][], [site], [sem-ref] e ![Diagrama][pic].',
+      'Entidades: &mdash; &copy; &#x2014; e autolink www.example.com/docs.',
+      '1. [ ] Tarefa ordenada',
+      '2. [x] Tarefa concluída',
+      '',
+      '%%',
+      'Comentário multilinha oculto',
+      '%%',
+      '',
+      '[site]: https://example.com "Site"',
+      '[pic]: Attachments/diagram.png',
+      '[^1]: Nota de rodapé com **negrito**.',
+      '',
+      'Cursor final.',
+    ].join('\n')
+
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: doc,
+        vaultDirectory: 'Isekai',
+        sourcePath: 'Nota.md',
+        knownFiles: ['Nota.md'],
+        allFiles: ['Nota.md', 'Attachments/diagram.png'],
+      },
+    })
+    wrapper.vm.setCursor(doc.length)
+    await wrapper.vm.$nextTick()
+
+    // 1. Reference links ([Veja][site], [site][], [site]) resolve, while [sem-ref] stays literal
+    const links = wrapper.findAll('.cm-live-markdown-link')
+    const linkPairs = links.map((el) => ({
+      text: el.text(),
+      href: el.attributes('data-link-href'),
+    }))
+    expect(linkPairs).toContainEqual({ text: 'Veja', href: 'https://example.com' })
+    expect(linkPairs).toContainEqual({ text: 'site', href: 'https://example.com' })
+    expect(linkPairs.some((l) => l.text === 'sem-ref')).toBe(false)
+
+    // Reference image resolves to vault ImageEmbedWidget
+    const img = wrapper.find('img.cm-live-image-embed')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('src')).toBe('/vaults/Isekai/media?path=Attachments%2Fdiagram.png')
+
+    // 2. HTML entities decoded off-cursor
+    const entities = wrapper.findAll('.cm-live-entity').map((el) => el.text())
+    expect(entities).toEqual(['—', '©', '—'])
+
+    // 3. GFM www. autolink
+    expect(linkPairs).toContainEqual({
+      text: 'www.example.com/docs',
+      href: 'https://www.example.com/docs',
+    })
+
+    // 4. Ordered task list renders checkboxes while preserving 1. / 2. numbers, and toggles on click
+    const lines = wrapper.findAll('.cm-line')
+    expect(lines[2].classes()).toContain('cm-live-ol-item')
+    expect(lines[2].classes()).toContain('cm-live-checklist-item')
+    expect(lines[3].classes()).toContain('cm-live-checklist-checked')
+    const markers = wrapper.findAll('.cm-live-checklist-marker')
+    expect(markers).toHaveLength(2)
+    await markers[0].trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.getText()).toContain('1. [x] Tarefa ordenada')
+
+    // 5. Multiline %% comment block is hidden off-cursor and revealed on-cursor
+    const linesAfterToggle = wrapper.findAll('.cm-line')
+    expect(linesAfterToggle[5].classes()).toContain('cm-live-comment-block-hidden')
+    expect(linesAfterToggle[6].classes()).toContain('cm-live-comment-block-hidden')
+    expect(linesAfterToggle[7].classes()).toContain('cm-live-comment-block-hidden')
+    expect(linesAfterToggle[6].text()).toBe('')
+
+    wrapper.vm.setCursor(wrapper.vm.getText().indexOf('Comentário multilinha') + 2)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.cm-line')[6].classes()).toContain('cm-live-comment-block')
+    expect(wrapper.findAll('.cm-line')[6].text()).toContain('Comentário multilinha oculto')
+
+    // 6. Footnote definition has dedicated mark and parses inline formatting
+    expect(wrapper.find('.cm-live-footnote-def').text()).toBe('[^1]:')
+    expect(wrapper.find('.cm-live-footnote-def-line .cm-live-bold').text()).toBe('negrito')
+  })
 })

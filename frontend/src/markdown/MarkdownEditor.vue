@@ -41,6 +41,7 @@ import { Compartment, EditorState, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
+import { ayameMarkdownExtensions } from './parser.js'
 import {
   createLivePreviewExtension,
   setCursorActiveEffect,
@@ -661,7 +662,7 @@ onMounted(() => {
         ])
       ),
       keymap.of([...defaultKeymap, ...historyKeymap]),
-      markdown(),
+      markdown({ extensions: ayameMarkdownExtensions }),
       EditorView.lineWrapping,
       editableCompartment.of([
         EditorView.editable.of(!props.disabled),
@@ -919,6 +920,27 @@ defineExpose({
 :deep(.cm-live-h6) {
   font-size: 0.98rem;
   font-weight: 500;
+  color: var(--reading-muted);
+}
+
+:deep(.cm-live-setext-underline-hidden) {
+  height: 0;
+  min-height: 0;
+  line-height: 0;
+  font-size: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+:deep(.cm-live-setext-underline) {
+  line-height: 1.2;
+  padding-top: 0;
+}
+
+:deep(.cm-live-frontmatter) {
+  font-family: var(--reading-font-mono);
+  font-size: 0.86rem;
   color: var(--reading-muted);
 }
 
@@ -1208,6 +1230,38 @@ defineExpose({
   font-style: italic;
 }
 
+:deep(.cm-live-comment-block-hidden) {
+  height: 0;
+  min-height: 0;
+  line-height: 0;
+  font-size: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+:deep(.cm-live-comment-block) {
+  color: var(--reading-syntax);
+  font-style: italic;
+}
+
+:deep(.cm-live-footnote-def-line) {
+  font-size: 0.92em;
+  color: var(--reading-muted);
+}
+
+:deep(.cm-live-footnote-def) {
+  color: var(--reading-link);
+  font-family: var(--reading-font-mono);
+  font-weight: 600;
+}
+
+:deep(.cm-live-link-def) {
+  font-family: var(--reading-font-mono);
+  font-size: 0.86rem;
+  color: var(--reading-muted);
+}
+
 :deep(.cm-live-math) {
   font-family: var(--reading-font-mono);
   color: var(--reading-code-text);
@@ -1227,7 +1281,6 @@ defineExpose({
   text-underline-offset: 3px;
   cursor: pointer;
   border-radius: 2px;
-  padding: 0 2px;
   transition: color 0.12s ease, background-color 0.12s ease;
 }
 
