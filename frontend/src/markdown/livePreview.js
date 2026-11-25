@@ -1,7 +1,9 @@
 import { StateEffect, StateField } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType } from '@codemirror/view'
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
 import { classifyLinkDestination, parseWikilink, resolveLink } from './links.js'
 import { validateTagName } from './properties.js'
+import { ayameMarkdownParser } from './parser.js'
 
 export const setLivePreviewContextEffect = StateEffect.define()
 export const setCursorActiveEffect = StateEffect.define()
@@ -253,6 +255,53 @@ class BulletDotWidget extends WidgetType {
   }
 }
 
+const VALID_ENTITY_RE = /^&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});$/
+let entityDecoderEl = null
+
+const decodeHtmlEntity = (rawEntity) => {
+  if (typeof rawEntity !== 'string' || !VALID_ENTITY_RE.test(rawEntity)) return null
+  if (rawEntity.startsWith('&#')) {
+    const isHex = rawEntity[2] === 'x' || rawEntity[2] === 'X'
+    const numStr = rawEntity.slice(isHex ? 3 : 2, -1)
+    const codePoint = Number.parseInt(numStr, isHex ? 16 : 10)
+    if (!Number.isFinite(codePoint) || codePoint <= 0 || codePoint > 0x10ffff) {
+      return '\uFFFD'
+    }
+    try {
+      return String.fromCodePoint(codePoint)
+    } catch {
+      return '\uFFFD'
+    }
+  }
+  if (typeof document !== 'undefined') {
+    if (!entityDecoderEl) {
+      entityDecoderEl = document.createElement('textarea')
+    }
+    entityDecoderEl.innerHTML = rawEntity
+    const decoded = entityDecoderEl.value
+    return decoded !== rawEntity ? decoded : null
+  }
+  return null
+}
+
+class EntityWidget extends WidgetType {
+  constructor(decoded) {
+    super()
+    this.decoded = decoded
+  }
+
+  eq(other) {
+    return other instanceof EntityWidget && other.decoded === this.decoded
+  }
+
+  toDOM() {
+    const span = document.createElement('span')
+    span.className = 'cm-live-entity'
+    span.textContent = this.decoded
+    return span
+  }
+}
+
 class CalloutBadgeWidget extends WidgetType {
   constructor(calloutType, hasCustomTitle) {
     super()
@@ -285,94 +334,78 @@ class CalloutBadgeWidget extends WidgetType {
 const rangeIntersectsSelection = (selection, from, to) =>
   selection.ranges.some((range) => range.from <= to && range.to >= from)
 
-const collectInlineTokens = (lineText, startOffset) => {
-  const tokens = []
-  const slice = lineText.slice(startOffset)
-  const tokenRegex =
-    /(`[^`\n]+`)|(%%[^%\n]+%%)|(!?\[\[[^\]]+\]\])|(!?\[[^\]]*\]\([^)\n]+\))|(==)(?=\S)([^\n]+?\S|\S)\5|(\*\*|__)(?=\S)([^\n]+?\S|\S)\7|(~~)(?=\S)([^\n]+?\S|\S)\9|(\*|_)(?=\S)([^*\n_]+?\S|\S)\11|(\$\$[^$\n]+\$\$|\$(?=\S)[^$\n]+?\S\$|\$(?=\S)\S\$)|(\[\^[^\]]+\])|((?:^|(?<=\s))#[\p{L}\p{N}_\-/]+)/gu
+const getSyntaxTree = (state) => {
+  const docLen = state.doc.length
+  const ensured = ensureSyntaxTree(state, docLen, 250)
+  if (ensured && ensured.length >= docLen) return ensured
+  const current = syntaxTree(state)
+  if (current && current.length >= docLen) return current
+  return ayameMarkdownParser.parse(state.doc.toString())
+}
 
-  let match
-  while ((match = tokenRegex.exec(slice)) !== null) {
-    const from = startOffset + match.index
-    const raw = match[0]
-    const to = from + raw.length
-
-    if (match[1]) {
-      tokens.push({ type: 'code', from, to, raw })
-    } else if (match[2]) {
-      tokens.push({ type: 'comment', from, to, raw, delimLen: 2 })
-    } else if (match[3]) {
-      tokens.push({
-        type: raw.startsWith('!') ? 'embed' : 'wikilink',
-        from,
-        to,
-        raw,
-      })
-    } else if (match[4]) {
-      tokens.push({
-        type: raw.startsWith('!') ? 'image' : 'mdlink',
-        from,
-        to,
-        raw,
-      })
-    } else if (match[5]) {
-      tokens.push({
-        type: 'highlight',
-        from,
-        to,
-        delimLen: 2,
-      })
-    } else if (match[7]) {
-      tokens.push({
-        type: 'bold',
-        from,
-        to,
-        delimLen: match[7].length,
-      })
-    } else if (match[9]) {
-      tokens.push({
-        type: 'strikethrough',
-        from,
-        to,
-        delimLen: 2,
-      })
-    } else if (match[11]) {
-      tokens.push({
-        type: 'italic',
-        from,
-        to,
-        delimLen: 1,
-      })
-    } else if (match[13]) {
-      tokens.push({
-        type: 'math',
-        from,
-        to,
-        raw,
-        delimLen: raw.startsWith('$$') ? 2 : 1,
-      })
-    } else if (match[14]) {
-      tokens.push({
-        type: 'footnote',
-        from,
-        to,
-        raw,
-      })
-    } else if (match[15]) {
-      const tagCandidate = validateTagName(raw.slice(1))
-      if (tagCandidate) {
-        tokens.push({
-          type: 'tag',
-          from,
-          to,
-          raw,
-          tagName: tagCandidate,
-        })
-      }
+const getDirectChildren = (syntaxNode, name) => {
+  const result = []
+  for (let child = syntaxNode.firstChild; child; child = child.nextSibling) {
+    if (!name || child.name === name) {
+      result.push(child)
     }
   }
+  return result
+}
 
-  return tokens
+const addSyntaxOrHide = (decorations, from, to, showSyntax) => {
+  if (from >= to) return
+  if (showSyntax) {
+    decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(from, to))
+  } else {
+    decorations.push(Decoration.replace({}).range(from, to))
+  }
+}
+
+const normalizeReferenceLabel = (raw) =>
+  String(raw ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+
+const collectLinkReferences = (tree, doc) => {
+  const refs = new Map()
+  tree.iterate({
+    enter(nodeRef) {
+      if (
+        nodeRef.name === 'Frontmatter' ||
+        nodeRef.name === 'FencedCode' ||
+        nodeRef.name === 'CodeBlock' ||
+        nodeRef.name === 'MathBlock' ||
+        nodeRef.name === 'ObsidianCommentBlock'
+      ) {
+        return false
+      }
+      if (nodeRef.name === 'LinkReference') {
+        const syntaxNode = nodeRef.node
+        const labelNode = getDirectChildren(syntaxNode, 'LinkLabel')[0]
+        const urlNode = getDirectChildren(syntaxNode, 'URL')[0]
+        if (labelNode && urlNode) {
+          const rawLabel = doc.sliceString(labelNode.from, labelNode.to)
+          const innerLabel = rawLabel.startsWith('[') && rawLabel.endsWith(']')
+            ? rawLabel.slice(1, -1)
+            : rawLabel
+          const key = normalizeReferenceLabel(innerLabel)
+          if (key && !refs.has(key)) {
+            let url = doc.sliceString(urlNode.from, urlNode.to).trim()
+            if (url.startsWith('<') && url.endsWith('>')) {
+              url = url.slice(1, -1).trim()
+            }
+            if (url) {
+              refs.set(key, url)
+            }
+          }
+        }
+        return false
+      }
+    },
+  })
+  return refs
 }
 
 const buildLivePreviewDecorations = (state, context, cursorActive) => {
@@ -388,222 +421,382 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
     allFiles = [],
   } = context || {}
 
-  let inCodeBlock = false
-  let codeFenceChar = ''
-  let inMathBlock = false
-  let activeCalloutType = null
+  const tree = getSyntaxTree(state)
+  const linkReferences = collectLinkReferences(tree, doc)
+  const rawBlockLines = new Set()
+  const calloutLines = new Set()
+  const decoratedQuoteLines = new Set()
 
-  for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
-    const line = doc.line(lineNum)
-    const text = line.text
-    const lineHasCursor = cursorActive && rangeIntersectsSelection(selection, line.from, line.to)
+  const lineHasCursor = (line) =>
+    cursorActive && rangeIntersectsSelection(selection, line.from, line.to)
 
-    // 1. Check fenced code blocks
-    const fenceMatch = text.match(/^(\s*)(`{3,}|~{3,})(.*)$/)
-    if (fenceMatch) {
-      const fenceMarker = fenceMatch[2][0]
-      if (!inCodeBlock) {
-        inCodeBlock = true
-        codeFenceChar = fenceMarker
-        const codeLang = (fenceMatch[3] || '').trim().split(/\s+/)[0].slice(0, 18)
-        decorations.push(
-          Decoration.line({
-            class: 'cm-live-codeblock-fence cm-live-codeblock-open',
-            attributes: { 'data-code-lang': codeLang || 'code' },
-          }).range(line.from)
-        )
-        if (!lineHasCursor && line.to > line.from) {
-          decorations.push(
-            Decoration.mark({ class: 'cm-live-codeblock-fence-hidden' }).range(line.from, line.to)
-          )
-        } else if (line.to > line.from) {
-          decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.to))
+  const rangeHasCursor = (from, to) =>
+    cursorActive && rangeIntersectsSelection(selection, from, to)
+
+  tree.iterate({
+    enter(nodeRef) {
+      const name = nodeRef.name
+      const from = nodeRef.from
+      const to = nodeRef.to
+
+      // 1. YAML Frontmatter (in source mode)
+      if (name === 'Frontmatter') {
+        const startLine = doc.lineAt(from).number
+        const endLine = doc.lineAt(to).number
+        for (let ln = startLine; ln <= endLine; ln++) {
+          rawBlockLines.add(ln)
+          const line = doc.line(ln)
+          decorations.push(Decoration.line({ class: 'cm-live-frontmatter' }).range(line.from))
+          if (ln === startLine || ln === endLine) {
+            if (line.to > line.from) {
+              decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.to))
+            }
+          }
         }
-        continue
-      } else if (fenceMarker === codeFenceChar) {
-        inCodeBlock = false
-        codeFenceChar = ''
-        decorations.push(
-          Decoration.line({ class: 'cm-live-codeblock-fence cm-live-codeblock-close' }).range(line.from)
-        )
-        if (!lineHasCursor && line.to > line.from) {
-          decorations.push(
-            Decoration.mark({ class: 'cm-live-codeblock-fence-hidden' }).range(line.from, line.to)
-          )
-        } else if (line.to > line.from) {
-          decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.to))
+        return false
+      }
+
+      // 2. Fenced Code Blocks
+      if (name === 'FencedCode') {
+        const syntaxNode = nodeRef.node
+        const startLine = doc.lineAt(from)
+        const endLine = doc.lineAt(to)
+        const marks = getDirectChildren(syntaxNode, 'CodeMark')
+        const infoNode = getDirectChildren(syntaxNode, 'CodeInfo')[0]
+        const codeLang = infoNode
+          ? doc.sliceString(infoNode.from, infoNode.to).trim().split(/\s+/)[0].slice(0, 18)
+          : ''
+        const hasClosingMark =
+          marks.length >= 2 && doc.lineAt(marks[marks.length - 1].from).number === endLine.number && endLine.number > startLine.number
+
+        for (let ln = startLine.number; ln <= endLine.number; ln++) {
+          rawBlockLines.add(ln)
+          const line = doc.line(ln)
+          if (ln === startLine.number) {
+            decorations.push(
+              Decoration.line({
+                class: 'cm-live-codeblock-fence cm-live-codeblock-open',
+                attributes: { 'data-code-lang': codeLang || 'code' },
+              }).range(line.from)
+            )
+            if (line.to > line.from) {
+              decorations.push(
+                Decoration.mark({
+                  class: lineHasCursor(line) ? 'cm-live-syntax' : 'cm-live-codeblock-fence-hidden',
+                }).range(line.from, line.to)
+              )
+            }
+          } else if (hasClosingMark && ln === endLine.number) {
+            decorations.push(
+              Decoration.line({ class: 'cm-live-codeblock-fence cm-live-codeblock-close' }).range(line.from)
+            )
+            if (line.to > line.from) {
+              decorations.push(
+                Decoration.mark({
+                  class: lineHasCursor(line) ? 'cm-live-syntax' : 'cm-live-codeblock-fence-hidden',
+                }).range(line.from, line.to)
+              )
+            }
+          } else {
+            decorations.push(Decoration.line({ class: 'cm-live-codeblock-line' }).range(line.from))
+          }
         }
-        continue
+        return false
       }
-    }
 
-    if (inCodeBlock) {
-      decorations.push(Decoration.line({ class: 'cm-live-codeblock-line' }).range(line.from))
-      continue
-    }
-
-    // 1b. Multiline $$ math block
-    if (/^\s*\$\$\s*$/.test(text)) {
-      inMathBlock = !inMathBlock
-      decorations.push(Decoration.line({ class: 'cm-live-math-block' }).range(line.from))
-      decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.to))
-      continue
-    }
-    if (inMathBlock) {
-      decorations.push(Decoration.line({ class: 'cm-live-math-block' }).range(line.from))
-      if (line.to > line.from) {
-        decorations.push(Decoration.mark({ class: 'cm-live-math' }).range(line.from, line.to))
-      }
-      continue
-    }
-
-    // 2. Horizontal rules
-    if (/^(?:[-]{3,}|[*]{3,}|[_]{3,})\s*$/.test(text)) {
-      activeCalloutType = null
-      decorations.push(Decoration.line({ class: 'cm-live-hr' }).range(line.from))
-      if (!lineHasCursor && line.to > line.from) {
-        decorations.push(Decoration.replace({}).range(line.from, line.to))
-      } else if (line.to > line.from) {
-        decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.to))
-      }
-      continue
-    }
-
-    // 3. Tables
-    if (/^\|.*\|\s*$/.test(text)) {
-      activeCalloutType = null
-      const isDelimiter = /^\|[\s:|-]+\|\s*$/.test(text)
-      const nextLineText = lineNum < doc.lines ? doc.line(lineNum + 1).text : ''
-      const isHeader = !isDelimiter && /^\|[\s:|-]+\|\s*$/.test(nextLineText)
-      decorations.push(
-        Decoration.line({
-          class: isDelimiter
-            ? 'cm-live-table-row cm-live-table-delimiter'
-            : isHeader
-              ? 'cm-live-table-row cm-live-table-header'
-              : 'cm-live-table-row',
-        }).range(line.from)
-      )
-      for (let i = 0; i < text.length; i++) {
-        if (text[i] === '|') {
-          decorations.push(
-            Decoration.mark({ class: 'cm-live-table-pipe' }).range(line.from + i, line.from + i + 1)
-          )
+      // 3. Indented Code Blocks (CommonMark 4-space code blocks)
+      if (name === 'CodeBlock') {
+        const startLine = doc.lineAt(from).number
+        const endLine = doc.lineAt(to).number
+        for (let ln = startLine; ln <= endLine; ln++) {
+          rawBlockLines.add(ln)
+          decorations.push(Decoration.line({ class: 'cm-live-codeblock-line' }).range(doc.line(ln).from))
         }
+        return false
       }
-    }
 
-    let inlineStartOffset = 0
-
-    // 4. Headings H1-H6
-    const headingMatch = text.match(/^(#{1,6})(\s+)(.+)$/)
-    if (headingMatch) {
-      activeCalloutType = null
-      const level = headingMatch[1].length
-      const prefixLen = headingMatch[1].length + headingMatch[2].length
-      inlineStartOffset = prefixLen
-
-      decorations.push(
-        Decoration.line({ class: `cm-live-heading cm-live-h${level}` }).range(line.from)
-      )
-      if (!lineHasCursor) {
-        decorations.push(Decoration.replace({}).range(line.from, line.from + prefixLen))
-      } else {
-        decorations.push(
-          Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.from + prefixLen)
-        )
-      }
-      if (line.from + prefixLen < line.to) {
-        decorations.push(
-          Decoration.mark({ class: `cm-live-heading-text cm-live-h${level}-text` }).range(
-            line.from + prefixLen,
-            line.to
-          )
-        )
-      }
-    } else {
-      // 5. Callouts & Blockquotes
-      const calloutHeaderMatch = text.match(/^((?:>\s*)+)(\[!([a-zA-Z]+)\][+-]?)(\s*.*)$/)
-      const quoteMatch = !calloutHeaderMatch ? text.match(/^((?:>\s?)+)(.*)$/) : null
-
-      if (calloutHeaderMatch) {
-        const quotePrefixLen = calloutHeaderMatch[1].length
-        const calloutTagLen = calloutHeaderMatch[2].length
-        const calloutType = calloutHeaderMatch[3].toLowerCase()
-        const nextLineText = lineNum < doc.lines ? doc.line(lineNum + 1).text : ''
-        const isLastCalloutLine = !/^>\s?/.test(nextLineText)
-        activeCalloutType = calloutType
-        inlineStartOffset = quotePrefixLen + calloutTagLen
-
-        decorations.push(
-          Decoration.line({
-            class: `cm-live-blockquote cm-live-callout cm-live-callout--${calloutType} cm-live-callout-header${isLastCalloutLine ? ' cm-live-callout-end' : ''}`,
-            attributes: { 'data-callout-type': calloutType },
-          }).range(line.from)
-        )
-        if (!lineHasCursor && quotePrefixLen > 0) {
-          decorations.push(Decoration.replace({}).range(line.from, line.from + quotePrefixLen))
-        } else if (quotePrefixLen > 0) {
-          decorations.push(
-            Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.from + quotePrefixLen)
-          )
+      // 4. Multiline $$ Math Blocks
+      if (name === 'MathBlock') {
+        const syntaxNode = nodeRef.node
+        const marks = getDirectChildren(syntaxNode, 'MathMark')
+        const markLineNumbers = new Set(marks.map((m) => doc.lineAt(m.from).number))
+        const startLine = doc.lineAt(from).number
+        const endLine = doc.lineAt(to).number
+        for (let ln = startLine; ln <= endLine; ln++) {
+          rawBlockLines.add(ln)
+          const line = doc.line(ln)
+          decorations.push(Decoration.line({ class: 'cm-live-math-block' }).range(line.from))
+          if (line.to > line.from) {
+            decorations.push(
+              Decoration.mark({
+                class: markLineNumbers.has(ln) ? 'cm-live-syntax' : 'cm-live-math',
+              }).range(line.from, line.to)
+            )
+          }
         }
-        if (!lineHasCursor) {
+        return false
+      }
+
+      // 4b. Multiline Obsidian Comment Blocks (%% ... %%)
+      if (name === 'ObsidianCommentBlock') {
+        const startLine = doc.lineAt(from).number
+        const endLine = doc.lineAt(to).number
+        const hasCursor = rangeHasCursor(from, to)
+        for (let ln = startLine; ln <= endLine; ln++) {
+          rawBlockLines.add(ln)
+          const line = doc.line(ln)
+          if (!hasCursor) {
+            decorations.push(
+              Decoration.line({ class: 'cm-live-comment-block-hidden' }).range(line.from)
+            )
+            if (line.to > line.from) {
+              decorations.push(Decoration.replace({}).range(line.from, line.to))
+            }
+          } else {
+            decorations.push(Decoration.line({ class: 'cm-live-comment-block' }).range(line.from))
+            if (line.to > line.from) {
+              decorations.push(Decoration.mark({ class: 'cm-live-comment' }).range(line.from, line.to))
+            }
+          }
+        }
+        return false
+      }
+
+      // 4c. Footnote Definitions ([^1]: body)
+      if (name === 'FootnoteDefinition') {
+        const line = doc.lineAt(from)
+        decorations.push(Decoration.line({ class: 'cm-live-footnote-def-line' }).range(line.from))
+        return
+      }
+
+      if (name === 'FootnoteDefMark') {
+        decorations.push(Decoration.mark({ class: 'cm-live-footnote-def' }).range(from, to))
+        return false
+      }
+
+      // 4d. Link Reference Definitions ([ref]: url "title")
+      if (name === 'LinkReference') {
+        const line = doc.lineAt(from)
+        decorations.push(Decoration.line({ class: 'cm-live-link-def' }).range(line.from))
+        const labelNode = getDirectChildren(nodeRef.node, 'LinkLabel')[0]
+        if (labelNode) {
+          decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(labelNode.from, labelNode.to))
+        }
+        return false
+      }
+
+      // 5. Horizontal Rules (CommonMark thematic breaks — never Setext underlines)
+      if (name === 'HorizontalRule') {
+        const line = doc.lineAt(from)
+        decorations.push(Decoration.line({ class: 'cm-live-hr' }).range(line.from))
+        addSyntaxOrHide(decorations, from, to, lineHasCursor(line))
+        return false
+      }
+
+      // 6. ATX Headings (# .. ######)
+      if (name.startsWith('ATXHeading')) {
+        const level = Number(name.slice('ATXHeading'.length))
+        const syntaxNode = nodeRef.node
+        const line = doc.lineAt(from)
+        const hasCursor = lineHasCursor(line)
+        const marks = getDirectChildren(syntaxNode, 'HeaderMark')
+        const openMark = marks[0]
+        const closeMark = marks.length > 1 ? marks[marks.length - 1] : null
+
+        decorations.push(
+          Decoration.line({ class: `cm-live-heading cm-live-h${level}` }).range(line.from)
+        )
+
+        let contentStart = from
+        if (openMark) {
+          let afterOpen = openMark.to
+          while (afterOpen < line.to) {
+            const ch = doc.sliceString(afterOpen, afterOpen + 1)
+            if (ch === ' ' || ch === '\t') afterOpen++
+            else break
+          }
+          addSyntaxOrHide(decorations, openMark.from, afterOpen, hasCursor)
+          contentStart = afterOpen
+        }
+
+        let contentEnd = to
+        if (closeMark && closeMark.from >= contentStart) {
+          let beforeClose = closeMark.from
+          while (beforeClose > contentStart) {
+            const ch = doc.sliceString(beforeClose - 1, beforeClose)
+            if (ch === ' ' || ch === '\t') beforeClose--
+            else break
+          }
+          addSyntaxOrHide(decorations, beforeClose, closeMark.to, hasCursor)
+          contentEnd = beforeClose
+        }
+
+        if (contentStart < contentEnd) {
           decorations.push(
-            Decoration.replace({
-              widget: new CalloutBadgeWidget(calloutType, Boolean(calloutHeaderMatch[4]?.trim())),
-            }).range(line.from + quotePrefixLen, line.from + quotePrefixLen + calloutTagLen)
-          )
-        } else {
-          decorations.push(
-            Decoration.mark({ class: 'cm-live-callout-badge' }).range(
-              line.from + quotePrefixLen,
-              line.from + quotePrefixLen + calloutTagLen
+            Decoration.mark({ class: `cm-live-heading-text cm-live-h${level}-text` }).range(
+              contentStart,
+              contentEnd
             )
           )
         }
-      } else if (quoteMatch) {
-        const prefixLen = quoteMatch[1].length
-        inlineStartOffset = prefixLen
-        const nextLineText = lineNum < doc.lines ? doc.line(lineNum + 1).text : ''
-        const isLastCalloutLine = Boolean(activeCalloutType) && !/^>\s?/.test(nextLineText)
-        const calloutClasses = activeCalloutType
-          ? ` cm-live-callout cm-live-callout--${activeCalloutType}${isLastCalloutLine ? ' cm-live-callout-end' : ''}`
-          : ''
-        decorations.push(
-          Decoration.line({ class: `cm-live-blockquote${calloutClasses}` }).range(line.from)
-        )
-        if (!lineHasCursor && prefixLen > 0) {
-          decorations.push(Decoration.replace({}).range(line.from, line.from + prefixLen))
-        } else if (prefixLen > 0) {
+        return
+      }
+
+      // 7. Setext Headings (Heading\n=== and Heading\n---)
+      if (name === 'SetextHeading1' || name === 'SetextHeading2') {
+        const level = name === 'SetextHeading1' ? 1 : 2
+        const syntaxNode = nodeRef.node
+        const headerMark = getDirectChildren(syntaxNode, 'HeaderMark')[0]
+        const hasCursor = rangeHasCursor(from, to)
+        const startLineNum = doc.lineAt(from).number
+        const markLine = headerMark ? doc.lineAt(headerMark.from) : doc.lineAt(to)
+
+        for (let ln = startLineNum; ln < markLine.number; ln++) {
+          const line = doc.line(ln)
           decorations.push(
-            Decoration.mark({ class: 'cm-live-syntax' }).range(line.from, line.from + prefixLen)
+            Decoration.line({
+              class: `cm-live-heading cm-live-h${level} cm-live-setext-heading`,
+            }).range(line.from)
           )
+          if (line.from < line.to) {
+            decorations.push(
+              Decoration.mark({ class: `cm-live-heading-text cm-live-h${level}-text` }).range(
+                line.from,
+                line.to
+              )
+            )
+          }
         }
-      } else {
-        activeCalloutType = null
-        // 6. Checklists
-        const checkMatch = text.match(/^(\s*)([-*+]\s+\[)([ xX])(\]\s+)(.*)$/)
-        if (checkMatch) {
-          const indentLen = checkMatch[1].length
-          const preBracket = checkMatch[1] + checkMatch[2]
-          const stateChar = checkMatch[3]
-          const postBracket = checkMatch[4]
-          const prefixLen = preBracket.length + 1 + postBracket.length
-          const stateCharPos = line.from + preBracket.length
+
+        if (headerMark) {
+          decorations.push(
+            Decoration.line({
+              class: hasCursor ? 'cm-live-setext-underline' : 'cm-live-setext-underline-hidden',
+            }).range(markLine.from)
+          )
+          addSyntaxOrHide(decorations, headerMark.from, headerMark.to, hasCursor)
+        }
+        return
+      }
+
+      // 8. Blockquotes & Obsidian Callouts
+      if (name === 'Blockquote') {
+        const startLine = doc.lineAt(from)
+        const endLine = doc.lineAt(to)
+        const calloutMatch = startLine.text.match(/^(\s*(?:>\s*)+)(\[!([a-zA-Z]+)\][+-]?)(\s*.*)$/)
+
+        if (calloutMatch && !calloutLines.has(startLine.number)) {
+          const calloutType = calloutMatch[3].toLowerCase()
+          const hasCustomTitle = Boolean(calloutMatch[4]?.trim())
+          const tagFrom = startLine.from + calloutMatch[1].length
+          const tagTo = tagFrom + calloutMatch[2].length
+
+          for (let ln = startLine.number; ln <= endLine.number; ln++) {
+            calloutLines.add(ln)
+            decoratedQuoteLines.add(ln)
+            const line = doc.line(ln)
+            const isHeader = ln === startLine.number
+            const isEnd = ln === endLine.number
+            const classes = [
+              'cm-live-blockquote',
+              'cm-live-callout',
+              `cm-live-callout--${calloutType}`,
+              isHeader ? 'cm-live-callout-header' : '',
+              isEnd ? 'cm-live-callout-end' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
+
+            decorations.push(
+              Decoration.line({
+                class: classes,
+                attributes: isHeader ? { 'data-callout-type': calloutType } : undefined,
+              }).range(line.from)
+            )
+          }
+
+          if (!lineHasCursor(startLine)) {
+            decorations.push(
+              Decoration.replace({
+                widget: new CalloutBadgeWidget(calloutType, hasCustomTitle),
+              }).range(tagFrom, tagTo)
+            )
+          } else {
+            decorations.push(
+              Decoration.mark({ class: 'cm-live-callout-badge' }).range(tagFrom, tagTo)
+            )
+          }
+        } else {
+          for (let ln = startLine.number; ln <= endLine.number; ln++) {
+            if (!decoratedQuoteLines.has(ln)) {
+              decoratedQuoteLines.add(ln)
+              decorations.push(Decoration.line({ class: 'cm-live-blockquote' }).range(doc.line(ln).from))
+            }
+          }
+        }
+        return
+      }
+
+      if (name === 'QuoteMark') {
+        const line = doc.lineAt(from)
+        let markTo = to
+        if (markTo < line.to && doc.sliceString(markTo, markTo + 1) === ' ') {
+          markTo++
+        }
+        addSyntaxOrHide(decorations, from, markTo, lineHasCursor(line))
+        return false
+      }
+
+      // 9. Lists & GFM Task Lists (Checklists)
+      if (name === 'ListItem') {
+        const syntaxNode = nodeRef.node
+        const listMark = getDirectChildren(syntaxNode, 'ListMark')[0]
+        if (!listMark) return
+
+        const line = doc.lineAt(listMark.from)
+        const hasCursor = lineHasCursor(line)
+        const markText = doc.sliceString(listMark.from, listMark.to)
+        const isUnordered = markText === '-' || markText === '*' || markText === '+'
+
+        let afterListMark = listMark.to
+        while (afterListMark < line.to) {
+          const ch = doc.sliceString(afterListMark, afterListMark + 1)
+          if (ch === ' ' || ch === '\t') afterListMark++
+          else break
+        }
+
+        const taskNode = getDirectChildren(syntaxNode, 'Task')[0]
+        const taskMarker = taskNode ? getDirectChildren(taskNode, 'TaskMarker')[0] : null
+
+        if (taskMarker) {
+          const stateCharPos = taskMarker.from + 1
+          const stateChar = doc.sliceString(stateCharPos, stateCharPos + 1)
           const checked = stateChar.toLowerCase() === 'x'
-          inlineStartOffset = prefixLen
+          let prefixEnd = taskMarker.to
+          while (prefixEnd < line.to) {
+            const ch = doc.sliceString(prefixEnd, prefixEnd + 1)
+            if (ch === ' ' || ch === '\t') prefixEnd++
+            else break
+          }
 
           decorations.push(
             Decoration.line({
-              class: `cm-live-list-item cm-live-checklist-item${checked ? ' cm-live-checklist-checked' : ''}`,
+              class: `cm-live-list-item ${isUnordered ? '' : 'cm-live-ol-item '}cm-live-checklist-item${checked ? ' cm-live-checklist-checked' : ''}`,
             }).range(line.from)
           )
-          if (!lineHasCursor) {
+
+          if (!isUnordered) {
+            decorations.push(
+              Decoration.mark({ class: 'cm-live-list-number' }).range(listMark.from, afterListMark)
+            )
+          }
+
+          const widgetFrom = isUnordered ? listMark.from : taskMarker.from
+          if (!hasCursor) {
             decorations.push(
               Decoration.replace({
                 widget: new ChecklistMarkerWidget(stateCharPos, checked),
-              }).range(line.from + indentLen, line.from + prefixLen)
+              }).range(widgetFrom, prefixEnd)
             )
           } else {
             decorations.push(
@@ -615,155 +808,211 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
                   role: 'checkbox',
                   'aria-checked': checked ? 'true' : 'false',
                 },
-              }).range(line.from + indentLen, line.from + prefixLen)
+              }).range(widgetFrom, prefixEnd)
             )
           }
-          if (line.from + prefixLen < line.to) {
+          if (prefixEnd < line.to) {
             decorations.push(
-              Decoration.mark({ class: 'cm-live-checklist-text' }).range(
-                line.from + prefixLen,
-                line.to
-              )
+              Decoration.mark({ class: 'cm-live-checklist-text' }).range(prefixEnd, line.to)
+            )
+          }
+        } else if (isUnordered) {
+          decorations.push(
+            Decoration.line({ class: 'cm-live-list-item cm-live-ul-item' }).range(line.from)
+          )
+          if (!hasCursor) {
+            decorations.push(
+              Decoration.replace({ widget: new BulletDotWidget() }).range(listMark.from, afterListMark)
+            )
+          } else {
+            decorations.push(
+              Decoration.mark({ class: 'cm-live-list-bullet' }).range(listMark.from, afterListMark)
             )
           }
         } else {
-          // 7. Unordered lists
-          const ulMatch = text.match(/^(\s*)([-*+]\s+)(.*)$/)
-          if (ulMatch) {
-            const indentLen = ulMatch[1].length
-            const prefixLen = indentLen + ulMatch[2].length
-            inlineStartOffset = prefixLen
-            decorations.push(
-              Decoration.line({ class: 'cm-live-list-item cm-live-ul-item' }).range(line.from)
-            )
-            if (!lineHasCursor) {
-              decorations.push(
-                Decoration.replace({ widget: new BulletDotWidget() }).range(
-                  line.from + indentLen,
-                  line.from + prefixLen
-                )
-              )
-            } else {
-              decorations.push(
-                Decoration.mark({ class: 'cm-live-list-bullet' }).range(
-                  line.from + indentLen,
-                  line.from + prefixLen
-                )
-              )
-            }
-          } else {
-            // 8. Ordered lists
-            const olMatch = text.match(/^(\s*\d+\.\s+)(.*)$/)
-            if (olMatch) {
-              const prefixLen = olMatch[1].length
-              inlineStartOffset = prefixLen
-              decorations.push(
-                Decoration.line({ class: 'cm-live-list-item cm-live-ol-item' }).range(line.from)
-              )
-              decorations.push(
-                Decoration.mark({ class: 'cm-live-list-number' }).range(
-                  line.from,
-                  line.from + prefixLen
-                )
-              )
-            }
-          }
+          decorations.push(
+            Decoration.line({ class: 'cm-live-list-item cm-live-ol-item' }).range(line.from)
+          )
+          decorations.push(
+            Decoration.mark({ class: 'cm-live-list-number' }).range(listMark.from, afterListMark)
+          )
         }
+        return
       }
-    }
 
-    // 9. Inline tokens
-    const inlineTokens = collectInlineTokens(text, inlineStartOffset)
-    for (const token of inlineTokens) {
-      const absFrom = line.from + token.from
-      const absTo = line.from + token.to
-      const tokenHasCursor = cursorActive && rangeIntersectsSelection(selection, absFrom, absTo)
+      // 10. GFM Tables
+      if (name === 'TableHeader') {
+        decorations.push(
+          Decoration.line({ class: 'cm-live-table-row cm-live-table-header' }).range(doc.lineAt(from).from)
+        )
+        return
+      }
 
-      if (token.type === 'code') {
-        const innerFrom = absFrom + 1
-        const innerTo = absTo - 1
-        if (innerFrom < innerTo) {
-          if (!tokenHasCursor) {
-            decorations.push(Decoration.replace({}).range(absFrom, innerFrom))
-            decorations.push(
-              Decoration.mark({ class: 'cm-live-inline-code' }).range(innerFrom, innerTo)
-            )
-            decorations.push(Decoration.replace({}).range(innerTo, absTo))
-          } else {
-            decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(absFrom, innerFrom))
-            decorations.push(
-              Decoration.mark({ class: 'cm-live-inline-code' }).range(innerFrom, innerTo)
-            )
-            decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(innerTo, absTo))
+      if (name === 'TableRow') {
+        decorations.push(
+          Decoration.line({ class: 'cm-live-table-row' }).range(doc.lineAt(from).from)
+        )
+        return
+      }
+
+      if (name === 'TableDelimiter') {
+        const parentName = nodeRef.node.parent?.name
+        if (parentName === 'Table') {
+          const line = doc.lineAt(from)
+          decorations.push(
+            Decoration.line({ class: 'cm-live-table-row cm-live-table-delimiter' }).range(line.from)
+          )
+          const text = line.text
+          for (let i = 0; i < text.length; i++) {
+            if (text[i] === '|') {
+              decorations.push(
+                Decoration.mark({ class: 'cm-live-table-pipe' }).range(line.from + i, line.from + i + 1)
+              )
+            }
           }
-        }
-      } else if (token.type === 'comment') {
-        if (!tokenHasCursor) {
-          decorations.push(Decoration.replace({}).range(absFrom, absTo))
         } else {
-          decorations.push(Decoration.mark({ class: 'cm-live-comment' }).range(absFrom, absTo))
+          decorations.push(Decoration.mark({ class: 'cm-live-table-pipe' }).range(from, to))
         }
-      } else if (
-        token.type === 'bold' ||
-        token.type === 'italic' ||
-        token.type === 'strikethrough' ||
-        token.type === 'highlight'
+        return false
+      }
+
+      // 11. Inline Formatting (StrongEmphasis, Emphasis, Strikethrough, ObsidianHighlight)
+      if (
+        name === 'StrongEmphasis' ||
+        name === 'Emphasis' ||
+        name === 'Strikethrough' ||
+        name === 'ObsidianHighlight'
       ) {
-        const d = token.delimLen
-        const innerFrom = absFrom + d
-        const innerTo = absTo - d
+        const syntaxNode = nodeRef.node
+        const markName =
+          name === 'Strikethrough'
+            ? 'StrikethroughMark'
+            : name === 'ObsidianHighlight'
+              ? 'HighlightMark'
+              : 'EmphasisMark'
+        const marks = getDirectChildren(syntaxNode, markName)
+        if (marks.length < 2) return
+
+        const openMark = marks[0]
+        const closeMark = marks[marks.length - 1]
+        const innerFrom = openMark.to
+        const innerTo = closeMark.from
+        if (innerFrom >= innerTo) return
+
+        const hasCursor = rangeHasCursor(from, to)
         const styleClass =
-          token.type === 'bold'
+          name === 'StrongEmphasis'
             ? 'cm-live-bold'
-            : token.type === 'italic'
+            : name === 'Emphasis'
               ? 'cm-live-italic'
-              : token.type === 'highlight'
+              : name === 'ObsidianHighlight'
                 ? 'cm-live-highlight'
                 : 'cm-live-strikethrough'
 
-        if (innerFrom < innerTo) {
-          if (!tokenHasCursor) {
-            decorations.push(Decoration.replace({}).range(absFrom, innerFrom))
-            decorations.push(Decoration.mark({ class: styleClass }).range(innerFrom, innerTo))
-            decorations.push(Decoration.replace({}).range(innerTo, absTo))
-          } else {
-            decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(absFrom, innerFrom))
-            decorations.push(Decoration.mark({ class: styleClass }).range(innerFrom, innerTo))
-            decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(innerTo, absTo))
-          }
-        }
-      } else if (token.type === 'math') {
-        const d = token.delimLen
-        const innerFrom = absFrom + d
-        const innerTo = absTo - d
-        if (innerFrom < innerTo) {
-          if (!tokenHasCursor) {
-            decorations.push(Decoration.replace({}).range(absFrom, innerFrom))
-            decorations.push(Decoration.mark({ class: 'cm-live-math' }).range(innerFrom, innerTo))
-            decorations.push(Decoration.replace({}).range(innerTo, absTo))
-          } else {
-            decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(absFrom, innerFrom))
-            decorations.push(Decoration.mark({ class: 'cm-live-math' }).range(innerFrom, innerTo))
-            decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(innerTo, absTo))
-          }
-        }
-      } else if (token.type === 'footnote') {
-        decorations.push(Decoration.mark({ class: 'cm-live-footnote' }).range(absFrom, absTo))
-      } else if (token.type === 'tag') {
-        decorations.push(
-          Decoration.mark({
-            class: 'cm-live-tag',
-            attributes: {
-              'data-tag-name': token.tagName,
-            },
-          }).range(absFrom, absTo)
-        )
-      } else if (token.type === 'wikilink' || token.type === 'embed') {
-        const isEmbed = token.type === 'embed'
-        const parsed = parseWikilink(token.raw)
-        if (!parsed) continue
+        addSyntaxOrHide(decorations, openMark.from, openMark.to, hasCursor)
+        decorations.push(Decoration.mark({ class: styleClass }).range(innerFrom, innerTo))
+        addSyntaxOrHide(decorations, closeMark.from, closeMark.to, hasCursor)
+        return
+      }
 
-        if (isEmbed && !tokenHasCursor && vaultDirectory && parsed.target) {
+      // 12. Inline Code (single and multi-backtick spans)
+      if (name === 'InlineCode') {
+        const syntaxNode = nodeRef.node
+        const marks = getDirectChildren(syntaxNode, 'CodeMark')
+        if (marks.length < 2) return false
+        const openMark = marks[0]
+        const closeMark = marks[marks.length - 1]
+        const innerFrom = openMark.to
+        const innerTo = closeMark.from
+        if (innerFrom >= innerTo) return false
+
+        const hasCursor = rangeHasCursor(from, to)
+        addSyntaxOrHide(decorations, openMark.from, openMark.to, hasCursor)
+        decorations.push(Decoration.mark({ class: 'cm-live-inline-code' }).range(innerFrom, innerTo))
+        addSyntaxOrHide(decorations, closeMark.from, closeMark.to, hasCursor)
+        return false
+      }
+
+      // 13. Backslash Escapes (\*, \#, \[, \\, etc.)
+      if (name === 'Escape') {
+        const hasCursor = rangeHasCursor(from, to)
+        addSyntaxOrHide(decorations, from, from + 1, hasCursor)
+        return false
+      }
+
+      // 13b. CommonMark HTML5 Entities & Numeric Character References (&mdash;, &copy;, &#x2014;)
+      if (name === 'Entity') {
+        const rawEntity = doc.sliceString(from, to)
+        const decoded = decodeHtmlEntity(rawEntity)
+        if (decoded !== null) {
+          const hasCursor = rangeHasCursor(from, to)
+          if (!hasCursor) {
+            decorations.push(
+              Decoration.replace({ widget: new EntityWidget(decoded) }).range(from, to)
+            )
+          } else {
+            decorations.push(Decoration.mark({ class: 'cm-live-syntax' }).range(from, to))
+          }
+        }
+        return false
+      }
+
+      // 14. Obsidian Comments (%%...%%)
+      if (name === 'ObsidianComment') {
+        const hasCursor = rangeHasCursor(from, to)
+        if (!hasCursor) {
+          decorations.push(Decoration.replace({}).range(from, to))
+        } else {
+          decorations.push(Decoration.mark({ class: 'cm-live-comment' }).range(from, to))
+        }
+        return false
+      }
+
+      // 15. Inline Math ($...$ and $$...$$)
+      if (name === 'InlineMath') {
+        const isDouble = doc.sliceString(from, from + 2) === '$$'
+        const d = isDouble ? 2 : 1
+        const innerFrom = from + d
+        const innerTo = to - d
+        if (innerFrom < innerTo) {
+          const hasCursor = rangeHasCursor(from, to)
+          addSyntaxOrHide(decorations, from, innerFrom, hasCursor)
+          decorations.push(Decoration.mark({ class: 'cm-live-math' }).range(innerFrom, innerTo))
+          addSyntaxOrHide(decorations, innerTo, to, hasCursor)
+        }
+        return false
+      }
+
+      // 16. Footnote References ([^1])
+      if (name === 'FootnoteRef') {
+        decorations.push(Decoration.mark({ class: 'cm-live-footnote' }).range(from, to))
+        return false
+      }
+
+      // 17. Inline Tags (#tag/subtag)
+      if (name === 'InlineTag') {
+        const tagName = validateTagName(doc.sliceString(from + 1, to))
+        if (tagName) {
+          decorations.push(
+            Decoration.mark({
+              class: 'cm-live-tag',
+              attributes: { 'data-tag-name': tagName },
+            }).range(from, to)
+          )
+        }
+        return false
+      }
+
+      // 18. Wikilinks & Wiki Embeds ([[...]] and ![[...]])
+      if (name === 'Wikilink' || name === 'WikiEmbed') {
+        const isEmbed = name === 'WikiEmbed'
+        const raw = doc.sliceString(from, to)
+        const parsed = parseWikilink(raw)
+        if (!parsed) return false
+
+        const hasCursor = rangeHasCursor(from, to)
+
+        if (isEmbed && !hasCursor && vaultDirectory && parsed.target) {
           const resolvedImagePath = resolveImageTarget(parsed.target, sourcePath, allFiles)
           if (resolvedImagePath) {
             const width = parseImageWidthOption(parsed.alias)
@@ -773,19 +1022,19 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
                 widget: new ImageEmbedWidget(
                   buildVaultImageMediaUrl(vaultDirectory, resolvedImagePath),
                   altText,
-                  token.raw,
+                  raw,
                   resolvedImagePath,
                   width
                 ),
-              }).range(absFrom, absTo)
+              }).range(from, to)
             )
-            continue
+            return false
           }
         }
 
         const resolution = resolveLink({
           sourcePath,
-          linkTarget: token.raw,
+          linkTarget: raw,
           knownFiles,
           aliasesByFile,
           indexComplete,
@@ -795,58 +1044,96 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
         const embedClass = isEmbed ? ' cm-live-embed' : ''
         const attrs = {
           'data-link-kind': 'wikilink',
-          'data-link-raw': token.raw,
+          'data-link-raw': raw,
           'data-link-status': resolution.type,
-          'data-editing': tokenHasCursor ? 'true' : 'false',
+          'data-editing': hasCursor ? 'true' : 'false',
         }
         if (isEmbed) attrs['data-link-embed'] = 'true'
         if (resolution.path) attrs['data-link-resolved-path'] = resolution.path
         if (resolution.anchor) attrs['data-link-anchor'] = resolution.anchor
 
         const prefixLen = isEmbed ? 3 : 2
-        const innerText = token.raw.slice(prefixLen, -2)
+        const innerText = raw.slice(prefixLen, -2)
         const pipeIdx = innerText.indexOf('|')
 
-        if (!tokenHasCursor) {
-          if (pipeIdx !== -1 && absFrom + prefixLen + pipeIdx + 1 < absTo - 2) {
-            const aliasFrom = absFrom + prefixLen + pipeIdx + 1
-            const aliasTo = absTo - 2
-            decorations.push(Decoration.replace({}).range(absFrom, aliasFrom))
+        if (!hasCursor) {
+          if (pipeIdx !== -1 && from + prefixLen + pipeIdx + 1 < to - 2) {
+            const aliasFrom = from + prefixLen + pipeIdx + 1
+            const aliasTo = to - 2
+            decorations.push(Decoration.replace({}).range(from, aliasFrom))
             decorations.push(
               Decoration.mark({
                 class: `cm-live-link cm-live-wikilink ${statusClass}${embedClass}`,
                 attributes: attrs,
               }).range(aliasFrom, aliasTo)
             )
-            decorations.push(Decoration.replace({}).range(aliasTo, absTo))
+            decorations.push(Decoration.replace({}).range(aliasTo, to))
           } else {
-            const targetFrom = absFrom + prefixLen
-            const targetTo = absTo - 2
-            decorations.push(Decoration.replace({}).range(absFrom, targetFrom))
+            const targetFrom = from + prefixLen
+            const targetTo = to - 2
+            decorations.push(Decoration.replace({}).range(from, targetFrom))
             decorations.push(
               Decoration.mark({
                 class: `cm-live-link cm-live-wikilink ${statusClass}${embedClass}`,
                 attributes: attrs,
               }).range(targetFrom, targetTo)
             )
-            decorations.push(Decoration.replace({}).range(targetTo, absTo))
+            decorations.push(Decoration.replace({}).range(targetTo, to))
           }
         } else {
           decorations.push(
             Decoration.mark({
               class: `cm-live-link cm-live-wikilink ${statusClass}${embedClass}`,
               attributes: attrs,
-            }).range(absFrom, absTo)
+            }).range(from, to)
           )
         }
-      } else if (token.type === 'mdlink' || token.type === 'image') {
-        const isImage = token.type === 'image'
-        const m = token.raw.match(/^!?\[([^\]]*)\]\(([^)\n]+)\)$/)
-        if (!m) continue
-        const label = m[1]
-        const rawDest = m[2].trim()
+        return false
+      }
 
-        if (isImage && !tokenHasCursor && vaultDirectory) {
+      // 19. Standard Markdown Inline & Reference Links/Images ([label](dest), [label][ref], [ref][], [ref])
+      if (name === 'Link' || name === 'Image') {
+        const syntaxNode = nodeRef.node
+        const isImage = name === 'Image'
+        const linkMarks = getDirectChildren(syntaxNode, 'LinkMark')
+        const openBracket = linkMarks[0]
+        const closeBracket = linkMarks.find((m) => doc.sliceString(m.from, m.to) === ']')
+        if (!openBracket || !closeBracket) return
+
+        const raw = doc.sliceString(from, to)
+        const labelFrom = openBracket.to
+        const labelTo = closeBracket.from
+        const label = doc.sliceString(labelFrom, labelTo)
+
+        const urlNode = getDirectChildren(syntaxNode, 'URL')[0]
+        let rawDest = null
+
+        if (urlNode) {
+          rawDest = doc.sliceString(urlNode.from, urlNode.to).trim()
+          if (rawDest.startsWith('<') && rawDest.endsWith('>')) {
+            rawDest = rawDest.slice(1, -1).trim()
+          }
+        } else {
+          // Reference-style link/image: [label][ref], [ref][], or shortcut [ref]
+          const refLabelNode = getDirectChildren(syntaxNode, 'LinkLabel')[0]
+          let refKeyRaw = label
+          if (refLabelNode) {
+            const inner = doc.sliceString(refLabelNode.from, refLabelNode.to).slice(1, -1)
+            if (inner.trim().length > 0) {
+              refKeyRaw = inner
+            }
+          }
+          const resolvedRefUrl = linkReferences.get(normalizeReferenceLabel(refKeyRaw))
+          if (!resolvedRefUrl) {
+            // Unresolved shortcut/reference brackets stay literal text per CommonMark
+            return
+          }
+          rawDest = resolvedRefUrl
+        }
+
+        const hasCursor = rangeHasCursor(from, to)
+
+        if (isImage && !hasCursor && vaultDirectory) {
           const resolvedImagePath = resolveImageTarget(rawDest, sourcePath, allFiles)
           if (resolvedImagePath) {
             const width = parseImageWidthOption(label)
@@ -856,18 +1143,17 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
                 widget: new ImageEmbedWidget(
                   buildVaultImageMediaUrl(vaultDirectory, resolvedImagePath),
                   altText,
-                  token.raw,
+                  raw,
                   resolvedImagePath,
                   width
                 ),
-              }).range(absFrom, absTo)
+              }).range(from, to)
             )
-            continue
+            return false
           }
         }
 
         const destClass = classifyLinkDestination(rawDest)
-
         let statusType = 'invalid'
         let resolvedPath = null
         let anchor = null
@@ -895,41 +1181,85 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
           'data-link-kind': 'markdown',
           'data-link-raw': rawDest,
           'data-link-status': statusType,
-          'data-editing': tokenHasCursor ? 'true' : 'false',
+          'data-editing': hasCursor ? 'true' : 'false',
         }
         if (resolvedPath) attrs['data-link-resolved-path'] = resolvedPath
         if (anchor) attrs['data-link-anchor'] = anchor
         if (externalHref) attrs['data-link-href'] = externalHref
 
-        const labelFrom = absFrom + (isImage ? 2 : 1)
-        const labelTo = labelFrom + label.length
-
-        if (!tokenHasCursor && label.length > 0 && !isImage) {
-          decorations.push(Decoration.replace({}).range(absFrom, labelFrom))
+        if (!hasCursor && labelFrom < labelTo && !isImage) {
+          decorations.push(Decoration.replace({}).range(from, labelFrom))
           decorations.push(
             Decoration.mark({
               class: `cm-live-link cm-live-markdown-link ${statusClass}`,
               attributes: attrs,
             }).range(labelFrom, labelTo)
           )
-          decorations.push(Decoration.replace({}).range(labelTo, absTo))
+          decorations.push(Decoration.replace({}).range(labelTo, to))
+          // Descend into label so nested formatting like [**bold**](url) works
+          return
+        }
+
+        decorations.push(
+          Decoration.mark({
+            class: `cm-live-link cm-live-markdown-link ${statusClass}`,
+            attributes: attrs,
+          }).range(from, to)
+        )
+        return false
+      }
+
+      // 20. CommonMark & GFM Autolinks (<https://...>, bare https://..., or GFM www.example.com)
+      if (name === 'Autolink' || (name === 'URL' && nodeRef.node.parent?.name !== 'Link' && nodeRef.node.parent?.name !== 'Image' && nodeRef.node.parent?.name !== 'Autolink' && nodeRef.node.parent?.name !== 'LinkReference')) {
+        const raw = doc.sliceString(from, to)
+        const isAngle = raw.startsWith('<') && raw.endsWith('>')
+        const innerFrom = isAngle ? from + 1 : from
+        const innerTo = isAngle ? to - 1 : to
+        const hrefText = doc.sliceString(innerFrom, innerTo)
+        const normalizedCandidate = /^www\./i.test(hrefText) ? `https://${hrefText}` : hrefText
+        const classified = classifyLinkDestination(normalizedCandidate)
+        if (classified.type !== 'external') return false
+
+        const hasCursor = rangeHasCursor(from, to)
+        const attrs = {
+          'data-link-kind': 'markdown',
+          'data-link-raw': classified.href,
+          'data-link-status': 'external',
+          'data-link-href': classified.href,
+          'data-editing': hasCursor ? 'true' : 'false',
+        }
+
+        if (isAngle && !hasCursor) {
+          decorations.push(Decoration.replace({}).range(from, innerFrom))
+          decorations.push(
+            Decoration.mark({
+              class: 'cm-live-link cm-live-markdown-link cm-live-link--external',
+              attributes: attrs,
+            }).range(innerFrom, innerTo)
+          )
+          decorations.push(Decoration.replace({}).range(innerTo, to))
         } else {
           decorations.push(
             Decoration.mark({
-              class: `cm-live-link cm-live-markdown-link ${statusClass}`,
+              class: 'cm-live-link cm-live-markdown-link cm-live-link--external',
               attributes: attrs,
-            }).range(absFrom, absTo)
+            }).range(from, to)
           )
         }
+        return false
       }
-    }
+    },
+  })
 
-    // 10. Block ID at end of line: ^block-id
-    const blockIdMatch = text.match(/(?:^|\s)(\^[a-zA-Z0-9-]+)\s*$/)
+  // 21. Obsidian Block IDs at end of non-code lines: ^block-id
+  for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
+    if (rawBlockLines.has(lineNum)) continue
+    const line = doc.line(lineNum)
+    const blockIdMatch = line.text.match(/(?:^|\s)(\^[a-zA-Z0-9-]+)\s*$/)
     if (blockIdMatch) {
       const idStr = blockIdMatch[1]
-      const idx = text.lastIndexOf(idStr)
-      if (idx >= inlineStartOffset) {
+      const idx = line.text.lastIndexOf(idStr)
+      if (idx >= 0) {
         const blockFrom = line.from + idx
         const blockTo = blockFrom + idStr.length
         decorations.push(
