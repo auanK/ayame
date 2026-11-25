@@ -481,4 +481,64 @@ describe('Markdown & Wikilink resolution (links.js)', () => {
     const headings = extractHeadings(md)
     expect(headings).toEqual([{ level: 1, text: 'Cosmologia', line: 8, from: md.indexOf('# Cosmologia') }])
   })
+
+  it('extracts and locates CommonMark Setext headings (=== and ---) while ignoring frontmatter and code blocks', () => {
+    const md = [
+      '---',
+      'title: Energia - Matéria',
+      '---',
+      '# Energia - Matéria',
+      '',
+      'Teste',
+      '---',
+      '',
+      'Subtítulo Principal',
+      '===',
+      '',
+      '```md',
+      'Nao e heading',
+      '---',
+      '```',
+    ].join('\n')
+
+    expect(extractHeadings(md)).toEqual([
+      { level: 1, text: 'Energia - Matéria', line: 4, from: md.indexOf('# Energia - Matéria') },
+      { level: 2, text: 'Teste', line: 6, from: md.indexOf('Teste') },
+      { level: 1, text: 'Subtítulo Principal', line: 9, from: md.indexOf('Subtítulo Principal') },
+    ])
+
+    expect(findHeadingOffset(md, 'Teste')).toEqual({
+      line: 6,
+      from: md.indexOf('Teste'),
+    })
+    expect(findHeadingOffset(md, 'subtitulo-principal')).toEqual({
+      line: 9,
+      from: md.indexOf('Subtítulo Principal'),
+    })
+  })
+
+  it('extracts CommonMark reference-style internal links while ignoring indented code blocks, multi-backtick code, and multiline comments', () => {
+    const md = [
+      'Consulte [Guia][ref-guia] e [ref-mapa][] e ![Figura][ref-img].',
+      '',
+      '    [[IgnoradoEmCodigoIndentado]]',
+      '',
+      '``[[IgnoradoEmMultiCrase]]``',
+      '',
+      '%%',
+      '[[IgnoradoEmComentarioMultilinha]]',
+      '%%',
+      '',
+      '[ref-guia]: Projects/Guia.md#Intro',
+      '[ref-mapa]: Projects/Mapa.md',
+      '[ref-img]: Attachments/diagram.png',
+    ].join('\n')
+
+    const refs = extractNoteReferences(md)
+    expect(refs.map((r) => ({ target: r.target, anchor: r.anchor, isEmbed: r.isEmbed, kind: r.kind }))).toEqual([
+      { target: 'Projects/Guia.md', anchor: 'Intro', isEmbed: false, kind: 'markdown' },
+      { target: 'Projects/Mapa.md', anchor: null, isEmbed: false, kind: 'markdown' },
+      { target: 'Attachments/diagram.png', anchor: null, isEmbed: true, kind: 'markdown' },
+    ])
+  })
 })

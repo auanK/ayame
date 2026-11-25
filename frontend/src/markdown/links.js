@@ -1,4 +1,5 @@
 import { parseNoteDocument } from './properties.js'
+import { ayameMarkdownParser } from './parser.js'
 
 const SUPPORTED_MARKDOWN_RE = /\.(md|markdown)$/i
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
@@ -600,57 +601,75 @@ const slugifyHeading = (text) =>
     .replace(/[^\p{L}\p{N}\s-]/gu, '')
     .replace(/\s+/g, '-')
 
+const computeLineNumberAt = (docText, offset) => {
+  let line = 1
+  for (let i = 0; i < offset && i < docText.length; i++) {
+    if (docText.charCodeAt(i) === 10 /* \n */) line++
+  }
+  return line
+}
+
 export const extractHeadings = (docText) => {
   if (typeof docText !== 'string' || !docText) return []
-  const lines = docText.split(/\r?\n/)
+  const tree = ayameMarkdownParser.parse(docText)
   const headings = []
-  let inFrontmatter = false
-  let inCodeFence = false
-  let fenceChar = ''
-  let offset = 0
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (i === 0 && /^---[ \t]*$/.test(line)) {
-      inFrontmatter = true
-      offset += line.length + 1
-      continue
-    }
-    if (inFrontmatter) {
-      if (/^(---|\.\.\.)[ \t]*$/.test(line)) {
-        inFrontmatter = false
+  tree.iterate({
+    enter(nodeRef) {
+      const name = nodeRef.name
+      if (
+        name === 'Frontmatter' ||
+        name === 'FencedCode' ||
+        name === 'CodeBlock' ||
+        name === 'MathBlock'
+      ) {
+        return false
       }
-      offset += line.length + 1
-      continue
-    }
 
-    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/)
-    if (fenceMatch) {
-      if (!inCodeFence) {
-        inCodeFence = true
-        fenceChar = fenceMatch[1][0]
-      } else if (fenceMatch[1][0] === fenceChar) {
-        inCodeFence = false
-        fenceChar = ''
+      if (name.startsWith('ATXHeading')) {
+        const level = Number(name.slice('ATXHeading'.length))
+        const raw = docText.slice(nodeRef.from, nodeRef.to)
+        const text = raw
+          .replace(/^[ \t]*#{1,6}[ \t]*/, '')
+          .replace(/[ \t]+#+[ \t]*$/, '')
+          .trim()
+        if (text) {
+          headings.push({
+            level,
+            text,
+            line: computeLineNumberAt(docText, nodeRef.from),
+            from: nodeRef.from,
+          })
+        }
+        return false
       }
-      offset += line.length + 1
-      continue
-    }
 
-    if (!inCodeFence) {
-      const match = line.match(/^(#{1,6})\s+(.+?)\s*$/)
-      if (match) {
-        const headingText = match[2].replace(/\s+#+\s*$/, '').trim()
-        headings.push({
-          level: match[1].length,
-          text: headingText,
-          line: i + 1,
-          from: offset,
-        })
+      if (name === 'SetextHeading1' || name === 'SetextHeading2') {
+        const level = name === 'SetextHeading1' ? 1 : 2
+        let headerMarkFrom = nodeRef.to
+        for (let child = nodeRef.node.firstChild; child; child = child.nextSibling) {
+          if (child.name === 'HeaderMark') {
+            headerMarkFrom = child.from
+            break
+          }
+        }
+        const text = docText
+          .slice(nodeRef.from, headerMarkFrom)
+          .replace(/\r?\n/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (text) {
+          headings.push({
+            level,
+            text,
+            line: computeLineNumberAt(docText, nodeRef.from),
+            from: nodeRef.from,
+          })
+        }
+        return false
       }
-    }
-    offset += line.length + 1
-  }
+    },
+  })
 
   return headings
 }
@@ -731,25 +750,17 @@ export const findHeadingOffset = (docText, anchor) => {
   const targetLower = targetRaw.toLowerCase()
   const targetSlug = slugifyHeading(targetRaw)
 
-  const lines = docText.split('\n')
-  let offset = 0
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const match = line.match(/^(#{1,6})\s+(.+?)\s*$/)
-    if (match) {
-      const headingText = match[2].replace(/\s+#+\s*$/, '').trim()
-      if (
-        headingText === targetRaw ||
-        headingText.toLowerCase() === targetLower ||
-        slugifyHeading(headingText) === targetSlug
-      ) {
-        return {
-          line: i + 1,
-          from: offset,
-        }
+  for (const heading of extractHeadings(docText)) {
+    if (
+      heading.text === targetRaw ||
+      heading.text.toLowerCase() === targetLower ||
+      slugifyHeading(heading.text) === targetSlug
+    ) {
+      return {
+        line: heading.line,
+        from: heading.from,
       }
     }
-    offset += line.length + 1
   }
 
   return null
@@ -811,6 +822,51 @@ const parseInlineLinksFromString = (text, location, extra = {}) => {
   return refs
 }
 
+const getDirectAstChildren = (syntaxNode, name) => {
+  const result = []
+  for (let child = syntaxNode.firstChild; child; child = child.nextSibling) {
+    if (!name || child.name === name) {
+      result.push(child)
+    }
+  }
+  return result
+}
+
+const normalizeRefKey = (raw) =>
+  String(raw ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+
+const buildInternalMarkdownRef = (raw, isEmbed, label, destRaw, location, extra = {}) => {
+  const classified = classifyLinkDestination(destRaw)
+  if (classified.type !== 'internal') return null
+  let decoded = classified.target
+  try {
+    decoded = decodeURIComponent(classified.target)
+  } catch {
+    return null
+  }
+  let target = decoded
+  let anchor = null
+  const hashIdx = decoded.indexOf('#')
+  if (hashIdx !== -1) {
+    target = decoded.slice(0, hashIdx)
+    anchor = decoded.slice(hashIdx + 1) || null
+  }
+  return {
+    raw,
+    target,
+    anchor,
+    blockId: anchor && anchor.startsWith('^') ? anchor.slice(1) : null,
+    alias: label || null,
+    kind: 'markdown',
+    isEmbed,
+    location,
+    ...extra,
+  }
+}
+
 export const extractNoteReferences = (fullMarkdown) => {
   if (typeof fullMarkdown !== 'string' || !fullMarkdown) return []
   const parsedDoc = parseNoteDocument(fullMarkdown)
@@ -831,34 +887,119 @@ export const extractNoteReferences = (fullMarkdown) => {
     }
   }
 
-  // 2. Extract references from Markdown body (ignoring code blocks, inline code, and %% comments %%)
+  // 2. Extract references from Markdown body using CommonMark + GFM + Obsidian AST
   const body = parsedDoc.body
-  const cleanedBody = body
-    .replace(/%%[\s\S]*?%%/g, (match) => match.replace(/[^\n]/g, ' '))
-  const lines = cleanedBody.split(/\r?\n/)
-  let inCodeFence = false
-  let fenceChar = ''
+  if (!body) return references
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/)
-    if (fenceMatch) {
-      if (!inCodeFence) {
-        inCodeFence = true
-        fenceChar = fenceMatch[1][0]
-      } else if (fenceMatch[1][0] === fenceChar) {
-        inCodeFence = false
-        fenceChar = ''
+  const tree = ayameMarkdownParser.parse(body)
+
+  // First pass: collect CommonMark LinkReference definitions ([ref]: target)
+  const linkRefs = new Map()
+  tree.iterate({
+    enter(nodeRef) {
+      const name = nodeRef.name
+      if (
+        name === 'Frontmatter' ||
+        name === 'FencedCode' ||
+        name === 'CodeBlock' ||
+        name === 'MathBlock' ||
+        name === 'ObsidianCommentBlock'
+      ) {
+        return false
       }
-      continue
-    }
-    if (inCodeFence) continue
+      if (name === 'LinkReference') {
+        const labelNode = getDirectAstChildren(nodeRef.node, 'LinkLabel')[0]
+        const urlNode = getDirectAstChildren(nodeRef.node, 'URL')[0]
+        if (labelNode && urlNode) {
+          const key = normalizeRefKey(body.slice(labelNode.from + 1, labelNode.to - 1))
+          if (key && !linkRefs.has(key)) {
+            let url = body.slice(urlNode.from, urlNode.to).trim()
+            if (url.startsWith('<') && url.endsWith('>')) {
+              url = url.slice(1, -1).trim()
+            }
+            if (url) linkRefs.set(key, url)
+          }
+        }
+        return false
+      }
+    },
+  })
 
-    const lineWithoutInlineCode = line.replace(/`[^`\n]+`/g, (m) => ' '.repeat(m.length))
-    references.push(
-      ...parseInlineLinksFromString(lineWithoutInlineCode, 'body', { line: i + 1 })
-    )
-  }
+  // Second pass: collect wikilinks, embeds, inline markdown links, and resolved reference links
+  tree.iterate({
+    enter(nodeRef) {
+      const name = nodeRef.name
+      if (
+        name === 'Frontmatter' ||
+        name === 'FencedCode' ||
+        name === 'CodeBlock' ||
+        name === 'MathBlock' ||
+        name === 'ObsidianCommentBlock' ||
+        name === 'InlineCode' ||
+        name === 'InlineMath' ||
+        name === 'ObsidianComment' ||
+        name === 'LinkReference'
+      ) {
+        return false
+      }
+
+      if (name === 'Wikilink' || name === 'WikiEmbed') {
+        const raw = body.slice(nodeRef.from, nodeRef.to)
+        const parsed = parseWikilink(raw)
+        if (parsed) {
+          references.push({
+            raw,
+            target: parsed.target || '',
+            anchor: parsed.anchor || null,
+            blockId: parsed.blockId || null,
+            alias: parsed.alias || null,
+            kind: 'wikilink',
+            isEmbed: Boolean(parsed.isEmbed),
+            location: 'body',
+            line: computeLineNumberAt(body, nodeRef.from),
+          })
+        }
+        return false
+      }
+
+      if (name === 'Link' || name === 'Image') {
+        const syntaxNode = nodeRef.node
+        const isEmbed = name === 'Image'
+        const linkMarks = getDirectAstChildren(syntaxNode, 'LinkMark')
+        const openBracket = linkMarks[0]
+        const closeBracket = linkMarks.find((m) => body.slice(m.from, m.to) === ']')
+        if (!openBracket || !closeBracket) return
+
+        const raw = body.slice(nodeRef.from, nodeRef.to)
+        const label = body.slice(openBracket.to, closeBracket.from)
+        const urlNode = getDirectAstChildren(syntaxNode, 'URL')[0]
+        let destRaw = null
+
+        if (urlNode) {
+          destRaw = body.slice(urlNode.from, urlNode.to).trim()
+          if (destRaw.startsWith('<') && destRaw.endsWith('>')) {
+            destRaw = destRaw.slice(1, -1).trim()
+          }
+        } else {
+          const refLabelNode = getDirectAstChildren(syntaxNode, 'LinkLabel')[0]
+          let refKeyRaw = label
+          if (refLabelNode) {
+            const inner = body.slice(refLabelNode.from + 1, refLabelNode.to - 1)
+            if (inner.trim().length > 0) refKeyRaw = inner
+          }
+          destRaw = linkRefs.get(normalizeRefKey(refKeyRaw)) || null
+        }
+
+        if (destRaw) {
+          const ref = buildInternalMarkdownRef(raw, isEmbed, label, destRaw, 'body', {
+            line: computeLineNumberAt(body, nodeRef.from),
+          })
+          if (ref) references.push(ref)
+        }
+        return false
+      }
+    },
+  })
 
   return references
 }
