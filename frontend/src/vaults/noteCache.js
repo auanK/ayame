@@ -2,24 +2,24 @@ export const noteCacheKey = Symbol('Ayame note cache')
 
 const keyFor = (directory, path) => JSON.stringify([directory, path])
 
-export function createNoteCache(fetchNote, { maxNotes = 32, maxBytes = 8 * 1024 * 1024 } = {}) {
+export function createNoteCache(fetchNote, { maxNotes = 32, maxBytes = 8 * 1024 * 1024, maxAgeMs = 30_000 } = {}) {
   const notes = new Map()
   const reads = new Map()
   let bytes = 0
 
   function remove(key) {
-    const note = notes.get(key)
-    if (!note) return
-    bytes -= note.content.length * 2
+    const entry = notes.get(key)
+    if (!entry) return
+    bytes -= entry.note.content.length * 2
     notes.delete(key)
   }
 
-  function store(key, note) {
+  function store(key, note, checkedAt = Date.now()) {
     remove(key)
     if (typeof note.content !== 'string' || !note.revision) return
     const size = note.content.length * 2
     if (size > maxBytes || maxNotes < 1) return
-    notes.set(key, note)
+    notes.set(key, { note, checkedAt })
     bytes += size
     while (notes.size > maxNotes || bytes > maxBytes) {
       remove(notes.keys().next().value)
@@ -28,23 +28,27 @@ export function createNoteCache(fetchNote, { maxNotes = 32, maxBytes = 8 * 1024 
 
   function get(directory, path) {
     const key = keyFor(directory, path)
-    const note = notes.get(key)
-    if (!note) return null
+    const entry = notes.get(key)
+    if (!entry) return null
     notes.delete(key)
-    notes.set(key, note)
-    return note
+    notes.set(key, entry)
+    return entry.note
   }
 
-  function put(directory, path, { content, revision }) {
+  function put(directory, path, { content, revision }, { checkedAt } = {}) {
     const key = keyFor(directory, path)
     reads.delete(key)
-    store(key, { directory, path, content, revision })
+    store(key, { directory, path, content, revision }, checkedAt)
   }
 
   function read(directory, path, { fresh = false } = {}) {
     const key = keyFor(directory, path)
     const pending = reads.get(key)
     if (pending && !fresh) return pending.promise
+    const cached = notes.get(key)
+    if (!fresh && cached && Date.now() - cached.checkedAt < maxAgeMs) {
+      return Promise.resolve(get(directory, path))
+    }
 
     const request = { directory, path }
     const checkCurrent = () => {
@@ -76,7 +80,7 @@ export function createNoteCache(fetchNote, { maxNotes = 32, maxBytes = 8 * 1024 
   function invalidate(directory, path = '') {
     const matches = (note) => note.directory === directory &&
       (!path || note.path === path || note.path.startsWith(`${path}/`))
-    for (const [key, note] of notes) {
+    for (const [key, { note }] of notes) {
       if (matches(note)) remove(key)
     }
     for (const [key, note] of reads) {

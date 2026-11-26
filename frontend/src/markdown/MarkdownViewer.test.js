@@ -99,13 +99,14 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
     localStorage.clear()
   })
 
-  it.each([false, true])('shows a warm note immediately and preserves newer local edits during revalidation (edited: %s)', async (edited) => {
+  it.each([false, true])('shows an expired cached note immediately and preserves newer local edits during revalidation (edited: %s)', async (edited) => {
     let finishRead
     api.getVaultMarkdown.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve }))
     const cache = createNoteCache(api.getVaultMarkdown)
     const directory = 'personal'
     const path = 'A.md'
     cache.put(directory, path, { content: 'cached body', revision })
+    vi.setSystemTime(Date.now() + 30_000)
     const wrapper = mount(MarkdownViewer, {
       props: { directory, path },
       global: { provide: { [noteCacheKey]: cache } },
@@ -119,6 +120,24 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
     expect(wrapper.vm.getText()).toBe(edited ? 'local draft' : 'server changed')
     expect(wrapper.vm.revision).toBe(edited ? revision : 'b'.repeat(64))
     expect(cache.get(directory, path).content).toBe('server changed')
+    wrapper.unmount()
+  })
+
+  it('preserves edits made while a manual refresh is in progress', async () => {
+    const directory = 'personal'
+    const path = 'A.md'
+    let finishRead
+    api.getVaultMarkdown.mockResolvedValueOnce({ directory, path, content: 'original', revision })
+    const wrapper = mount(MarkdownViewer, { props: { directory, path } })
+    await flushPromises()
+
+    api.getVaultMarkdown.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve }))
+    const refresh = wrapper.vm.refresh()
+    await editNote(wrapper, 'local draft')
+    finishRead({ directory, path, content: 'server changed', revision: 'b'.repeat(64) })
+    await refresh
+    expect(wrapper.vm.getText()).toBe('local draft')
+    expect(wrapper.vm.revision).toBe(revision)
     wrapper.unmount()
   })
 

@@ -17,6 +17,31 @@ it('shares an in-flight read per vault and path and keeps the most recently open
   expect(fetchNote).toHaveBeenCalledTimes(3)
 })
 
+it('reuses a recent document and revalidates once after expiry or on an explicit refresh', async () => {
+  const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+  const fetchNote = vi.fn(async (directory, path) => document(directory, path, String(Date.now())))
+  const cache = createNoteCache(fetchNote, { maxAgeMs: 500 })
+  try {
+    const first = await cache.read('Vault', 'A.md')
+    now.mockReturnValue(1_499)
+    expect(await cache.read('Vault', 'A.md')).toBe(first)
+    expect(fetchNote).toHaveBeenCalledTimes(1)
+
+    now.mockReturnValue(1_500)
+    const revalidation = cache.read('Vault', 'A.md')
+    expect(cache.get('Vault', 'A.md')).toBe(first)
+    expect(cache.read('Vault', 'A.md')).toBe(revalidation)
+    expect((await revalidation).content).toBe('1500')
+    expect(fetchNote).toHaveBeenCalledTimes(2)
+
+    now.mockReturnValue(1_501)
+    expect((await cache.read('Vault', 'A.md', { fresh: true })).content).toBe('1501')
+    expect(fetchNote).toHaveBeenCalledTimes(3)
+  } finally {
+    now.mockRestore()
+  }
+})
+
 it.each(['saved', 'moved', 'logout'])('discards a response superseded by %s', async (event) => {
   let finish
   const cache = createNoteCache(() => new Promise((resolve) => { finish = resolve }))

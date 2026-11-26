@@ -609,6 +609,8 @@ describe('Vue Router 4 & URL persistence (Sections 41-52)', () => {
       expect(wrapper.findComponent(MarkdownViewer).props('path')).toBe('A.md')
 
       // Navigate to B.md while A.md and vault index are still in flight
+      expect(vaultApi.getVaultIndex).toHaveBeenCalledWith('Isekai')
+      expect(vaultApi.getVaultMarkdown.mock.invocationCallOrder[0]).toBeLessThan(vaultApi.getVaultIndex.mock.invocationCallOrder[0])
       await wrapper.find('button[data-file-path="B.md"]').trigger('click')
       await flushPromises()
 

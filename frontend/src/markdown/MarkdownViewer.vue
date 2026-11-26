@@ -88,7 +88,6 @@ const emit = defineEmits([
   'toggle-bookmark',
   'open-backlinks',
   'reveal-in-explorer',
-  'content-ready',
 ])
 
 const editorPreferences = ref(loadEditorPreferences())
@@ -449,7 +448,7 @@ const applyAnchor = async (anchorName) => {
 }
 
 const load = async (isRefresh = false) => {
-  if (isRefresh && (dirty.value || saving.value || conflict.value || saveResultUnknown.value)) return
+  if (isRefresh && (hasUnconfirmedChanges.value || reloading.value || props.relocating)) return
   clearAutosaveTimer()
   const reqId = ++activeRequestId
   recoveryRequestId++
@@ -464,14 +463,7 @@ const load = async (isRefresh = false) => {
     const indexed = props.takeIndexedDocument(directory, path, !cached && !hasInitialDocument)
     if (indexed) {
       cached = indexed
-      noteCache?.put(directory, path, indexed)
-    }
-  }
-  let notifiedReady = false
-  const notifyReady = () => {
-    if (!notifiedReady && isMounted && reqId === activeRequestId) {
-      notifiedReady = true
-      emit('content-ready')
+      noteCache?.put(directory, path, indexed, { checkedAt: indexed.checkedAt })
     }
   }
 
@@ -500,7 +492,6 @@ const load = async (isRefresh = false) => {
     publishState()
     await nextTick()
     if (reqId === activeRequestId && isMounted) editorRef.value?.focus()
-    notifyReady()
     return
   }
 
@@ -525,23 +516,20 @@ const load = async (isRefresh = false) => {
     refreshing.value = true
   }
 
+  const openedRevision = revision.value
+  const openedVersion = documentVersion.value
+  const changedSinceRead = () => hasUnconfirmedChanges.value || documentVersion.value !== openedVersion ||
+    revision.value !== openedRevision || reloading.value || props.relocating
+
   try {
     const read = readNote(directory, path, { fresh: isRefresh })
-    if (cached) {
-      if (props.anchor) void applyAnchor(props.anchor)
-      void nextTick(notifyReady)
-    }
+    if (cached && props.anchor) void applyAnchor(props.anchor)
     const result = await read
     if (!isMounted || reqId !== activeRequestId) return
-    if (cached) {
-      if (result.revision === revision.value) return
-      if (
-        hasUnconfirmedChanges.value || documentVersion.value !== 0 ||
-        revision.value !== cached.revision || saving.value || reloading.value || props.relocating
-      ) {
-        if (revision.value === cached.revision) stale.value = true
-        return
-      }
+    if (cached && result.revision === revision.value) return
+    if ((cached || isRefresh) && changedSinceRead()) {
+      if (revision.value === openedRevision && result.revision !== openedRevision) stale.value = true
+      return
     }
     baseContent.value = result.content
     draft.value = result.content
@@ -572,9 +560,9 @@ const load = async (isRefresh = false) => {
       return
     }
     errorCode.value = err.code || 'FAILED_TO_FETCH_MARKDOWN'
-    if (cached && (hasUnconfirmedChanges.value || saving.value || reloading.value || props.relocating)) {
+    if ((cached || isRefresh) && changedSinceRead()) {
       stale.value = true
-    } else if (cached && err.code === 'VAULT_PATH_NOT_FOUND') {
+    } else if ((cached || isRefresh) && err.code === 'VAULT_PATH_NOT_FOUND') {
       hasConfirmedContent.value = false
       error.value = 'Note not found in vault.'
       emit('not-found', path)
@@ -597,7 +585,6 @@ const load = async (isRefresh = false) => {
       loading.value = false
       refreshing.value = false
       publishState()
-      void nextTick(notifyReady)
     }
   }
 }

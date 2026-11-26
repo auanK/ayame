@@ -4,6 +4,7 @@ import VaultBrowser from './VaultBrowser.vue'
 import MarkdownViewer from '../markdown/MarkdownViewer.vue'
 import MarkdownEditor from '../markdown/MarkdownEditor.vue'
 import * as api from './api.js'
+import { createNoteCache, noteCacheKey } from './noteCache.js'
 
 vi.mock('./api.js', () => ({
   getVaultEntries: vi.fn(),
@@ -55,13 +56,13 @@ const deferred = () => {
   return { promise, resolve, reject }
 }
 
-const mountBrowser = async (props = { vault }, initialEntries = rootEntries) => {
+const mountBrowser = async (props = { vault }, initialEntries = rootEntries, global) => {
   api.getVaultEntries.mockResolvedValueOnce({
     directory: props.vault.directory,
     path: '',
     entries: initialEntries,
   })
-  const wrapper = mount(VaultBrowser, { props })
+  const wrapper = mount(VaultBrowser, { props, global })
   activeWrappers.push(wrapper)
   await flushPromises()
   return wrapper
@@ -332,23 +333,18 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(wrapper.find('[data-file-path="projects/Roadmap.md"]').exists()).toBe(true)
   })
 
-  it('opens an indexed note before its first content response and avoids replaying the old index snapshot', async () => {
+  it('opens a recent indexed note without a content request and avoids replaying its snapshot after eviction', async () => {
     const indexed = { path: 'README.md', content: 'Indexed body', revision: 'a'.repeat(64) }
     api.getVaultIndex.mockResolvedValueOnce({
       directory: 'personal', complete: true, files: [indexed.path], notes: [indexed],
     })
-    const wrapper = await mountBrowser()
-    const firstRead = deferred()
-    api.getVaultMarkdown.mockReturnValueOnce(firstRead.promise)
+    const cache = createNoteCache(api.getVaultMarkdown, { maxNotes: 1 })
+    const wrapper = await mountBrowser({ vault }, rootEntries, { provide: { [noteCacheKey]: cache } })
     await wrapper.find('[data-file-path="README.md"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-testid="markdown-loading"]').exists()).toBe(false)
     expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe(indexed.content)
-    expect(api.getVaultMarkdown).toHaveBeenCalledWith('personal', indexed.path)
-
-    firstRead.resolve({ directory: 'personal', ...indexed, content: 'Updated body', revision: 'b'.repeat(64) })
-    await flushPromises()
-    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Updated body')
+    expect(api.getVaultMarkdown).not.toHaveBeenCalled()
 
     api.getVaultMarkdown.mockResolvedValueOnce({
       directory: 'personal', path: 'Other.md', content: 'Other body', revision: 'c'.repeat(64),
@@ -363,6 +359,56 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     secondRead.resolve({ directory: 'personal', ...indexed, content: 'Fresh body', revision: 'd'.repeat(64) })
     await flushPromises()
     expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Fresh body')
+  })
+
+  it('switches between recent notes without content requests and fetches the active note on refresh', async () => {
+    const indexed = { path: 'README.md', content: 'Indexed body', revision: 'a'.repeat(64) }
+    const other = { path: 'Other.md', content: 'Other body', revision: 'b'.repeat(64) }
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, files: [indexed.path, other.path], notes: [indexed, other],
+    })
+    const cache = createNoteCache(api.getVaultMarkdown)
+    const wrapper = await mountBrowser({ vault }, rootEntries, { provide: { [noteCacheKey]: cache } })
+
+    for (const note of [indexed, other, indexed]) {
+      await wrapper.vm.selectNote(note.path)
+      await flushPromises()
+      expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe(note.content)
+    }
+    expect(api.getVaultMarkdown).not.toHaveBeenCalled()
+
+    api.getVaultEntries.mockResolvedValueOnce({ directory: 'personal', path: '', entries: rootEntries })
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', ...indexed, content: 'Updated body', revision: 'c'.repeat(64),
+    })
+    await wrapper.find('[data-testid="vault-name-trigger"]').trigger('click')
+    await wrapper.find('[data-testid="refresh-browser-button"]').trigger('click')
+    await flushPromises()
+    expect(api.getVaultMarkdown).toHaveBeenCalledExactlyOnceWith('personal', indexed.path)
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Updated body')
+    expect(cache.get('personal', indexed.path).content).toBe('Updated body')
+  })
+
+  it('revalidates a note from an expired index while showing the indexed text', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const indexed = { path: 'README.md', content: 'Indexed body', revision: 'a'.repeat(64) }
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, files: [indexed.path], notes: [indexed],
+    })
+    const cache = createNoteCache(api.getVaultMarkdown)
+    const wrapper = await mountBrowser({ vault }, rootEntries, { provide: { [noteCacheKey]: cache } })
+    vi.setSystemTime(Date.now() + 30_000)
+    const remote = deferred()
+    api.getVaultMarkdown.mockReturnValueOnce(remote.promise)
+
+    await wrapper.vm.selectNote(indexed.path)
+    await flushPromises()
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Indexed body')
+    expect(api.getVaultMarkdown).toHaveBeenCalledExactlyOnceWith('personal', indexed.path)
+
+    remote.resolve({ directory: 'personal', ...indexed, content: 'Updated body', revision: 'b'.repeat(64) })
+    await flushPromises()
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Updated body')
   })
 
   it('6. navigates internal links (wikilinks and relative markdown links), resolves unexpanded folders, expands tree ancestors, and highlights the target note', async () => {

@@ -271,9 +271,6 @@ const navHistoryIndex = ref(-1)
 let navigatingHistory = false
 let lastReplacedTab = null
 let selectionGeneration = 0
-let initialIndexPending = false
-let initialRootReady = false
-let initialNoteReady = null
 
 // Vault Index
 const vaultIndexData = shallowRef(
@@ -282,16 +279,16 @@ const vaultIndexData = shallowRef(
 const indexBuilder = createVaultIndexBuilder()
 const indexLoading = ref(false)
 const indexError = ref(false)
-let indexCanSupplyNotes = false
+let indexFetchedAt = null
 const openedNotePaths = new Set()
 
 const takeIndexedDocument = (directory, path, useSnapshot) => {
   if (directory !== props.vault.directory || openedNotePaths.has(path)) return null
   openedNotePaths.add(path)
-  if (!useSnapshot || !indexCanSupplyNotes || vaultIndexData.value.directory !== directory) return null
+  if (!useSnapshot || indexFetchedAt === null || vaultIndexData.value.directory !== directory) return null
   const note = vaultIndexData.value.notesByPath[path]
   if (typeof note?.content !== 'string' || !/^[a-f0-9]{64}$/.test(note.revision)) return null
-  return { content: note.content, revision: note.revision }
+  return { content: note.content, revision: note.revision, checkedAt: indexFetchedAt }
 }
 const graphModel = computed(() => buildGraphModel(vaultIndexData.value))
 const globalGraphRef = ref(null)
@@ -542,7 +539,7 @@ const clearActiveIndexFetch = () => {
 }
 
 const invalidateVaultIndexRequest = () => {
-  indexCanSupplyNotes = false
+  indexFetchedAt = null
   indexRequestGeneration++
   clearActiveIndexFetch()
   queuedIndexSaves.clear()
@@ -680,7 +677,7 @@ const availableCommands = computed(() => {
     { id: 'reveal-active', label: 'Reveal active note in explorer', run: () => revealActiveFile() },
     { id: 'open-trash', label: 'Open vault trash', run: () => openTrashModal() },
     { id: 'vault-settings', label: 'Vault settings', run: () => { showSettingsModal.value = true } },
-    { id: 'refresh', label: 'Refresh vault', run: () => refreshWorkspace() },
+    { id: 'refresh', label: 'Refresh vault', run: () => refreshFromUser() },
     { id: 'switch-vault', label: 'Switch vault', run: () => requestBackToVaults() },
     { id: 'nav-back', label: 'Navigate backward in history', run: () => navigateHistoryBack() },
     { id: 'nav-forward', label: 'Navigate forward in history', run: () => navigateHistoryForward() },
@@ -761,6 +758,7 @@ const fetchVaultIndexSafe = async () => {
       }
       return false
     }
+    const checkedAt = Date.now()
     const raw = await vaultApi.getVaultIndex(directory)
     if (!isCurrent()) return false
     if (!raw) {
@@ -784,7 +782,7 @@ const fetchVaultIndexSafe = async () => {
       }
       clearActiveIndexFetch()
       vaultIndexData.value = index
-      indexCanSupplyNotes = true
+      indexFetchedAt = checkedAt
       indexError.value = false
       return true
     }
@@ -888,11 +886,12 @@ const discoverUnloadedFolders = async (maxDirectories = 48) => {
   }
 }
 
-const refreshWorkspace = async () => {
+const refreshWorkspace = async ({ refreshNote = false } = {}) => {
   if (refreshing.value || loadingRoot.value) return
   refreshing.value = true
   invalidateVaultIndexRequest()
   try {
+    const noteRefresh = refreshNote ? viewerRef.value?.refresh() : null
     const rootEntries = await fetchDirectory('', { isRefresh: true })
     const expanded = [...expandedFolders.value]
     for (const folderPath of expanded) {
@@ -902,12 +901,15 @@ const refreshWorkspace = async () => {
     if (rootEntries && indexLoaded && vaultIndexData.value.complete) {
       await reconcileUncertainRelocation()
     }
+    await noteRefresh
   } finally {
     if (isMounted) {
       refreshing.value = false
     }
   }
 }
+
+const refreshFromUser = () => refreshWorkspace({ refreshNote: true })
 
 const toggleFolder = async (folderPath) => {
   selectedFolderPath.value = folderPath
@@ -2671,32 +2673,16 @@ const handleAttachmentUploaded = async (uploaded) => {
   void fetchVaultIndexSafe()
 }
 
-const startInitialIndex = () => {
-  if (!initialIndexPending || !initialRootReady) return
-  if (selectedFile.value && initialNoteReady !== selectedFile.value) return
-  initialIndexPending = false
-  if (!indexLoading.value) void fetchVaultIndexSafe()
-}
-
-const handleInitialNoteReady = () => {
-  initialNoteReady = selectedFile.value
-  startInitialIndex()
-}
-
 const startVaultWorkspace = async () => {
   const generation = directoryRequestGeneration
   const directory = props.vault.directory
-  initialIndexPending = true
-  initialRootReady = false
-  initialNoteReady = null
   const navigation = noteCache ? loadVaultNavigation(directory) : { tabs: [], active: null }
   openTabs.value = navigation.tabs
-  const root = fetchDirectory('')
+  void fetchDirectory('')
   await applyRouteFromUrl({ isInitial: true, restorePath: navigation.active })
-  await root
+  await nextTick()
   if (!isMounted || generation !== directoryRequestGeneration || directory !== props.vault.directory) return
-  initialRootReady = true
-  startInitialIndex()
+  if (!indexLoading.value) void fetchVaultIndexSafe()
 }
 
 const openCommandPaletteModal = () => {
@@ -2777,7 +2763,6 @@ watch(quickSwitcherQuery, () => {
 
 watch([openTabs, selectedFile], () => {
   if (noteCache) saveVaultNavigation(props.vault.directory, openTabs.value, selectedFile.value)
-  startInitialIndex()
 })
 
 const handleGlobalKeydown = (event) => {
@@ -2973,7 +2958,7 @@ defineExpose({
       @back-to-vaults="requestBackToVaults"
       @open-settings="showSettingsModal = true"
       @open-trash="openTrashModal"
-      @refresh="refreshWorkspace"
+      @refresh="refreshFromUser"
       @toggle-readable-line="viewerRef?.toggleReadableLineLength?.()"
       @toggle-properties="viewerRef?.cyclePropertiesMode?.()"
       @open-account="emit('open-account')"
@@ -3065,7 +3050,7 @@ defineExpose({
         @cancel-relocate="cancelRelocate"
         @confirm-relocate="confirmRelocate"
         @submit-relocate="submitRelocateForm"
-        @refresh="refreshWorkspace"
+        @refresh="refreshFromUser"
         @confirm-delete="confirmDeleteEntry"
         @cancel-delete="deleteConfirmState = null"
         @select-note="selectNote"
@@ -3175,7 +3160,6 @@ defineExpose({
           @select-tag="handleSelectTag"
           @rename-note="handleRenameFromNoteTitle"
           @content-saved="handleContentSaved"
-          @content-ready="handleInitialNoteReady"
           @attachment-uploaded="handleAttachmentUploaded"
           @toggle-bookmark="selectedFile && toggleBookmark(selectedFile)"
           @open-backlinks="layout.contextOpen = true; rightPanelTab = 'backlinks'; persistLayout()"
