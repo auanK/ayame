@@ -2834,7 +2834,7 @@ defineExpose({
   <section
     class="vault-browser workspace-shell"
     data-testid="vault-browser"
-    :style="{ '--vault-accent': vault.accentColor || '#a99aca' }"
+    :style="{ '--vault-accent': vault.accentColor || undefined }"
   >
     <WorkspaceTopbar
       :vault="vault"

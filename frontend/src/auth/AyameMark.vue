@@ -9,12 +9,12 @@
   >
     <defs>
       <linearGradient :id="topGradId" x1="0" y1="0" x2="25%" y2="100%">
-        <stop offset="0%" stop-color="#d7c5f6" />
-        <stop offset="100%" stop-color="#d4bef3" />
+        <stop offset="0%" style="stop-color: var(--mark-top-start)" />
+        <stop offset="100%" style="stop-color: var(--mark-top-end)" />
       </linearGradient>
       <linearGradient :id="bottomGradId" x1="0" y1="0" x2="35%" y2="100%">
-        <stop offset="0%" stop-color="#b195e1" />
-        <stop offset="100%" stop-color="#ab8dde" />
+        <stop offset="0%" style="stop-color: var(--mark-bottom-start)" />
+        <stop offset="100%" style="stop-color: var(--mark-bottom-end)" />
       </linearGradient>
     </defs>
     <g>

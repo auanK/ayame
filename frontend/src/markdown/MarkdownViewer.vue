@@ -1233,17 +1233,17 @@ defineExpose({
 .autosave-badge--conflict,
 .autosave-badge--unknown,
 .autosave-badge--error {
-  color: #ff9d76;
-  border-color: rgba(220, 100, 50, 0.45);
-  background: rgba(220, 100, 50, 0.14);
+  color: var(--ayame-conflict);
+  border-color: color-mix(in srgb, var(--ayame-conflict-tint) 45%, transparent);
+  background: color-mix(in srgb, var(--ayame-conflict-tint) 14%, transparent);
 }
 
 .stale-badge {
   font-size: 0.7rem;
   text-transform: uppercase;
-  background: rgba(220, 100, 50, 0.25);
-  color: #ff9d76;
-  border: 1px solid rgba(220, 100, 50, 0.4);
+  background: color-mix(in srgb, var(--ayame-conflict-tint) 25%, transparent);
+  color: var(--ayame-conflict);
+  border: 1px solid color-mix(in srgb, var(--ayame-conflict-tint) 40%, transparent);
   padding: 0.15rem 0.4rem;
   border-radius: 3px;
   letter-spacing: 0.05em;
@@ -1267,7 +1267,7 @@ defineExpose({
 }
 
 .action-button:hover:not(:disabled) {
-  background: var(--ayame-hover, #242530);
+  background: var(--ayame-hover);
   border-color: var(--reading-accent);
   color: var(--reading-heading);
 }
@@ -1324,8 +1324,8 @@ defineExpose({
 .loading-spinner {
   width: 24px;
   height: 24px;
-  border: 2px solid rgba(212, 203, 228, 0.2);
-  border-top-color: var(--ayame-primary, #a99aca);
+  border: 2px solid color-mix(in srgb, var(--ayame-lavender) 20%, transparent);
+  border-top-color: var(--ayame-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -1337,7 +1337,7 @@ defineExpose({
 }
 
 .error-title {
-  color: var(--ayame-error, #e2a8b4);
+  color: var(--ayame-error);
   font-weight: 500;
 }
 
@@ -1355,10 +1355,10 @@ defineExpose({
 .editor-error {
   margin: 0 0 0.75rem;
   padding: 0.65rem 0.8rem;
-  border: 1px solid var(--ayame-error-border, #684651);
+  border: 1px solid var(--ayame-error-border);
   border-radius: var(--radius-xs, 2px);
-  background: rgba(104, 70, 81, 0.18);
-  color: var(--ayame-error, #d8a6b0);
+  background: color-mix(in srgb, var(--ayame-error-tint) 18%, transparent);
+  color: var(--ayame-error);
   font-size: 0.88rem;
 }
 
@@ -1409,7 +1409,7 @@ defineExpose({
 }
 
 .note-breadcrumbs:hover {
-  background: rgba(169, 154, 202, 0.08);
+  background: color-mix(in srgb, var(--ayame-primary) 8%, transparent);
   color: var(--reading-heading-secondary);
 }
 
@@ -1456,7 +1456,7 @@ defineExpose({
   padding: 0 0.48rem;
   border: 1px solid var(--reading-border-subtle);
   border-radius: var(--radius-xs, 2px);
-  background: var(--ayame-surface, #1b1c25);
+  background: var(--ayame-surface);
   color: var(--reading-muted);
   font: inherit;
   font-size: 0.72rem;
@@ -1472,25 +1472,25 @@ defineExpose({
 .note-tool-btn:hover {
   border-color: var(--reading-accent);
   color: var(--reading-heading);
-  background: var(--ayame-hover, #242530);
+  background: var(--ayame-hover);
 }
 
 .note-tool-btn--active {
-  border-color: rgba(169, 154, 202, 0.45);
-  color: var(--ayame-lavender, #d4cbe4);
-  background: rgba(169, 154, 202, 0.14);
+  border-color: color-mix(in srgb, var(--ayame-primary) 45%, transparent);
+  color: var(--ayame-lavender);
+  background: color-mix(in srgb, var(--ayame-primary) 14%, transparent);
 }
 
 .note-tool-btn--bookmarked {
-  border-color: rgba(230, 195, 135, 0.5);
-  color: #e6c387;
-  background: rgba(230, 195, 135, 0.1);
+  border-color: color-mix(in srgb, var(--ayame-warning) 50%, transparent);
+  color: var(--ayame-warning);
+  background: color-mix(in srgb, var(--ayame-warning) 10%, transparent);
 }
 
 .note-tool-count {
   padding: 0 0.28rem;
   border-radius: var(--radius-xs, 2px);
-  background: rgba(169, 154, 202, 0.14);
+  background: color-mix(in srgb, var(--ayame-primary) 14%, transparent);
   color: var(--reading-tag-text);
   font-size: 0.68rem;
 }
@@ -1523,7 +1523,7 @@ defineExpose({
 
 .note-fm-tag:hover {
   border-color: var(--reading-accent);
-  background: rgba(169, 154, 202, 0.2);
+  background: color-mix(in srgb, var(--ayame-primary) 20%, transparent);
 }
 
 .note-fm-meta {
@@ -1533,7 +1533,7 @@ defineExpose({
   padding: 0.14rem 0.46rem;
   border: 1px solid var(--reading-border-subtle);
   border-radius: var(--radius-xs, 2px);
-  background: var(--ayame-surface, #1b1c25);
+  background: var(--ayame-surface);
   font-size: 0.72rem;
 }
 
@@ -1561,7 +1561,7 @@ defineExpose({
 .note-fm-edit:hover {
   color: var(--reading-heading);
   border-color: var(--reading-border);
-  background: rgba(27, 28, 37, 0.65);
+  background: color-mix(in srgb, var(--ayame-surface) 65%, transparent);
 }
 
 .note-heading-title {
@@ -1579,7 +1579,6 @@ defineExpose({
 }
 
 .note-heading-title:focus {
-  outline: none;
   border-bottom-color: var(--reading-accent);
 }
 
@@ -1604,7 +1603,7 @@ defineExpose({
 .editor-word-count {
   font-size: 0.72rem;
   color: var(--reading-syntax);
-  background: var(--ayame-surface, #1b1c25);
+  background: var(--ayame-surface);
   border: 1px solid var(--reading-border);
   border-radius: var(--radius-xs, 2px);
   padding: 0.16rem 0.5rem;
@@ -1625,6 +1624,6 @@ defineExpose({
 .editor-hud-pill--interactive:hover {
   color: var(--reading-tag-text);
   border-color: var(--reading-accent);
-  background: rgba(169, 154, 202, 0.12);
+  background: color-mix(in srgb, var(--ayame-primary) 12%, transparent);
 }
 </style>

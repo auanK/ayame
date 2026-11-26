@@ -826,11 +826,6 @@ defineExpose({
   color: var(--reading-text);
 }
 
-.markdown-editor-surface:focus-within {
-  border: none;
-  outline: none;
-}
-
 .markdown-editor-surface--disabled {
   opacity: 0.65;
   pointer-events: none;
@@ -856,8 +851,9 @@ defineExpose({
   color: var(--reading-text);
 }
 
-:deep(.cm-focused) {
-  outline: none;
+:deep(.cm-content:focus-visible) {
+  outline: 2px solid var(--reading-focus-ring);
+  outline-offset: -2px;
 }
 
 :deep(.cm-line) {
@@ -1044,7 +1040,7 @@ defineExpose({
 :deep(.cm-live-callout) {
   font-style: normal;
   padding: 0.28rem 0.95rem 0.28rem 1rem;
-  background: rgba(169, 154, 202, 0.065);
+  background: color-mix(in srgb, var(--ayame-primary) 6.5%, transparent);
   border-left: 3px solid var(--reading-accent);
 }
 
@@ -1077,8 +1073,8 @@ defineExpose({
 :deep(.cm-live-callout--success),
 :deep(.cm-live-callout--check),
 :deep(.cm-live-callout--done) {
-  border-left-color: #8fc7a8;
-  background: rgba(143, 199, 168, 0.07);
+  border-left-color: var(--ayame-success-accent);
+  background: color-mix(in srgb, var(--ayame-success-accent) 7%, transparent);
 }
 
 :deep(.cm-live-callout--tip .cm-live-callout-badge),
@@ -1086,48 +1082,48 @@ defineExpose({
 :deep(.cm-live-callout--success .cm-live-callout-badge),
 :deep(.cm-live-callout--check .cm-live-callout-badge),
 :deep(.cm-live-callout--done .cm-live-callout-badge) {
-  color: #8fc7a8;
+  color: var(--ayame-success-accent);
 }
 
 :deep(.cm-live-callout--info),
 :deep(.cm-live-callout--todo),
 :deep(.cm-live-callout--abstract),
 :deep(.cm-live-callout--summary) {
-  border-left-color: #8ccff0;
-  background: rgba(140, 207, 240, 0.07);
+  border-left-color: var(--ayame-info);
+  background: color-mix(in srgb, var(--ayame-info) 7%, transparent);
 }
 
 :deep(.cm-live-callout--info .cm-live-callout-badge),
 :deep(.cm-live-callout--todo .cm-live-callout-badge),
 :deep(.cm-live-callout--abstract .cm-live-callout-badge),
 :deep(.cm-live-callout--summary .cm-live-callout-badge) {
-  color: #8ccff0;
+  color: var(--ayame-info);
 }
 
 :deep(.cm-live-callout--warning),
 :deep(.cm-live-callout--caution),
 :deep(.cm-live-callout--important) {
-  border-left-color: #e6c387;
-  background: rgba(230, 195, 135, 0.075);
+  border-left-color: var(--ayame-warning);
+  background: color-mix(in srgb, var(--ayame-warning) 7.5%, transparent);
 }
 
 :deep(.cm-live-callout--warning .cm-live-callout-badge),
 :deep(.cm-live-callout--caution .cm-live-callout-badge),
 :deep(.cm-live-callout--important .cm-live-callout-badge) {
-  color: #e6c387;
+  color: var(--ayame-warning);
 }
 
 :deep(.cm-live-callout--danger),
 :deep(.cm-live-callout--error),
 :deep(.cm-live-callout--bug) {
-  border-left-color: #e2a8b4;
-  background: rgba(226, 168, 180, 0.08);
+  border-left-color: var(--ayame-error);
+  background: color-mix(in srgb, var(--ayame-error) 8%, transparent);
 }
 
 :deep(.cm-live-callout--danger .cm-live-callout-badge),
 :deep(.cm-live-callout--error .cm-live-callout-badge),
 :deep(.cm-live-callout--bug .cm-live-callout-badge) {
-  color: #e2a8b4;
+  color: var(--ayame-error);
 }
 
 :deep(.cm-live-list-item) {
@@ -1157,9 +1153,9 @@ defineExpose({
   width: 15px;
   height: 15px;
   margin-right: 0.48rem;
-  border: 1.5px solid #5c5870;
+  border: 1.5px solid var(--ayame-control-border);
   border-radius: var(--radius-xs, 2px);
-  background: rgba(17, 18, 24, 0.6);
+  background: color-mix(in srgb, var(--ayame-background) 60%, transparent);
   vertical-align: -2.5px;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
@@ -1171,7 +1167,7 @@ defineExpose({
 :deep(.cm-live-checkbox-box--checked) {
   background: var(--reading-accent);
   border-color: var(--reading-accent);
-  color: #16171e;
+  color: var(--reading-on-checkbox);
 }
 
 :deep(.cm-live-checklist-marker:focus-visible) {
@@ -1202,7 +1198,7 @@ defineExpose({
 :deep(.cm-live-table-header) {
   font-weight: 600;
   color: var(--reading-heading-secondary);
-  background: rgba(169, 154, 202, 0.08);
+  background: color-mix(in srgb, var(--ayame-primary) 8%, transparent);
   border-top: 1px solid var(--reading-border-subtle);
   padding-top: 0.24rem;
 }
@@ -1277,7 +1273,7 @@ defineExpose({
 :deep(.cm-live-link) {
   color: var(--reading-link);
   text-decoration: underline;
-  text-underline-color: rgba(140, 207, 240, 0.45);
+  text-underline-color: color-mix(in srgb, var(--ayame-info) 45%, transparent);
   text-underline-offset: 3px;
   cursor: pointer;
   border-radius: 2px;
@@ -1304,17 +1300,17 @@ defineExpose({
 }
 
 :deep(.cm-live-link--missing) {
-  color: var(--ayame-link-unresolved, #92a0b9);
+  color: var(--ayame-link-unresolved);
   text-decoration-style: dashed;
 }
 
 :deep(.cm-live-link--ambiguous) {
-  color: var(--ayame-link-ambiguous, #e5be83);
+  color: var(--ayame-link-ambiguous);
   text-decoration-style: wavy;
 }
 
 :deep(.cm-live-link--invalid) {
-  color: var(--ayame-error, #d8a6b0);
+  color: var(--ayame-error);
   text-decoration: line-through;
   cursor: not-allowed;
 }
@@ -1339,8 +1335,8 @@ defineExpose({
   width: auto;
   height: auto;
   border-radius: var(--radius-xs, 2px);
-  border: 1px solid var(--reading-control-border, rgba(169, 154, 202, 0.22));
-  background: var(--reading-background-elevated, #1b1c25);
+  border: 1px solid var(--reading-control-border);
+  background: var(--reading-background-elevated);
 }
 
 .editor-autocomplete {
@@ -1351,10 +1347,10 @@ defineExpose({
   padding: 0.25rem;
   list-style: none;
   max-width: 24rem;
-  background: var(--reading-background-elevated, #1b1c25);
-  border: 1px solid var(--reading-control-border, #34323f);
+  background: var(--reading-background-elevated);
+  border: 1px solid var(--reading-control-border);
   border-radius: var(--radius-sm, 4px);
-  box-shadow: 0 10px 26px rgba(8, 8, 12, 0.55);
+  box-shadow: 0 10px 26px var(--ayame-shadow);
 }
 
 .editor-autocomplete-item {
@@ -1371,7 +1367,7 @@ defineExpose({
 
 .editor-autocomplete-item:hover,
 .editor-autocomplete-item--active {
-  background: var(--reading-link-hover-bg, rgba(169, 154, 202, 0.16));
+  background: var(--reading-link-hover-bg);
   color: var(--reading-heading);
 }
 

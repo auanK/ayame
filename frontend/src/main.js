@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import { createAyameRouter } from './router/index.js'
+import './styles/theme.css'
 import './styles/main.css'
 import './styles/workspace.css'
 

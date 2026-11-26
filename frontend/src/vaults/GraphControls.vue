@@ -537,12 +537,12 @@ const handleMoveGroup = (groupId, delta) => {
   width: 100%;
   max-width: min(308px, 100%);
   max-height: min(62vh, 390px);
-  background: var(--ayame-surface, #1b1c25);
-  border: 1px solid var(--ayame-border, #34323f);
+  background: var(--ayame-surface);
+  border: 1px solid var(--ayame-border);
   border-radius: var(--radius-sm, 4px);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 10px 26px var(--ayame-shadow);
   font-size: 0.76rem;
-  color: var(--ayame-text, #eeeaf3);
+  color: var(--ayame-text);
   overflow: hidden;
   min-width: 0;
 }
@@ -552,8 +552,8 @@ const handleMoveGroup = (groupId, delta) => {
   flex-wrap: wrap;
   gap: 0.15rem;
   padding: 0.3rem 0.35rem;
-  background: var(--ayame-background, #111218);
-  border-bottom: 1px solid var(--ayame-border, #34323f);
+  background: var(--ayame-background);
+  border-bottom: 1px solid var(--ayame-border);
   flex-shrink: 0;
 }
 
@@ -569,7 +569,7 @@ const handleMoveGroup = (groupId, delta) => {
   border: 1px solid transparent;
   border-radius: var(--radius-xs, 2px);
   background: transparent;
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
   font-size: 0.72rem;
   font-weight: 500;
   cursor: pointer;
@@ -585,25 +585,25 @@ const handleMoveGroup = (groupId, delta) => {
 }
 
 .graph-tab-btn:hover {
-  color: var(--ayame-text, #eeeaf3);
-  background: rgba(255, 255, 255, 0.04);
+  color: var(--ayame-text);
+  background: color-mix(in srgb, var(--ayame-text) 4%, transparent);
 }
 
 .graph-tab-btn:focus-visible {
-  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline: 2px solid var(--ayame-primary);
   outline-offset: -1px;
-  color: var(--ayame-text, #eeeaf3);
+  color: var(--ayame-text);
 }
 
 .graph-tab-btn--active {
-  color: var(--ayame-text, #eeeaf3);
-  background: var(--ayame-hover, #282737);
-  border-color: rgba(169, 154, 202, 0.32);
+  color: var(--ayame-text);
+  background: var(--ayame-hover);
+  border-color: color-mix(in srgb, var(--ayame-primary) 32%, transparent);
   font-weight: 600;
 }
 
 .graph-tab-count {
-  color: var(--ayame-primary, #a99aca);
+  color: var(--ayame-primary);
   font-size: 0.68rem;
   flex-shrink: 0;
 }
@@ -637,7 +637,7 @@ const handleMoveGroup = (groupId, delta) => {
 }
 
 .graph-pane-title {
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -649,7 +649,7 @@ const handleMoveGroup = (groupId, delta) => {
   border: none;
   border-radius: 3px;
   background: transparent;
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
   font-size: 0.72rem;
   font-weight: 500;
   cursor: pointer;
@@ -657,19 +657,19 @@ const handleMoveGroup = (groupId, delta) => {
 }
 
 .graph-inline-link:hover {
-  color: var(--ayame-lavender, #d4cbe4);
+  color: var(--ayame-lavender);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .graph-inline-link:focus-visible {
-  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline: 2px solid var(--ayame-primary);
   outline-offset: 2px;
-  color: var(--ayame-lavender, #d4cbe4);
+  color: var(--ayame-lavender);
 }
 
 .graph-inline-link--accent {
-  color: var(--ayame-primary, #a99aca);
+  color: var(--ayame-primary);
 }
 
 .graph-restore-link {
@@ -678,7 +678,7 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-empty-hint {
   margin: 0;
-  color: var(--ayame-text-muted, #9893a8);
+  color: var(--ayame-text-muted);
   font-size: 0.72rem;
   line-height: 1.4;
 }
@@ -697,7 +697,7 @@ const handleMoveGroup = (groupId, delta) => {
   flex-direction: column;
   gap: 0.24rem;
   font-size: 0.72rem;
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
 }
 
 .graph-slider-header {
@@ -708,13 +708,13 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-slider-value {
   font-variant-numeric: tabular-nums;
-  color: var(--ayame-text, #eeeaf3);
+  color: var(--ayame-text);
 }
 
 .graph-range-slider {
   width: 100%;
   min-width: 0;
-  accent-color: var(--ayame-primary, #a99aca);
+  accent-color: var(--ayame-primary);
   cursor: pointer;
 }
 
@@ -729,24 +729,23 @@ const handleMoveGroup = (groupId, delta) => {
   flex: 1 1 auto;
   min-width: 0;
   padding: 0.28rem 0.45rem;
-  background: var(--ayame-background, #111218);
-  color: var(--ayame-text, #eeeaf3);
-  border: 1px solid var(--ayame-border, #34323f);
+  background: var(--ayame-background);
+  color: var(--ayame-text);
+  border: 1px solid var(--ayame-control-border);
   border-radius: var(--radius-xs, 2px);
   font-size: 0.74rem;
 }
 
 .graph-filter-input:focus-visible {
-  outline: none;
-  border-color: var(--ayame-primary, #a99aca);
+  border-color: var(--ayame-primary);
 }
 
 .graph-filter-clear,
 .graph-group-btn {
   background: transparent;
-  border: 1px solid var(--ayame-border, #34323f);
+  border: 1px solid var(--ayame-border);
   border-radius: var(--radius-xs, 2px);
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
   font-size: 0.72rem;
   line-height: 1;
   padding: 0.22rem 0.38rem;
@@ -756,8 +755,8 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-filter-clear:hover,
 .graph-group-btn:hover:not(:disabled) {
-  color: var(--ayame-text, #eeeaf3);
-  background: var(--ayame-hover, #242530);
+  color: var(--ayame-text);
+  background: var(--ayame-hover);
 }
 
 .graph-filter-clear:focus-visible,
@@ -765,13 +764,13 @@ const handleMoveGroup = (groupId, delta) => {
 .graph-group-color:focus-visible,
 .graph-range-slider:focus-visible,
 .graph-filter-toggle input:focus-visible {
-  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline: 2px solid var(--ayame-primary);
   outline-offset: 1px;
 }
 
 .graph-group-btn--remove:hover:not(:disabled) {
-  color: var(--ayame-danger, #e58b95);
-  border-color: rgba(229, 139, 149, 0.45);
+  color: var(--ayame-error);
+  border-color: color-mix(in srgb, var(--ayame-error) 45%, transparent);
 }
 
 .graph-group-btn:disabled {
@@ -781,7 +780,7 @@ const handleMoveGroup = (groupId, delta) => {
 
 .graph-filter-error {
   margin: 0;
-  color: var(--ayame-danger, #e58b95);
+  color: var(--ayame-error);
   font-size: 0.7rem;
   line-height: 1.3;
   word-break: break-word;
@@ -835,7 +834,7 @@ const handleMoveGroup = (groupId, delta) => {
   width: 24px;
   height: 24px;
   padding: 1px;
-  border: 1px solid var(--ayame-border, #34323f);
+  border: 1px solid var(--ayame-border);
   border-radius: var(--radius-xs, 2px);
   background: transparent;
   cursor: pointer;
@@ -867,8 +866,8 @@ const handleMoveGroup = (groupId, delta) => {
   align-items: center;
   justify-content: flex-end;
   padding: 0.4rem 0.75rem;
-  border-top: 1px solid var(--ayame-border, #2b2936);
-  background: rgba(17, 18, 24, 0.45);
+  border-top: 1px solid var(--ayame-border);
+  background: color-mix(in srgb, var(--ayame-background) 45%, transparent);
   flex-shrink: 0;
 }
 </style>

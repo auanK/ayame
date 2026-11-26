@@ -446,7 +446,7 @@ const bannerStyleFor = (vault) => {
   const color = String(vault.accentColor).trim()
   if (!color) return undefined
   return {
-    backgroundColor: `color-mix(in srgb, ${color} 22%, #15161c)`,
+    backgroundColor: `color-mix(in srgb, ${color} 22%, var(--workspace-editor))`,
   }
 }
 

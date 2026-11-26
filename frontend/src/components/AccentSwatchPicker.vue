@@ -5,6 +5,7 @@
       class="vault-color-swatch vault-color-swatch--none"
       :class="{ 'vault-color-swatch--active': !modelValue }"
       aria-label="No accent color"
+      :aria-pressed="!modelValue"
       title="No accent color"
       @click="emit('update:modelValue', '')"
     >
@@ -18,6 +19,7 @@
       :class="{ 'vault-color-swatch--active': modelValue === color }"
       :style="{ backgroundColor: color }"
       :aria-label="`Select accent ${color}`"
+      :aria-pressed="modelValue === color"
       @click="emit('update:modelValue', modelValue === color ? '' : color)"
     />
   </div>

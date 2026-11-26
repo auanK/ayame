@@ -306,6 +306,24 @@ const cancelPendingDraw = () => {
   }
 }
 
+let graphColors
+
+function readGraphColors() {
+  const styles = getComputedStyle(document.documentElement)
+  const color = (token) => styles.getPropertyValue(token).trim()
+  return {
+    edge: color('--graph-edge'),
+    focusedEdge: color('--ayame-primary'),
+    tagEdge: color('--graph-tag-edge'),
+    node: color('--graph-node'),
+    tag: color('--graph-tag'),
+    focusedTag: color('--graph-tag-focus'),
+    focusedNode: color('--ayame-lavender'),
+    label: color('--graph-label'),
+    focusedLabel: color('--ayame-text'),
+  }
+}
+
 const draw = () => {
   rafId = null
   if (isUnmounted) return
@@ -313,6 +331,7 @@ const draw = () => {
   if (!canvas || viewWidth <= 0 || viewHeight <= 0) return
   const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null
   if (!ctx) return
+  const colors = (graphColors ??= readGraphColors())
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, viewWidth, viewHeight)
@@ -366,19 +385,19 @@ const draw = () => {
     const isHighlighted = focusedId && (s.id === focusedId || t.id === focusedId)
     const linkType = link.type || 'note'
     if (focusedId && !isHighlighted) {
-      ctx.strokeStyle = 'rgba(170, 166, 184, 0.08)'
+      ctx.strokeStyle = colors.edge
       ctx.lineWidth = 0.8 * linkThicknessMult
     } else if (linkType === 'tag') {
-      ctx.strokeStyle = isHighlighted ? 'rgba(110, 196, 159, 0.78)' : 'rgba(110, 196, 159, 0.28)'
+      ctx.strokeStyle = isHighlighted ? colors.tag : colors.tagEdge
       ctx.lineWidth = (isHighlighted ? 1.3 : 0.9) * linkThicknessMult
     } else if (linkType === 'unresolved') {
-      ctx.strokeStyle = isHighlighted ? 'rgba(170, 166, 184, 0.55)' : 'rgba(170, 166, 184, 0.18)'
+      ctx.strokeStyle = isHighlighted ? colors.node : colors.edge
       ctx.lineWidth = (isHighlighted ? 1.1 : 0.85) * linkThicknessMult
     } else if (isHighlighted) {
-      ctx.strokeStyle = 'rgba(169, 154, 202, 0.88)'
+      ctx.strokeStyle = colors.focusedEdge
       ctx.lineWidth = 1.4 * linkThicknessMult
     } else {
-      ctx.strokeStyle = 'rgba(170, 166, 184, 0.25)'
+      ctx.strokeStyle = colors.edge
       ctx.lineWidth = 1 * linkThicknessMult
     }
 
@@ -434,19 +453,19 @@ const draw = () => {
     const groupColor = nodeType === 'note' ? props.groupColors?.[n.id] || null : null
 
     if (focusedId && !isFocused && !isNeighbor) {
-      ctx.fillStyle = 'rgba(170, 166, 184, 0.2)'
+      ctx.fillStyle = colors.edge
     } else if (nodeType === 'tag') {
-      ctx.fillStyle = isFocused ? '#9ae0c1' : '#6ec49f'
+      ctx.fillStyle = isFocused ? colors.focusedTag : colors.tag
     } else if (nodeType === 'unresolved') {
-      ctx.fillStyle = isFocused ? 'rgba(182, 178, 196, 0.72)' : 'rgba(143, 139, 163, 0.36)'
+      ctx.fillStyle = isFocused ? colors.focusedNode : colors.edge
     } else if (groupColor) {
       ctx.fillStyle = groupColor
     } else if (isFocused) {
-      ctx.fillStyle = '#d4cbe4'
+      ctx.fillStyle = colors.focusedNode
     } else if (isNeighbor || isActiveNote) {
-      ctx.fillStyle = '#a99aca'
+      ctx.fillStyle = colors.focusedEdge
     } else {
-      ctx.fillStyle = '#8f8ba3'
+      ctx.fillStyle = colors.node
     }
 
     ctx.beginPath()
@@ -454,13 +473,13 @@ const draw = () => {
     ctx.fill()
 
     if (nodeType === 'unresolved') {
-      ctx.strokeStyle = isFocused ? 'rgba(212, 203, 228, 0.75)' : 'rgba(170, 166, 184, 0.5)'
+      ctx.strokeStyle = isFocused ? colors.focusedLabel : colors.node
       ctx.lineWidth = 1
       if (canDash) ctx.setLineDash([2.5, 2])
       ctx.stroke()
       if (canDash) ctx.setLineDash([])
-    } else if (isFocused || isActiveNote) {
-      ctx.strokeStyle = isFocused ? 'rgba(238, 234, 243, 0.88)' : 'rgba(169, 154, 202, 0.65)'
+    } else if (isFocused || isActiveNote || groupColor) {
+      ctx.strokeStyle = isFocused ? colors.focusedLabel : isActiveNote ? colors.focusedEdge : colors.node
       ctx.lineWidth = 1.25
       ctx.stroke()
     }
@@ -486,7 +505,7 @@ const draw = () => {
       if (focusedId) {
         if (isFocused) alpha = 1
         else if (isNeighbor) alpha = Math.max(0.82, baseLabelAlpha)
-        else alpha = baseLabelAlpha * 0.18
+        else continue
       }
 
       if (alpha < 0.05) continue
@@ -501,11 +520,11 @@ const draw = () => {
           : n.path.replace(/\.(md|markdown)$/i, '')
         : n.label
 
-      ctx.fillStyle = isFocused
-        ? `rgba(238, 234, 243, ${alpha})`
-        : `rgba(212, 203, 228, ${alpha})`
+      ctx.fillStyle = isFocused ? colors.focusedLabel : colors.label
+      ctx.globalAlpha = Math.max(0.72, alpha)
       ctx.fillText(text, n._sx, n._sy + n._sr + 5)
     }
+    ctx.globalAlpha = 1
   }
 }
 
@@ -1466,7 +1485,7 @@ defineExpose({
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--ayame-background, #111218);
+  background: var(--ayame-background);
   overflow: hidden;
   user-select: none;
 }
@@ -1498,31 +1517,31 @@ defineExpose({
   width: 32px;
   height: 32px;
   padding: 0;
-  background: var(--ayame-surface, #1b1c25);
-  border: 1px solid var(--ayame-border, #34323f);
+  background: var(--ayame-surface);
+  border: 1px solid var(--ayame-border);
   border-radius: var(--radius-xs, 2px);
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .graph-filters-toggle:hover,
 .graph-filters-toggle--open {
-  background: var(--ayame-hover, #242530);
-  color: var(--ayame-text, #eeeaf3);
-  border-color: var(--ayame-primary, #a99aca);
+  background: var(--ayame-hover);
+  color: var(--ayame-text);
+  border-color: var(--ayame-primary);
 }
 
 .graph-filters-toggle:focus-visible {
-  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline: 2px solid var(--ayame-primary);
   outline-offset: 2px;
-  border-color: var(--ayame-primary, #a99aca);
-  color: var(--ayame-text, #eeeaf3);
+  border-color: var(--ayame-primary);
+  color: var(--ayame-text);
 }
 
 .graph-filters-toggle--active {
-  color: var(--ayame-lavender, #d4cbe4);
-  border-color: rgba(169, 154, 202, 0.55);
+  color: var(--ayame-lavender);
+  border-color: color-mix(in srgb, var(--ayame-primary) 55%, transparent);
 }
 
 .graph-settings-dot {
@@ -1532,7 +1551,7 @@ defineExpose({
   width: 5px;
   height: 5px;
   border-radius: 1px;
-  background: var(--ayame-primary, #a99aca);
+  background: var(--ayame-primary);
 }
 
 .graph-settings-popover {
@@ -1565,7 +1584,7 @@ defineExpose({
 }
 
 .graph-canvas:focus-visible {
-  outline: 2px solid var(--ayame-primary, #a99aca);
+  outline: 2px solid var(--ayame-primary);
   outline-offset: -2px;
 }
 
@@ -1586,7 +1605,7 @@ defineExpose({
   width: 100%;
   height: 100%;
   padding: 2rem;
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
   font-size: 0.9rem;
   text-align: center;
 }
@@ -1608,20 +1627,20 @@ defineExpose({
   width: 100%;
   height: 32px;
   padding: 0.28rem 0.6rem;
-  background: var(--ayame-surface, #1b1c25);
-  color: var(--ayame-text, #eeeaf3);
-  border: 1px solid var(--ayame-border, #34323f);
+  background: var(--ayame-surface);
+  color: var(--ayame-text);
+  border: 1px solid var(--ayame-control-border);
   border-radius: var(--radius-xs, 2px);
   font-size: 0.78rem;
 }
 
 .graph-locator-input::placeholder {
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
 }
 
 .graph-locator-input:focus-visible {
-  border-color: var(--ayame-primary, #a99aca);
-  outline: 1px solid var(--ayame-primary, #a99aca);
+  border-color: var(--ayame-primary);
+  outline: 1px solid var(--ayame-primary);
   outline-offset: 0;
 }
 
@@ -1637,10 +1656,10 @@ defineExpose({
   padding: 0.2rem;
   max-height: 240px;
   overflow-y: auto;
-  background: var(--ayame-surface-elevated, #20212c);
-  border: 1px solid var(--ayame-border, #34323f);
+  background: var(--ayame-surface-elevated);
+  border: 1px solid var(--ayame-border);
   border-radius: var(--radius-sm, 4px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.52);
+  box-shadow: 0 8px 20px var(--ayame-shadow);
   z-index: 20;
 }
 
@@ -1652,7 +1671,7 @@ defineExpose({
   background: transparent;
   border: none;
   border-radius: var(--radius-xs, 2px);
-  color: var(--ayame-text, #eeeaf3);
+  color: var(--ayame-text);
   text-align: left;
   cursor: pointer;
 }
@@ -1660,8 +1679,7 @@ defineExpose({
 .graph-locator-item:hover,
 .graph-locator-item:focus-visible,
 .graph-locator-item--active {
-  background: var(--ayame-hover, #242530);
-  outline: none;
+  background: var(--ayame-hover);
 }
 
 .graph-locator-label {
@@ -1671,7 +1689,7 @@ defineExpose({
 
 .graph-locator-path {
   font-size: 0.72rem;
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
 }
 
 .graph-notices {
@@ -1694,20 +1712,20 @@ defineExpose({
   justify-content: flex-end;
   gap: 0.5rem;
   padding: 0.35rem 0.6rem;
-  background: var(--ayame-surface-elevated, #20212c);
-  border: 1px solid var(--ayame-border, #34323f);
+  background: var(--ayame-surface-elevated);
+  border: 1px solid var(--ayame-border);
   border-radius: var(--radius-xs, 2px);
-  color: var(--ayame-text, #eeeaf3);
+  color: var(--ayame-text);
   font-size: 0.78rem;
   pointer-events: auto;
 }
 
 .graph-incomplete-notice {
   padding: 0.3rem 0.6rem;
-  background: var(--ayame-surface-elevated, #20212c);
-  border: 1px solid var(--ayame-primary, #a99aca);
+  background: var(--ayame-surface-elevated);
+  border: 1px solid var(--ayame-primary);
   border-radius: var(--radius-xs, 2px);
-  color: var(--ayame-lavender, #d4cbe4);
+  color: var(--ayame-lavender);
   font-size: 0.78rem;
   pointer-events: none;
 }
@@ -1718,26 +1736,26 @@ defineExpose({
   bottom: 0.75rem;
   z-index: 4;
   padding: 0.2rem 0.5rem;
-  background: var(--ayame-surface, #1b1c25);
-  border: 1px solid var(--ayame-border, #34323f);
+  background: var(--ayame-surface);
+  border: 1px solid var(--ayame-border);
   border-radius: var(--radius-xs, 2px);
-  color: var(--ayame-text-muted, #aaa6b8);
+  color: var(--ayame-text-muted);
   font-size: 0.75rem;
   pointer-events: none;
 }
 
 .btn-secondary {
   background: transparent;
-  color: var(--ayame-lavender, #d4cbe4);
-  border: 1px solid var(--ayame-border, #34323f);
+  color: var(--ayame-lavender);
+  border: 1px solid var(--ayame-border);
   border-radius: var(--radius-xs, 2px);
   font-weight: 600;
   cursor: pointer;
 }
 
 .btn-secondary:hover {
-  background: var(--ayame-hover, #242530);
-  color: var(--ayame-text, #eeeaf3);
+  background: var(--ayame-hover);
+  color: var(--ayame-text);
 }
 
 .btn-compact {

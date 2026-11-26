@@ -1,78 +1,9 @@
 :root {
-  color-scheme: dark;
-
-  --ayame-background: #111218;
-  --ayame-surface: #1b1c25;
-  --ayame-surface-elevated: #20212c;
-  --ayame-input-bg: #13141b;
-  --ayame-hover: #242530;
-
-  --ayame-primary: #a99aca;
-  --ayame-lavender: #d4cbe4;
-
-  --ayame-text: #eeeaf3;
-  --ayame-text-muted: #aaa6b8;
-  --ayame-muted: #aaa6b8;
-  --ayame-border: #34323f;
-  --ayame-border-subtle: rgba(238, 234, 243, 0.08);
-  --ayame-error: #e2a8b4;
-  --ayame-error-border: #684651;
-  --ayame-error-bg: rgba(104, 70, 81, 0.22);
-
-  --ayame-link: #7fc3e6;
-  --ayame-link-hover: #aad9f2;
-  --ayame-link-unresolved: #9da8c4;
-  --ayame-link-ambiguous: #e6c387;
-
   /* Crisp desktop corner scale: square internals, subtle outer rounding only */
   --radius-none: 0px;
   --radius-xs: 2px;
   --radius-sm: 4px;
 
-  /* Workspace tokens unified with Ayame identity */
-  --workspace-bg: var(--ayame-background);
-  --workspace-sidebar: var(--ayame-surface);
-  --workspace-editor: #15161d;
-  --workspace-border: var(--ayame-border);
-  --workspace-hover: var(--ayame-hover);
-  --workspace-active: rgba(169, 154, 202, 0.12);
-  --workspace-text: var(--ayame-text);
-  --workspace-muted: var(--ayame-text-muted);
-  --workspace-accent: var(--ayame-primary);
-  --workspace-splitter: var(--ayame-border);
-  --workspace-splitter-hover: var(--ayame-primary);
-
-  /* Reading tokens: harmonized with Ayame dark slate + native system typography */
-  --reading-background: var(--workspace-editor);
-  --reading-background-elevated: var(--ayame-surface);
-  --reading-text: #c9cbd4;
-  --reading-heading: #e7e8ef;
-  --reading-heading-secondary: #d7d8e1;
-  --reading-accent: #b29fd9;
-  --reading-bold: #dfe0e8;
-  --reading-muted: var(--ayame-text-muted);
-  --reading-syntax: #888a98;
-  --reading-caret: #e7e8ef;
-  --reading-border: var(--ayame-border);
-  --reading-border-subtle: rgba(170, 166, 184, 0.14);
-  --reading-control-bg: var(--ayame-surface);
-  --reading-control-border: #686978;
-  --reading-link: var(--ayame-link);
-  --reading-link-hover: var(--ayame-link-hover);
-  --reading-link-visited: #b8a9d8;
-  --reading-link-hover-bg: rgba(127, 195, 230, 0.12);
-  --reading-tag-bg: #22232c;
-  --reading-tag-text: var(--ayame-lavender);
-  --reading-tag-border: #444454;
-  --reading-code-bg: var(--ayame-background);
-  --reading-code-inline-bg: rgba(169, 154, 202, 0.11);
-  --reading-code-text: #d2d2d6;
-  --reading-blockquote-bg: rgba(169, 154, 202, 0.05);
-  --reading-blockquote-text: #ceced2;
-  --reading-blockquote-border: var(--reading-accent);
-  --reading-table-bg: rgba(17, 18, 24, 0.55);
-  --reading-selection-bg: rgba(169, 154, 202, 0.24);
-  --reading-focus-ring: rgba(169, 154, 202, 0.72);
   --ui-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
   --reading-font-body: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
   --reading-font-heading: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
@@ -95,9 +26,14 @@
   box-sizing: border-box;
 }
 
+:focus-visible {
+  outline: 2px solid var(--ayame-focus);
+  outline-offset: 2px;
+}
+
 ::selection {
-  background: rgba(169, 154, 202, 0.42);
-  color: var(--ayame-text, #eeeaf3);
+  background: var(--ayame-selection);
+  color: var(--ayame-text);
 }
 
 .markdown-viewer ::selection {
@@ -302,7 +238,6 @@ a:focus-visible {
 .password-toggle-btn:focus-visible:not(:disabled) {
   color: var(--ayame-text);
   background: var(--ayame-hover);
-  outline: none;
 }
 
 .password-toggle-btn:disabled {
@@ -312,7 +247,7 @@ a:focus-visible {
 
 .auth-caps-warning {
   margin: 0.35rem 0 0;
-  color: #e6c387;
+  color: var(--ayame-warning);
   font-size: 0.78rem;
 }
 
@@ -338,7 +273,7 @@ a:focus-visible {
 }
 
 .auth-field-hint--valid {
-  color: #8fc7a8;
+  color: var(--ayame-success-accent);
 }
 
 .auth-field-hint--warn {
@@ -356,7 +291,7 @@ a:focus-visible {
   flex: 1;
   height: 3px;
   border-radius: var(--radius-none);
-  background: rgba(170, 166, 184, 0.16);
+  background: color-mix(in srgb, var(--ayame-text-muted) 16%, transparent);
   overflow: hidden;
 }
 
@@ -371,11 +306,11 @@ a:focus-visible {
 }
 
 .password-strength-fill--medium {
-  background: #e6c387;
+  background: var(--ayame-warning);
 }
 
 .password-strength-fill--strong {
-  background: #8fc7a8;
+  background: var(--ayame-success-accent);
 }
 
 .password-strength-label {
@@ -418,9 +353,8 @@ h2 {
   height: 34px;
   min-height: 34px;
   padding: 0 0.65rem;
-  border: 1px solid var(--ayame-border);
+  border: 1px solid var(--ayame-control-border);
   border-radius: var(--radius-xs);
-  outline: none;
   background: var(--ayame-input-bg);
   color: var(--ayame-text);
   font: inherit;
@@ -429,17 +363,13 @@ h2 {
 }
 
 select.form-input {
-  appearance: none;
   padding-right: 1.9rem;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5 6 7.5l3-3' stroke='%23aaa6b8' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.6rem center;
-  background-size: 12px 12px;
   cursor: pointer;
 }
 
 .form-input::placeholder {
-  color: #6f6c7e;
+  color: var(--ayame-placeholder);
+  opacity: 1;
 }
 
 .form-input:focus-visible {
@@ -479,18 +409,18 @@ select.form-input {
 
 .btn-primary {
   width: auto;
-  border: 1px solid var(--ayame-primary);
+  border: 1px solid var(--ayame-primary-fill);
   border-radius: var(--radius-xs);
-  background: var(--ayame-primary);
-  color: var(--ayame-background);
+  background: var(--ayame-primary-fill);
+  color: var(--ayame-on-primary);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--ayame-lavender);
-  border-color: var(--ayame-lavender);
+  background: var(--ayame-primary-fill-hover);
+  border-color: var(--ayame-primary-fill-hover);
 }
 
 .btn-secondary {
@@ -507,7 +437,7 @@ select.form-input {
 }
 
 .btn-secondary:hover:not(:disabled) {
-  border-color: rgba(169, 154, 202, 0.55);
+  border-color: color-mix(in srgb, var(--ayame-primary) 55%, transparent);
   background: var(--ayame-hover);
   color: var(--ayame-text);
 }
@@ -754,7 +684,7 @@ select.form-input {
   align-items: center;
   justify-content: center;
   padding: 1.25rem;
-  background: rgba(9, 10, 14, 0.72);
+  background: var(--ayame-scrim);
 }
 
 .ayame-modal-card {
@@ -765,7 +695,7 @@ select.form-input {
   border: 1px solid var(--ayame-border);
   border-radius: var(--radius-sm);
   background: var(--ayame-surface);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.56);
+  box-shadow: 0 14px 36px var(--ayame-shadow);
 }
 
 .ayame-modal-card--wide {
@@ -820,7 +750,6 @@ select.form-input {
   background: var(--ayame-hover);
   color: var(--ayame-text);
   border-color: var(--ayame-border);
-  outline: none;
 }
 
 .ayame-modal-body {
@@ -992,7 +921,7 @@ select.form-input {
 .vault-filter-pill:hover {
   border-color: var(--ayame-primary);
   color: var(--ayame-lavender);
-  background: rgba(169, 154, 202, 0.12);
+  background: color-mix(in srgb, var(--ayame-primary) 12%, transparent);
 }
 
 /* Vault Cards Grid (Full-Width Desktop Columns) */
@@ -1025,11 +954,10 @@ select.form-input {
 .vault-card:focus-visible {
   border-color: var(--ayame-primary);
   background: var(--ayame-surface-elevated);
-  outline: none;
 }
 
 .vault-card--pinned {
-  border-color: rgba(169, 154, 202, 0.55);
+  border-color: color-mix(in srgb, var(--ayame-primary) 55%, transparent);
 }
 
 .vault-card--dragging {
@@ -1073,7 +1001,7 @@ select.form-input {
 }
 
 .vault-banner-top--cover {
-  background: rgba(17, 18, 24, 0.45);
+  background: var(--ayame-cover-scrim);
 }
 
 .vault-banner-badges,
@@ -1086,12 +1014,15 @@ select.form-input {
 
 .vault-banner-actions {
   margin-left: auto;
+}
+
+.vault-banner-top:not(.vault-banner-top--cover) .vault-banner-actions {
   opacity: 0.72;
   transition: opacity 110ms ease;
 }
 
-.vault-card:hover .vault-banner-actions,
-.vault-card:focus-within .vault-banner-actions {
+.vault-card:hover .vault-banner-top .vault-banner-actions,
+.vault-card:focus-within .vault-banner-top .vault-banner-actions {
   opacity: 1;
 }
 
@@ -1126,8 +1057,8 @@ select.form-input {
 
 .vault-icon-pill:hover,
 .vault-icon-pill--active {
-  color: #e6c387;
-  border-color: rgba(230, 195, 135, 0.55);
+  color: var(--ayame-warning);
+  border-color: color-mix(in srgb, var(--ayame-warning) 55%, transparent);
   background: var(--ayame-surface);
 }
 
@@ -1170,15 +1101,6 @@ select.form-input {
   padding-top: 0;
   border-top: none;
   gap: 0.65rem;
-}
-
-.vault-card-compact .vault-card-footer .vault-actions {
-  opacity: 0.78;
-}
-
-.vault-card-compact:hover .vault-card-footer .vault-actions,
-.vault-card-compact:focus-within .vault-card-footer .vault-actions {
-  opacity: 1;
 }
 
 .vault-description {
@@ -1234,7 +1156,7 @@ select.form-input {
 
 .vault-tag-chip--active {
   border-color: var(--ayame-primary);
-  background: rgba(169, 154, 202, 0.22);
+  background: color-mix(in srgb, var(--ayame-primary) 22%, transparent);
 }
 
 .vault-tag-chip--editable {
@@ -1267,7 +1189,6 @@ select.form-input {
 .vault-tag-inline-input {
   flex: 1 1 130px;
   border: none;
-  outline: none;
   background: transparent;
   color: var(--ayame-text);
   font: inherit;
@@ -1294,7 +1215,7 @@ select.form-input {
   min-height: 22px;
   flex: 0 0 22px;
   padding: 0;
-  border: 1px solid var(--ayame-border);
+  border: 1px solid var(--ayame-control-border);
   border-radius: var(--radius-xs);
   box-sizing: border-box;
   cursor: pointer;
@@ -1325,16 +1246,6 @@ select.form-input {
   align-items: center;
   justify-content: flex-end;
   gap: 0.4rem;
-}
-
-.vault-card-footer .vault-actions {
-  opacity: 0.72;
-  transition: opacity 110ms ease;
-}
-
-.vault-card:hover .vault-card-footer .vault-actions,
-.vault-card:focus-within .vault-card-footer .vault-actions {
-  opacity: 1;
 }
 
 .vault-card-footer .btn {
@@ -1370,7 +1281,7 @@ select.form-input {
 
 .vault-category-section--drop {
   border-color: var(--ayame-lavender);
-  background: rgba(169, 154, 202, 0.08);
+  background: color-mix(in srgb, var(--ayame-primary) 8%, transparent);
 }
 
 .vault-category-header {

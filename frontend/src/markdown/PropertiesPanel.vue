@@ -665,7 +665,7 @@ const handleRawYamlInput = (event) => {
   border: 1px solid var(--reading-border);
   border-bottom: 1px solid var(--reading-border);
   border-radius: var(--radius-sm, 4px);
-  background: var(--ayame-surface, #1b1c25);
+  background: var(--ayame-surface);
 }
 
 .properties-header {
@@ -691,7 +691,7 @@ const handleRawYamlInput = (event) => {
 
 .properties-toggle:hover {
   color: var(--reading-text);
-  background-color: var(--ayame-hover, #242530);
+  background-color: var(--ayame-hover);
 }
 
 .properties-toggle:focus-visible {
@@ -738,7 +738,7 @@ const handleRawYamlInput = (event) => {
 .properties-action-btn:hover {
   color: var(--reading-heading);
   border-color: var(--reading-accent);
-  background: var(--ayame-hover, #242530);
+  background: var(--ayame-hover);
 }
 
 .properties-action-btn:focus-visible {
@@ -747,15 +747,15 @@ const handleRawYamlInput = (event) => {
 }
 
 .properties-action-btn--primary {
-  background-color: var(--reading-accent);
-  color: var(--ayame-background, #111218);
-  border-color: var(--reading-accent);
+  background-color: var(--reading-action-fill);
+  color: var(--ayame-on-primary);
+  border-color: var(--reading-action-fill);
   font-weight: 600;
 }
 
 .properties-action-btn--primary:hover {
-  background-color: var(--ayame-lavender, #d4cbe4);
-  color: var(--ayame-background, #111218);
+  background-color: var(--reading-action-fill-hover);
+  color: var(--ayame-on-primary);
 }
 
 .properties-table {
@@ -775,7 +775,7 @@ const handleRawYamlInput = (event) => {
 }
 
 .property-row:hover {
-  background-color: rgba(255, 255, 255, 0.03);
+  background-color: color-mix(in srgb, var(--ayame-text) 3%, transparent);
 }
 
 .property-key-cell {
@@ -791,16 +791,10 @@ const handleRawYamlInput = (event) => {
 }
 
 .property-type-select {
-  appearance: none;
-  color-scheme: dark;
   width: 7rem;
   flex: 0 0 7rem;
   padding: 0.25rem 1.55rem 0.25rem 0.45rem;
   background-color: var(--reading-control-bg);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5 6 7.5l3-3' stroke='%23aaa6b8' stroke-width='1.35' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.45rem center;
-  background-size: 11px 11px;
   color: var(--reading-text);
   border: 1px solid var(--reading-control-border);
   border-radius: var(--radius-xs, 2px);
@@ -834,7 +828,6 @@ const handleRawYamlInput = (event) => {
 }
 
 .property-key-input:focus {
-  outline: none;
   border-color: var(--reading-accent);
   color: var(--reading-text);
   background-color: var(--reading-code-bg);
@@ -864,7 +857,6 @@ const handleRawYamlInput = (event) => {
 }
 
 .property-text-input:focus {
-  outline: none;
   border-color: var(--reading-accent);
   background-color: var(--reading-code-bg);
 }
@@ -874,7 +866,7 @@ const handleRawYamlInput = (event) => {
   padding: 0.15rem 0.45rem;
   background-color: var(--reading-link-hover-bg);
   color: var(--reading-link);
-  border: 1px solid rgba(140, 207, 240, 0.32);
+  border: 1px solid color-mix(in srgb, var(--ayame-info) 32%, transparent);
   border-radius: var(--radius-xs, 2px);
   font-size: 0.75rem;
   cursor: pointer;
@@ -947,7 +939,7 @@ const handleRawYamlInput = (event) => {
 .chip-remove-btn:hover:not(:disabled),
 .chip-remove-btn:focus-visible:not(:disabled) {
   color: var(--reading-heading);
-  background: rgba(169, 154, 202, 0.16);
+  background: color-mix(in srgb, var(--ayame-primary) 16%, transparent);
   border-color: var(--reading-control-border);
   outline: 2px solid var(--reading-focus-ring);
   outline-offset: 1px;
@@ -966,10 +958,6 @@ const handleRawYamlInput = (event) => {
   border: none;
   color: var(--reading-text);
   font-size: 0.8rem;
-}
-
-.chip-inline-input:focus {
-  outline: none;
 }
 
 .property-row-actions {
@@ -1006,7 +994,7 @@ const handleRawYamlInput = (event) => {
 .property-action-btn:hover:not(:disabled),
 .property-action-btn:focus-visible:not(:disabled) {
   color: var(--reading-heading);
-  background-color: var(--ayame-hover, #242530);
+  background-color: var(--ayame-hover);
   border-color: var(--reading-control-border);
   outline: 2px solid var(--reading-focus-ring);
   outline-offset: 1px;
@@ -1014,7 +1002,7 @@ const handleRawYamlInput = (event) => {
 
 .property-action-btn--danger:hover:not(:disabled),
 .property-action-btn--danger:focus-visible:not(:disabled) {
-  color: var(--ayame-error, #e2a8b4);
+  color: var(--ayame-error);
 }
 
 .property-action-btn:disabled {
@@ -1035,7 +1023,7 @@ const handleRawYamlInput = (event) => {
 
 .add-property-btn:hover:not(:disabled) {
   color: var(--reading-heading);
-  background-color: var(--ayame-hover, #242530);
+  background-color: var(--ayame-hover);
 }
 
 .add-property-btn:focus-visible:not(:disabled) {

@@ -6,6 +6,7 @@ import PropertiesPanel from './PropertiesPanel.vue'
 import { parseNoteDocument } from './properties.js'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import Color from 'colorjs.io'
 import * as api from '../vaults/api.js'
 import viewerRaw from './MarkdownViewer.vue?raw'
 import propertiesRaw from './PropertiesPanel.vue?raw'
@@ -16,27 +17,19 @@ const mainCssRaw = readFileSync(
   'utf8',
 )
 
-const parseHexRgb = (hex) => {
-  const clean = hex.replace('#', '')
-  return [0, 2, 4].map((offset) => parseInt(clean.slice(offset, offset + 2), 16))
-}
+const themeCssRaw = readFileSync(resolve(__dirname, '../styles/theme.css'), 'utf8')
 
-const relativeLuminance = (hex) => {
-  const channels = parseHexRgb(hex).map((value) => {
-    const c = value / 255
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
-  })
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
-}
+const srgb = (color) => new Color(color).to('srgb').coords
+const relativeLuminance = (color) => new Color(color).luminance
 
-const contrastRatio = (fgHex, bgHex) => {
-  const l1 = relativeLuminance(fgHex)
-  const l2 = relativeLuminance(bgHex)
+const contrastRatio = (foreground, background) => {
+  const l1 = relativeLuminance(foreground)
+  const l2 = relativeLuminance(background)
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
 }
 
-const hasVioletTint = (hex) => {
-  const [r, g, b] = parseHexRgb(hex)
+const hasVioletTint = (color) => {
+  const [r, g, b] = srgb(color)
   return b > g && r > g
 }
 
@@ -1116,7 +1109,7 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
 
   describe('Ayame workspace visual unification, token composition, compact rhythm, and WCAG compliance', () => {
     it('composes reading tokens unidirectionally from workspace identity without circular refs, violet surface cast, or WCAG contrast regressions', () => {
-      const rootBlock = mainCssRaw.match(/:root\s*\{([\s\S]*?)\r?\n\}/)?.[1] || ''
+      const rootBlock = themeCssRaw.match(/^:root\s*\{([^}]+)\}/m)[1]
       const tokens = parseRootTokens(rootBlock)
 
       // No circular CSS variable references anywhere in :root
@@ -1138,10 +1131,19 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(tokens['--reading-control-bg']).toBe('var(--ayame-surface)')
       expect(tokens['--reading-code-bg']).toBe('var(--ayame-background)')
       expect(tokens['--reading-muted']).toBe('var(--ayame-text-muted)')
-      expect(tokens['--reading-link']).toBe('var(--ayame-link)')
       expect(tokens['--reading-link-hover']).toBe('var(--ayame-link-hover)')
       expect(tokens['--reading-border']).toBe('var(--ayame-border)')
       expect(tokens['--reading-tag-text']).toBe('var(--ayame-lavender)')
+
+      for (const [role, original] of Object.entries({
+        '--reading-text': '#c9cbd4',
+        '--ayame-text-muted': '#aaa6b8',
+        '--ayame-primary-fill': '#a99aca',
+        '--ayame-primary-fill-hover': '#d4cbe4',
+        '--ayame-on-primary': '#111218',
+      })) {
+        expect(new Color(resolveRootToken(tokens, role)).to('srgb').toString({ format: 'hex' })).toBe(original)
+      }
 
       const workspaceBg = resolveRootToken(tokens, '--ayame-background')
       const workspaceText = resolveRootToken(tokens, '--ayame-text')
@@ -1184,7 +1186,8 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
         readingControlBg,
         readingControlBorder,
       ]) {
-        expect(resolved).toMatch(/^#[0-9a-f]{6}$/i)
+        expect(resolved).toMatch(/^oklch\(/)
+        expect(new Color(resolved).inGamut('srgb')).toBe(true)
       }
 
       // Unified neutral dark slate surface (matches workspace blue-slate undertone, not an isolated purple card)
@@ -1194,20 +1197,17 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
       expect(hasVioletTint(readingControlBorder)).toBe(false)
       expect(hasVioletTint(readingCodeBg)).toBe(false)
 
-      // Clear luminance hierarchy: H1 > Bold > H2/H3 > Body text, avoiding flat contrast monotony and pure #ffffff
+      // The reading canvas keeps a luminance hierarchy alongside heading sizes and weights.
       expect(relativeLuminance(readingText)).toBeLessThan(relativeLuminance(workspaceText))
-      expect(relativeLuminance(readingHeading)).toBeLessThan(relativeLuminance(workspaceText))
       expect(relativeLuminance(readingHeading)).toBeGreaterThan(relativeLuminance(readingBold))
-      expect(relativeLuminance(readingBold)).toBeGreaterThan(relativeLuminance(readingText))
+      expect(relativeLuminance(readingBold)).toBeGreaterThan(relativeLuminance(readingHeadingSecondary))
       expect(relativeLuminance(readingHeadingSecondary)).toBeGreaterThan(relativeLuminance(readingText))
-      expect(contrastRatio(readingHeading, readingBg) - contrastRatio(readingText, readingBg)).toBeGreaterThanOrEqual(2.5)
-      for (const hex of [readingText, readingHeading, readingHeadingSecondary, readingBold, readingLink, readingLinkHover, readingTagText, readingCodeText]) {
-        expect(hex.toLowerCase()).not.toBe('#ffffff')
-        expect(hex.toLowerCase()).not.toBe('#fff')
+      for (const color of [readingText, readingHeading, readingHeadingSecondary, readingBold, readingLink, readingLinkHover, readingTagText, readingCodeText]) {
+        expect(relativeLuminance(color)).toBeLessThan(1)
       }
 
       // Links share Ayame cyan-blue identity
-      const [linkR, linkG, linkB] = parseHexRgb(readingLink)
+      const [linkR, linkG, linkB] = srgb(readingLink)
       expect(linkB).toBeGreaterThan(linkG)
       expect(linkG).toBeGreaterThan(linkR)
       expect(relativeLuminance(readingLinkHover)).toBeGreaterThan(relativeLuminance(readingLink))

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { buildVaultIndex } from './vaultIndex.js'
@@ -728,6 +728,11 @@ describe('GraphView.vue', () => {
   })
 
   it('applies Display controls (arrows, nodeSize, linkThickness, textFadeThreshold) and Group colors without restarting D3 simulation', async () => {
+    const root = document.documentElement
+    const tagColor = '#6ec49f'
+    root.style.setProperty('--graph-tag', tagColor)
+    onTestFinished(() => root.style.removeProperty('--graph-tag'))
+
     const flushFrame = (canvasEl) => {
       const ctx = canvasEl.getContext('2d')
       ctx._recorded.arcs.length = 0
@@ -797,10 +802,11 @@ describe('GraphView.vue', () => {
     const canvasEl = wrapper.find('[data-testid="graph-canvas"]').element
     const initialDraw = flushFrame(canvasEl)
 
-    // Group color fills A.md (#e06c75), while tag node keeps #6ec49f semantic color (ignores groupColors on tags)
+    // Tag nodes use the palette and ignore custom note group colors.
     expect(initialDraw.fills.some((f) => f.fillStyle === '#e06c75')).toBe(true)
-    expect(initialDraw.fills.some((f) => f.fillStyle === '#6ec49f')).toBe(true)
+    expect(initialDraw.fills.some((f) => f.fillStyle === tagColor)).toBe(true)
     expect(initialDraw.fills.some((f) => f.fillStyle === '#111111')).toBe(false)
+
 
     // At scale 1 and threshold 0.48, labels render; no arrowhead polygon triangles yet
     expect(initialDraw.texts.length).toBeGreaterThan(0)

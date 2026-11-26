@@ -269,11 +269,11 @@ onUnmounted(() => {
 .account-success {
   margin: 0.75rem 0 0;
   padding: 0.5rem 0.7rem;
-  border: 1px solid rgba(143, 199, 168, 0.35);
-  border-left: 2px solid #8fc7a8;
+  border: 1px solid color-mix(in srgb, var(--ayame-success-accent) 35%, transparent);
+  border-left: 2px solid var(--ayame-success-accent);
   border-radius: var(--radius-xs);
-  background: rgba(143, 199, 168, 0.1);
-  color: #a9dec0;
+  background: color-mix(in srgb, var(--ayame-success-accent) 10%, transparent);
+  color: var(--ayame-success);
   font-size: 0.82rem;
 }
 </style>

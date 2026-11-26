@@ -1,0 +1,102 @@
+/* Ayame colors in sRGB. OKLCH defines solid colors, and HSL defines scrims and shadows. */
+:root {
+  color-scheme: dark;
+
+  --ayame-background: oklch(18.395% 0.01235 277.68);
+  --ayame-surface: oklch(22.952% 0.01744 279.95);
+  --ayame-surface-elevated: oklch(25.171% 0.02080 280.72);
+  --ayame-input-bg: oklch(19.348% 0.01420 278.61);
+  --ayame-hover: oklch(26.831% 0.02046 280.84);
+  --ayame-primary: oklch(71.592% 0.07064 298.92);
+  --ayame-lavender: oklch(85.703% 0.03553 302.00);
+  --ayame-primary-fill: var(--ayame-primary);
+  --ayame-primary-fill-hover: var(--ayame-lavender);
+  --ayame-on-primary: var(--ayame-background);
+  --ayame-text: oklch(94.274% 0.01271 306.02);
+  --ayame-text-muted: oklch(73.419% 0.02602 295.93);
+  --ayame-placeholder: oklch(63.322% 0.02849 295.22);
+  --ayame-border: oklch(32.455% 0.02295 292.12);
+  --ayame-control-border: oklch(54.780% 0.02311 288.67);
+  --ayame-error: oklch(78.892% 0.06984 5.07);
+  --ayame-error-tint: oklch(43.574% 0.04922 358.29);
+  --ayame-success: oklch(85.555% 0.06877 159.72);
+  --ayame-success-accent: oklch(78.220% 0.07316 159.88);
+  --ayame-info: oklch(82.145% 0.08203 230.34);
+  --ayame-warning: oklch(83.376% 0.08678 80.56);
+  --ayame-conflict: oklch(78.803% 0.12890 42.28);
+  --ayame-conflict-tint: oklch(64.284% 0.16330 41.51);
+  --ayame-link: oklch(78.465% 0.08492 231.73);
+  --ayame-link-hover: oklch(86.057% 0.05999 231.53);
+  --ayame-link-unresolved: oklch(73.229% 0.04246 268.39);
+
+  --workspace-editor: oklch(20.237% 0.01403 278.68);
+  --reading-text: oklch(84.324% 0.01263 276.07);
+  --reading-heading: oklch(93.225% 0.00947 279.68);
+  --reading-heading-secondary: oklch(88.411% 0.01231 281.06);
+  --reading-accent: oklch(73.945% 0.08474 299.35);
+  --reading-bold: oklch(90.826% 0.01088 280.46);
+  --reading-syntax: oklch(63.638% 0.02095 279.31);
+  --reading-link: var(--ayame-link);
+  --reading-link-visited: oklch(76.342% 0.06818 299.39);
+  --reading-tag-bg: oklch(25.905% 0.01690 280.16);
+  --reading-tag-border: oklch(39.299% 0.02688 285.10);
+  --reading-code-text: oklch(86.495% 0.00546 286.28);
+  --reading-blockquote-text: oklch(85.259% 0.00548 286.28);
+
+  --graph-edge: oklch(50.187% 0.02851 292.99);
+  --graph-tag-edge: oklch(55.941% 0.07227 166.62);
+  --graph-node: oklch(64.832% 0.03565 293.02);
+  --graph-tag: oklch(75.558% 0.10035 164.31);
+  --graph-tag-focus: oklch(85.160% 0.08280 165.12);
+  --graph-label: var(--ayame-lavender);
+
+  --mark-top-start: oklch(85.417% 0.06972 301.71);
+  --mark-top-end: oklch(83.737% 0.07645 303.71);
+  --mark-bottom-start: oklch(72.329% 0.11171 300.58);
+  --mark-bottom-end: oklch(70.187% 0.11961 300.40);
+
+  --ayame-scrim: hsl(228 22% 5% / 0.72);
+  --ayame-cover-scrim: hsl(231 17% 8% / 0.45);
+  --ayame-shadow: hsl(0 0% 0% / 0.52);
+
+  --ayame-border-subtle: color-mix(in srgb, var(--ayame-text) 8%, transparent);
+  --ayame-error-border: var(--ayame-error-tint);
+  --ayame-error-bg: color-mix(in srgb, var(--ayame-error-tint) 22%, transparent);
+  --ayame-link-ambiguous: var(--ayame-warning);
+  --ayame-accent-wash: color-mix(in srgb, var(--ayame-primary) 12%, transparent);
+  --ayame-selection: color-mix(in srgb, var(--ayame-primary) 42%, transparent);
+  --ayame-focus: var(--ayame-primary);
+
+  --workspace-bg: var(--ayame-background);
+  --workspace-sidebar: var(--ayame-surface);
+  --workspace-border: var(--ayame-border);
+  --workspace-hover: var(--ayame-hover);
+  --workspace-active: var(--ayame-accent-wash);
+  --workspace-text: var(--ayame-text);
+  --workspace-muted: var(--ayame-text-muted);
+  --workspace-accent: var(--ayame-primary);
+  --workspace-splitter: var(--ayame-border);
+  --workspace-splitter-hover: var(--ayame-focus);
+
+  --reading-background: var(--workspace-editor);
+  --reading-background-elevated: var(--ayame-surface);
+  --reading-muted: var(--ayame-text-muted);
+  --reading-caret: var(--reading-heading);
+  --reading-border: var(--ayame-border);
+  --reading-border-subtle: color-mix(in srgb, var(--ayame-text-muted) 14%, transparent);
+  --reading-control-bg: var(--ayame-surface);
+  --reading-control-border: oklch(52.523% 0.02345 282.53);
+  --reading-action-fill: var(--reading-accent);
+  --reading-action-fill-hover: var(--ayame-lavender);
+  --reading-on-checkbox: oklch(20.679% 0.01395 278.71);
+  --reading-link-hover: var(--ayame-link-hover);
+  --reading-link-hover-bg: color-mix(in srgb, var(--ayame-link) 12%, transparent);
+  --reading-tag-text: var(--ayame-lavender);
+  --reading-code-bg: var(--ayame-background);
+  --reading-code-inline-bg: color-mix(in srgb, var(--ayame-primary) 11%, transparent);
+  --reading-blockquote-bg: color-mix(in srgb, var(--ayame-primary) 5%, transparent);
+  --reading-blockquote-border: var(--reading-accent);
+  --reading-table-bg: color-mix(in srgb, var(--ayame-background) 55%, transparent);
+  --reading-selection-bg: color-mix(in srgb, var(--ayame-primary) 24%, transparent);
+  --reading-focus-ring: var(--ayame-focus);
+}
