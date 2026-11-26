@@ -90,7 +90,8 @@
       </div>
       <VaultsPanel
         v-else
-        :initial-vaults="prefetchedVaults"
+        :initial-vaults="prefetchedVaults ?? knownVaults"
+        :refresh-initial-vaults="prefetchedVaults === null && knownVaults !== null"
         @loaded="handleVaultsLoaded"
         @open="handleOpenVault"
         @unauthorized="handleVaultUnauthorized"
@@ -130,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, provide } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import SetupForm from './auth/SetupForm.vue'
@@ -139,10 +140,14 @@ import AccountModal from './auth/AccountModal.vue'
 import VaultsPanel from './vaults/VaultsPanel.vue'
 import VaultBrowser from './vaults/VaultBrowser.vue'
 import * as authApi from './auth/api.js'
-import { getVaults } from './vaults/api.js'
+import * as vaultApi from './vaults/api.js'
+import { createNoteCache, noteCacheKey } from './vaults/noteCache.js'
+import { clearVaultNavigation } from './vaults/vaultNavigationStorage.js'
 import { isValidVaultDirectory, useAyameRouter } from './router/index.js'
 
 const { router, route } = useAyameRouter()
+const noteCache = createNoteCache((directory, path) => vaultApi.getVaultMarkdown(directory, path))
+provide(noteCacheKey, noteCache)
 
 const view = ref('loading')
 const pending = ref(false)
@@ -150,7 +155,7 @@ const errorMessage = ref('')
 const preservedUsername = ref('')
 const resolvedVault = ref(null)
 const resolvingVault = ref(false)
-const knownVaults = ref([])
+const knownVaults = ref(null)
 const prefetchedVaults = ref(null)
 const editorDirty = ref(false)
 const editorSaving = ref(false)
@@ -223,7 +228,7 @@ const syncVaultFromRoute = async () => {
       return
     }
 
-    const cached = knownVaults.value.find((v) => v.directory === directory)
+    const cached = knownVaults.value?.find((v) => v.directory === directory)
     if (cached) {
       vaultResolveGeneration++
       resolvingVault.value = false
@@ -237,7 +242,7 @@ const syncVaultFromRoute = async () => {
     resolvedVault.value = null
 
     try {
-      const result = await getVaults()
+      const result = await vaultApi.getVaults()
       if (
         !isMounted ||
         resolveGen !== vaultResolveGeneration ||
@@ -284,13 +289,14 @@ const handleOpenVault = async (vault) => {
   if (!vault?.directory) return
   errorMessage.value = ''
   prefetchedVaults.value = null
-  const existingIdx = knownVaults.value.findIndex((v) => v.directory === vault.directory)
+  const currentVaults = knownVaults.value ?? []
+  const existingIdx = currentVaults.findIndex((v) => v.directory === vault.directory)
   if (existingIdx >= 0) {
-    const next = [...knownVaults.value]
+    const next = [...currentVaults]
     next[existingIdx] = vault
     knownVaults.value = next
   } else {
-    knownVaults.value = [...knownVaults.value, vault]
+    knownVaults.value = [...currentVaults, vault]
   }
   await router.push({
     name: 'vault',
@@ -422,11 +428,13 @@ const handleEditorState = (state) => {
 }
 
 const clearAuthenticatedState = () => {
+  noteCache.clear()
+  clearVaultNavigation()
   authGeneration++
   vaultResolveGeneration++
   resolvingVault.value = false
   resolvedVault.value = null
-  knownVaults.value = []
+  knownVaults.value = null
   prefetchedVaults.value = null
   editorDirty.value = false
   editorSaving.value = false
@@ -491,6 +499,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  noteCache.clear()
   isMounted = false
   authGeneration++
   vaultResolveGeneration++

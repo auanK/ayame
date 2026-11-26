@@ -153,71 +153,47 @@ const attachAnchor = (result, anchor) => {
 const finalizeNotFound = (indexComplete) =>
   indexComplete === false ? { type: 'unverified' } : { type: 'missing' }
 
-const matchExactOrExtensions = (
-  candidateWithoutOrWithExt,
-  validFilesSet,
-  validFilesList,
-  indexComplete = true
-) => {
-  const ext = getExtension(candidateWithoutOrWithExt)
-  if (ext !== '') {
-    if (!SUPPORTED_MARKDOWN_RE.test(ext)) {
-      return { type: 'invalid' }
-    }
-    if (validFilesSet.has(candidateWithoutOrWithExt)) {
-      return { type: 'resolved', path: candidateWithoutOrWithExt }
-    }
-    // Case-insensitive fallback
-    const lowerTarget = candidateWithoutOrWithExt.toLowerCase()
-    const ciMatches = validFilesList.filter((f) => f.toLowerCase() === lowerTarget).sort()
-    if (ciMatches.length === 1) {
-      return { type: 'resolved', path: ciMatches[0] }
-    }
-    if (ciMatches.length > 1) {
-      return { type: 'ambiguous', candidates: ciMatches }
-    }
-    return finalizeNotFound(indexComplete)
+export const createLinkLookup = (knownFiles = [], aliasesByFile = {}) => {
+  const files = new Set(Array.isArray(knownFiles) ? knownFiles.filter(isSupportedMarkdownPath) : [])
+  const paths = new Map()
+  const foldedPaths = new Map()
+  const names = new Map()
+  const foldedNames = new Map()
+  const aliases = new Map()
+  const add = (map, key, path) => {
+    const matches = map.get(key)
+    if (matches) matches.push(path)
+    else map.set(key, [path])
   }
+  for (const path of files) {
+    const name = basenameOf(path)
+    paths.set(path, [path])
+    add(foldedPaths, path.toLowerCase(), path)
+    add(names, name, path)
+    add(foldedNames, name.toLowerCase(), path)
+    const fileAliases = aliasesByFile?.[path]
+    if (Array.isArray(fileAliases)) {
+      for (const alias of new Set(fileAliases.map((value) => String(value ?? '').trim().toLowerCase()))) {
+        add(aliases, alias, path)
+      }
+    }
+  }
+  return { paths, foldedPaths, names, foldedNames, aliases }
+}
 
-  const mdCandidate = `${candidateWithoutOrWithExt}.md`
-  const markdownCandidate = `${candidateWithoutOrWithExt}.markdown`
-  const exactMatches = validFilesList
-    .filter((f) => f === mdCandidate || f === markdownCandidate)
-    .sort()
-  if (exactMatches.length === 1) {
-    return { type: 'resolved', path: exactMatches[0] }
-  }
-  if (exactMatches.length > 1) {
-    return { type: 'ambiguous', candidates: exactMatches }
-  }
-
-  // Case-insensitive fallback
-  const lowerMd = mdCandidate.toLowerCase()
-  const lowerMarkdown = markdownCandidate.toLowerCase()
-  const ciMatches = validFilesList
-    .filter((f) => f.toLowerCase() === lowerMd || f.toLowerCase() === lowerMarkdown)
-    .sort()
-  if (ciMatches.length === 1) {
-    return { type: 'resolved', path: ciMatches[0] }
-  }
-  if (ciMatches.length > 1) {
-    return { type: 'ambiguous', candidates: ciMatches }
-  }
-
+const resolveMatches = (matches, indexComplete) => {
+  if (matches.length === 1) return { type: 'resolved', path: matches[0] }
+  if (matches.length > 1) return { type: 'ambiguous', candidates: [...matches].sort() }
   return finalizeNotFound(indexComplete)
 }
 
-const matchByAlias = (target, aliasesByFile, validFilesSet) => {
-  if (!aliasesByFile || typeof aliasesByFile !== 'object') return []
-  const targetLower = target.toLowerCase()
-  const matchedFiles = []
-  for (const [filePath, aliases] of Object.entries(aliasesByFile)) {
-    if (!validFilesSet.has(filePath) || !Array.isArray(aliases)) continue
-    if (aliases.some((a) => String(a ?? '').trim().toLowerCase() === targetLower)) {
-      matchedFiles.push(filePath)
-    }
-  }
-  return matchedFiles.sort()
+const matchExactOrExtensions = (candidate, exact, folded, indexComplete) => {
+  const ext = getExtension(candidate)
+  if (ext && !SUPPORTED_MARKDOWN_RE.test(ext)) return { type: 'invalid' }
+  const candidates = ext ? [candidate] : [`${candidate}.md`, `${candidate}.markdown`]
+  const exactMatches = candidates.flatMap((key) => exact.get(key) ?? [])
+  if (exactMatches.length) return resolveMatches(exactMatches, indexComplete)
+  return resolveMatches(candidates.flatMap((key) => folded.get(key.toLowerCase()) ?? []), indexComplete)
 }
 
 export const resolveLink = ({
@@ -225,6 +201,7 @@ export const resolveLink = ({
   linkTarget,
   knownFiles = [],
   aliasesByFile = {},
+  lookup,
   indexComplete = true,
   kind,
 } = {}) => {
@@ -237,10 +214,8 @@ export const resolveLink = ({
     return { type: 'invalid' }
   }
 
-  const validFilesList = Array.isArray(knownFiles)
-    ? [...new Set(knownFiles.filter(isSupportedMarkdownPath))]
-    : []
-  const validFilesSet = new Set(validFilesList)
+  const linkLookup = lookup ?? createLinkLookup(knownFiles, aliasesByFile)
+  const { paths, foldedPaths, names, foldedNames, aliases } = linkLookup
 
   let resolvedKind = kind
   let rawTarget = trimmed
@@ -282,7 +257,7 @@ export const resolveLink = ({
       const normalized = normalizeRelativeSegments('', target, false)
       if (!normalized) return { type: 'invalid' }
       return attachAnchor(
-        matchExactOrExtensions(normalized, validFilesSet, validFilesList, indexComplete),
+        matchExactOrExtensions(normalized, paths, foldedPaths, indexComplete),
         anchor
       )
     }
@@ -298,8 +273,8 @@ export const resolveLink = ({
     const localPrefix = sourceDir ? `${sourceDir}/${target}` : target
     const localResult = matchExactOrExtensions(
       localPrefix,
-      validFilesSet,
-      validFilesList,
+      paths,
+      foldedPaths,
       indexComplete
     )
     if (
@@ -311,47 +286,13 @@ export const resolveLink = ({
     }
 
     // 2. Search across entire vault by filename (exact case first, then case-insensitive)
-    const exactMatches = validFilesList
-      .filter((filePath) => {
-        const base = basenameOf(filePath)
-        if (ext !== '') return base === target
-        return base === `${target}.md` || base === `${target}.markdown`
-      })
-      .sort()
-
-    if (exactMatches.length === 1) {
-      return attachAnchor({ type: 'resolved', path: exactMatches[0] }, anchor)
-    }
-    if (exactMatches.length > 1) {
-      return { type: 'ambiguous', candidates: exactMatches }
-    }
-
-    const lowerTarget = target.toLowerCase()
-    const ciMatches = validFilesList
-      .filter((filePath) => {
-        const base = basenameOf(filePath).toLowerCase()
-        if (ext !== '') return base === lowerTarget
-        return base === `${lowerTarget}.md` || base === `${lowerTarget}.markdown`
-      })
-      .sort()
-
-    if (ciMatches.length === 1) {
-      return attachAnchor({ type: 'resolved', path: ciMatches[0] }, anchor)
-    }
-    if (ciMatches.length > 1) {
-      return { type: 'ambiguous', candidates: ciMatches }
+    const basenameMatch = matchExactOrExtensions(target, names, foldedNames, indexComplete)
+    if (basenameMatch.type === 'resolved' || basenameMatch.type === 'ambiguous') {
+      return attachAnchor(basenameMatch, anchor)
     }
 
     // 3. Search by frontmatter aliases
-    const aliasMatches = matchByAlias(target, aliasesByFile, validFilesSet)
-    if (aliasMatches.length === 1) {
-      return attachAnchor({ type: 'resolved', path: aliasMatches[0] }, anchor)
-    }
-    if (aliasMatches.length > 1) {
-      return { type: 'ambiguous', candidates: aliasMatches }
-    }
-
-    return finalizeNotFound(indexComplete)
+    return attachAnchor(resolveMatches(aliases.get(target.toLowerCase()) ?? [], indexComplete), anchor)
   }
 
   // Markdown link or generic path resolution
@@ -393,8 +334,8 @@ export const resolveLink = ({
 
   const localMatch = matchExactOrExtensions(
     normalized,
-    validFilesSet,
-    validFilesList,
+    paths,
+    foldedPaths,
     indexComplete
   )
   if (
@@ -411,8 +352,8 @@ export const resolveLink = ({
     if (rootNormalized) {
       const rootMatch = matchExactOrExtensions(
         rootNormalized,
-        validFilesSet,
-        validFilesList,
+        paths,
+        foldedPaths,
         indexComplete
       )
       if (rootMatch.type === 'resolved' || rootMatch.type === 'ambiguous') {
@@ -425,8 +366,7 @@ export const resolveLink = ({
     return resolveLink({
       sourcePath,
       linkTarget: anchor ? `[[${targetPart}#${anchor}]]` : `[[${targetPart}]]`,
-      knownFiles,
-      aliasesByFile,
+      lookup: linkLookup,
       indexComplete,
       kind: 'wikilink',
     })

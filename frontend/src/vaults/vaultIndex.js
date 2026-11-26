@@ -3,6 +3,7 @@ import {
   extractHeadings,
   extractBlocks,
   extractNoteReferences,
+  createLinkLookup,
   resolveLink,
 } from '../markdown/links.js'
 
@@ -138,6 +139,7 @@ export const buildVaultIndex = (rawIndex = {}) => {
 
   const outgoingByFile = {}
   const backlinksByFile = {}
+  const lookup = createLinkLookup(allFiles, aliasesByFile)
 
   for (const filePath of allFiles) {
     backlinksByFile[filePath] = []
@@ -151,8 +153,7 @@ export const buildVaultIndex = (rawIndex = {}) => {
       const resolution = resolveLink({
         sourcePath: notePath,
         linkTarget: ref.raw,
-        knownFiles: allFiles,
-        aliasesByFile,
+        lookup,
         indexComplete: complete,
         kind: ref.kind,
       })

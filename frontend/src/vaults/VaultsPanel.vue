@@ -214,7 +214,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as api from './api.js'
 import VaultsToolbar from './hub/VaultsToolbar.vue'
 import VaultCard from './hub/VaultCard.vue'
@@ -226,6 +226,7 @@ const props = defineProps({
     type: Array,
     default: null,
   },
+  refreshInitialVaults: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['unauthorized', 'open', 'loaded'])
@@ -233,6 +234,8 @@ const emit = defineEmits(['unauthorized', 'open', 'loaded'])
 const vaults = ref([])
 const hasLoaded = ref(false)
 const operation = ref('')
+let operationGeneration = 0
+watch(operation, () => { operationGeneration++ }, { flush: 'sync' })
 const errorMessage = ref('')
 const editError = ref('')
 const editingDirectory = ref(null)
@@ -474,10 +477,10 @@ const showUnauthorized = () => {
   }
 }
 
-const loadCurrentVaults = async () => {
+const loadCurrentVaults = async (isCurrent = () => mounted) => {
   try {
     const result = await api.getVaults()
-    if (!mounted) {
+    if (!isCurrent()) {
       return false
     }
     vaults.value = result.vaults
@@ -495,7 +498,7 @@ const loadCurrentVaults = async () => {
     }
     return true
   } catch (error) {
-    if (!mounted) {
+    if (!isCurrent()) {
       return false
     }
     if (error.code === 'UNAUTHORIZED') {
@@ -982,7 +985,12 @@ onMounted(() => {
     vaults.value = props.initialVaults
     hasLoaded.value = true
     needsRefresh.value = false
-    emit('loaded', props.initialVaults)
+    if (props.refreshInitialVaults) {
+      const generation = operationGeneration
+      void loadCurrentVaults(() => mounted && generation === operationGeneration)
+    } else {
+      emit('loaded', props.initialVaults)
+    }
     return
   }
   refreshVaults()

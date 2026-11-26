@@ -1,6 +1,6 @@
 import {
   MAX_VAULT_COVER_BYTES,
-  listVaults,
+  listRegisteredVaults,
   registerVault,
   createVault,
   updateVaultMetadata,
@@ -10,7 +10,8 @@ import {
   clearVaultCover,
   unregisterVault,
 } from './registry.js'
-import { collectVaultStats } from './discovery.js'
+import { collectVaultStats, mergeVaults } from './discovery.js'
+import { createVaultScanner } from './vaultScanner.js'
 import { SUPPORTED_IMAGE_MIMES } from './images.js'
 import { MAX_ATTACHMENT_BYTES, saveVaultAttachment, readVaultMedia } from './attachments.js'
 import { listVaultEntries } from './browser.js'
@@ -18,7 +19,6 @@ import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
 import { saveVaultMarkdown } from './writer.js'
 import { createVaultFolder, createVaultNote } from './creator.js'
 import {
-  scanVaultIndex,
   relocateVaultEntry,
   moveVaultEntryToTrash,
   listVaultTrash,
@@ -81,6 +81,14 @@ const VAULT_META_ERROR_STATUS = {
 }
 
 export const registerVaultRoutes = (app, db, vaultsRoot) => {
+  const scanner = createVaultScanner(vaultsRoot)
+  app.addHook('onClose', () => scanner.close())
+  app.addHook('onSend', async (req, _reply, payload) => {
+    if (req.routeOptions.url?.startsWith('/vaults') && req.method !== 'GET') {
+      scanner.invalidate()
+    }
+    return payload
+  })
   app.addContentTypeParser(
     [...SUPPORTED_IMAGE_MIMES, 'application/octet-stream'],
     { parseAs: 'buffer' },
@@ -90,7 +98,8 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
   )
 
   app.get('/vaults', async (req, reply) => {
-    const vaults = listVaults(db, vaultsRoot)
+    const { directories, stats } = await scanner.scan()
+    const vaults = mergeVaults(directories, listRegisteredVaults(db), stats)
     return reply.send({ vaults })
   })
 
@@ -207,7 +216,7 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
 
   app.get('/vaults/:directory/index', { config: { noStore: true } }, async (req, reply) => {
     try {
-      const result = scanVaultIndex(vaultsRoot, req.params.directory)
+      const result = await scanner.scan(req.params.directory)
       return reply.send(result)
     } catch (err) {
       const status = OPERATION_ERROR_STATUS[err.code]

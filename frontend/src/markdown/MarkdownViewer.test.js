@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import Color from 'colorjs.io'
 import * as api from '../vaults/api.js'
+import { createNoteCache, noteCacheKey } from '../vaults/noteCache.js'
 import viewerRaw from './MarkdownViewer.vue?raw'
 import propertiesRaw from './PropertiesPanel.vue?raw'
 import editorRaw from './MarkdownEditor.vue?raw'
@@ -96,6 +97,29 @@ describe('MarkdownViewer.vue (Live Preview + Autosave)', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     localStorage.clear()
+  })
+
+  it.each([false, true])('shows a warm note immediately and preserves newer local edits during revalidation (edited: %s)', async (edited) => {
+    let finishRead
+    api.getVaultMarkdown.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve }))
+    const cache = createNoteCache(api.getVaultMarkdown)
+    const directory = 'personal'
+    const path = 'A.md'
+    cache.put(directory, path, { content: 'cached body', revision })
+    const wrapper = mount(MarkdownViewer, {
+      props: { directory, path },
+      global: { provide: { [noteCacheKey]: cache } },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-loading"]').exists()).toBe(false)
+    expect(wrapper.vm.getText()).toBe('cached body')
+    if (edited) await editNote(wrapper, 'local draft')
+    finishRead({ directory, path, content: 'server changed', revision: 'b'.repeat(64) })
+    await flushPromises()
+    expect(wrapper.vm.getText()).toBe(edited ? 'local draft' : 'server changed')
+    expect(wrapper.vm.revision).toBe(edited ? revision : 'b'.repeat(64))
+    expect(cache.get(directory, path).content).toBe('server changed')
+    wrapper.unmount()
   })
 
   it('1. exports AUTOSAVE_DELAY_MS and opens notes directly in the Live Preview editor', async () => {

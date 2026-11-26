@@ -1,7 +1,7 @@
 import { StateEffect, StateField } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType } from '@codemirror/view'
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
-import { classifyLinkDestination, parseWikilink, resolveLink } from './links.js'
+import { classifyLinkDestination, createLinkLookup, parseWikilink, resolveLink } from './links.js'
 import { validateTagName } from './properties.js'
 import { ayameMarkdownParser } from './parser.js'
 
@@ -414,8 +414,7 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
   const selection = state.selection
   const {
     sourcePath = '',
-    knownFiles = [],
-    aliasesByFile = {},
+    linkLookup,
     indexComplete = true,
     vaultDirectory = '',
     allFiles = [],
@@ -1035,8 +1034,7 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
         const resolution = resolveLink({
           sourcePath,
           linkTarget: raw,
-          knownFiles,
-          aliasesByFile,
+          lookup: linkLookup,
           indexComplete,
           kind: 'wikilink',
         })
@@ -1166,8 +1164,7 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
           const resolution = resolveLink({
             sourcePath,
             linkTarget: rawDest,
-            knownFiles,
-            aliasesByFile,
+            lookup: linkLookup,
             indexComplete,
             kind: 'markdown',
           })
@@ -1278,7 +1275,10 @@ const buildLivePreviewDecorations = (state, context, cursorActive) => {
 export const createLivePreviewExtension = (initialContext = {}) => {
   const field = StateField.define({
     create(state) {
-      const context = { ...initialContext }
+      const context = {
+        ...initialContext,
+        linkLookup: createLinkLookup(initialContext.knownFiles, initialContext.aliasesByFile),
+      }
       const cursorActive = Boolean(initialContext.cursorActive)
       return {
         context,
@@ -1296,7 +1296,11 @@ export const createLivePreviewExtension = (initialContext = {}) => {
 
       for (const effect of tr.effects) {
         if (effect.is(setLivePreviewContextEffect)) {
-          context = { ...context, ...effect.value }
+          const next = { ...context, ...effect.value }
+          if (next.knownFiles !== context.knownFiles || next.aliasesByFile !== context.aliasesByFile) {
+            next.linkLookup = createLinkLookup(next.knownFiles, next.aliasesByFile)
+          }
+          context = next
           changed = true
         }
         if (effect.is(setCursorActiveEffect)) {

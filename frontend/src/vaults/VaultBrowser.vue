@@ -1,6 +1,9 @@
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, toRaw } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onMounted, onUnmounted, toRaw, inject } from 'vue'
 import * as vaultApi from './api.js'
+import { noteCacheKey } from './noteCache.js'
+import { loadVaultNavigation, saveVaultNavigation } from './vaultNavigationStorage.js'
+import { createVaultIndexBuilder } from './vaultIndexBuilder.js'
 import {
   resolveLink,
   resolvePendingLinkCreationTarget,
@@ -9,7 +12,6 @@ import {
 import { buildInitialNoteContent } from '../markdown/properties.js'
 import {
   buildVaultIndex,
-  updateNoteInVaultIndex,
   getBacklinksForNote,
   getOutgoingLinksForNote,
   getNotesByTag,
@@ -63,6 +65,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['back', 'unauthorized', 'state', 'logout', 'open-account'])
+const noteCache = inject(noteCacheKey, null)
 
 const { router, route } = useAyameRouter({
   initialVaultDirectory: props.vault.directory,
@@ -267,11 +270,16 @@ const navHistory = ref([])
 const navHistoryIndex = ref(-1)
 let navigatingHistory = false
 let lastReplacedTab = null
+let selectionGeneration = 0
+let initialIndexPending = false
+let initialRootReady = false
+let initialNoteReady = null
 
 // Vault Index
-const vaultIndexData = ref(
+const vaultIndexData = shallowRef(
   buildVaultIndex({ directory: '', complete: false, folders: [], files: [], notes: [] })
 )
+const indexBuilder = createVaultIndexBuilder()
 const indexLoading = ref(false)
 const indexError = ref(false)
 const graphModel = computed(() => buildGraphModel(vaultIndexData.value))
@@ -510,6 +518,9 @@ let indexRequestGeneration = 0
 let activeIndexFetchGeneration = null
 let activeIndexFetchDirectory = ''
 const pendingSavedNotesForFetch = new Map()
+let savedNotesVersion = 0
+const queuedIndexSaves = new Map()
+let buildingSavedNotes = false
 let isMounted = true
 
 const clearActiveIndexFetch = () => {
@@ -522,6 +533,7 @@ const clearActiveIndexFetch = () => {
 const invalidateVaultIndexRequest = () => {
   indexRequestGeneration++
   clearActiveIndexFetch()
+  queuedIndexSaves.clear()
 }
 
 const isMarkdownFile = (name) => {
@@ -599,10 +611,11 @@ const knownMarkdownFiles = computed(() => {
   return [...files].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 })
 
+const linkedBacklinks = computed(() => vaultIndexData.value.backlinksByFile[selectedFile.value] ?? [])
 const activeBacklinks = computed(() =>
-  selectedFile.value
+  selectedFile.value && layout.value.contextOpen && rightPanelTab.value === 'backlinks'
     ? getBacklinksForNote(vaultIndexData.value, selectedFile.value)
-    : { linked: [], unlinkedMentions: [] }
+    : { linked: linkedBacklinks.value, unlinkedMentions: [] }
 )
 
 const activeOutgoingLinks = computed(() =>
@@ -614,7 +627,7 @@ const activeOutgoingLinks = computed(() =>
 const RIGHT_PANEL_TAB_ORDER = ['backlinks', 'outgoing', 'outline', 'tags', 'search']
 
 const rightPanelTabs = computed(() => [
-  { id: 'backlinks', testid: 'panel-tab-backlinks', label: `Backlinks (${activeBacklinks.value.linked.length})` },
+  { id: 'backlinks', testid: 'panel-tab-backlinks', label: `Backlinks (${linkedBacklinks.value.length})` },
   {
     id: 'outgoing',
     testid: 'panel-tab-outgoing',
@@ -748,11 +761,21 @@ const fetchVaultIndexSafe = async () => {
       indexError.value = true
       return false
     }
-    const reconciled = reconcileIndexWithPendingSaves(raw, pendingSavedNotesForFetch)
-    clearActiveIndexFetch()
-    vaultIndexData.value = buildVaultIndex(reconciled)
-    indexError.value = false
-    return true
+    while (isCurrent()) {
+      const version = savedNotesVersion
+      const reconciled = reconcileIndexWithPendingSaves(raw, pendingSavedNotesForFetch)
+      const index = await indexBuilder.build(reconciled)
+      if (!isCurrent()) return false
+      if (savedNotesVersion !== version) continue
+      for (const [path, note] of pendingSavedNotesForFetch) {
+        if (queuedIndexSaves.get(path) === note) queuedIndexSaves.delete(path)
+      }
+      clearActiveIndexFetch()
+      vaultIndexData.value = index
+      indexError.value = false
+      return true
+    }
+    return false
   } catch (err) {
     if (!isCurrent()) return false
     clearActiveIndexFetch()
@@ -827,6 +850,7 @@ const fetchDirectory = async (folderPath, { isRefresh = false } = {}) => {
 
 const discoverUnloadedFolders = async (maxDirectories = 48) => {
   if (vaultIndexData.value.complete && vaultIndexData.value.files.length > 0) return
+  const generation = directoryRequestGeneration
   const queue = []
   for (const entries of folderEntriesMap.value.values()) {
     for (const entry of entries) {
@@ -841,6 +865,7 @@ const discoverUnloadedFolders = async (maxDirectories = 48) => {
     if (folderEntriesMap.value.has(folderPath)) continue
     scanned++
     const entries = await fetchDirectory(folderPath)
+    if (!isMounted || generation !== directoryRequestGeneration) return
     if (!entries) continue
     for (const entry of entries) {
       if (entry.type === 'directory' && !folderEntriesMap.value.has(entry.path)) {
@@ -887,25 +912,36 @@ const toggleFolder = async (folderPath) => {
 }
 
 const expandAncestors = async (filePath) => {
+  const generation = directoryRequestGeneration
   const segments = String(filePath || '').split('/')
   segments.pop()
   if (segments.length === 0) return
-  const nextExpanded = new Set(expandedFolders.value)
+  const expanded = []
   let current = ''
   for (const segment of segments) {
     current = current ? `${current}/${segment}` : segment
     if (!folderEntriesMap.value.has(current)) {
       await fetchDirectory(current)
+      if (!isMounted || generation !== directoryRequestGeneration) return
     }
-    nextExpanded.add(current)
+    expanded.push(current)
   }
-  expandedFolders.value = nextExpanded
+  expandedFolders.value = new Set([...expandedFolders.value, ...expanded])
 }
 
 const revealActiveFile = async () => {
   if (!selectedFile.value) return
   explorerCollapsed.value = false
   await expandAncestors(selectedFile.value)
+}
+
+const revealSelectedNote = (filePath) => {
+  const generation = directoryRequestGeneration
+  void nextTick(() => {
+    if (isMounted && generation === directoryRequestGeneration && selectedFile.value === filePath) {
+      return expandAncestors(filePath)
+    }
+  })
 }
 
 const recordNavigationHistory = (filePath) => {
@@ -1021,10 +1057,7 @@ const closeGraphTab = () => {
 
 const openNoteFromGraph = async (notePath) => {
   if (!notePath) return
-  await selectNote(notePath)
-  if (selectedFile.value === notePath) {
-    await expandAncestors(notePath)
-  }
+  await selectNote(notePath, { reveal: true })
 }
 
 const closeTab = async (tabPath) => {
@@ -1068,8 +1101,10 @@ const openFileInNewTab = async (filePath) => {
 
 const selectNote = async (
   filePath,
-  { anchor = null, initialDoc = null, newTab = false, activateView = true, fromDoubleClick = false } = {}
+  { anchor = null, initialDoc = null, newTab = false, activateView = true, fromDoubleClick = false, reveal = false } = {}
 ) => {
+  const selection = ++selectionGeneration
+  const directory = props.vault.directory
   if (relocateState.value?.loading || relocateState.value?.stage === 'uncertain') {
     workspaceNotice.value = 'Wait for the move to be reconciled before navigating.'
     return
@@ -1101,6 +1136,7 @@ const selectNote = async (
     if (anchor) {
       selectedAnchor.value = anchor
     }
+    if (reveal) revealSelectedNote(filePath)
     await syncUrlWithNote(filePath)
     return
   }
@@ -1114,8 +1150,9 @@ const selectNote = async (
     ) {
       await viewerRef.value.flushPendingSave()
     }
+    if (!isMounted || selection !== selectionGeneration || directory !== props.vault.directory) return
     if (isNavigationBlocked()) {
-      pendingNavigation.value = { type: 'file', path: filePath, anchor, initialDoc, newTab }
+      pendingNavigation.value = { type: 'file', path: filePath, anchor, initialDoc, newTab, reveal }
       return
     }
   }
@@ -1162,6 +1199,7 @@ const selectNote = async (
   const parentSegments = filePath.split('/')
   parentSegments.pop()
   selectedFolderPath.value = parentSegments.join('/')
+  if (reveal) revealSelectedNote(filePath)
   await syncUrlWithNote(filePath)
 }
 
@@ -1177,6 +1215,7 @@ const closeNote = async () => {
     pendingNavigation.value = { type: 'close-note' }
     return
   }
+  selectionGeneration++
   selectedFile.value = null
   selectedAnchor.value = null
   initialDocument.value = null
@@ -1235,12 +1274,14 @@ const confirmDiscardAndNavigate = async () => {
       anchor: target.anchor,
       initialDoc: target.initialDoc,
       newTab: target.newTab,
+      reveal: target.reveal,
     })
   }
 }
 
 const handleNoteNotFound = async (missingPath) => {
   if (!missingPath || selectedFile.value !== missingPath) return
+  selectionGeneration++
   openTabs.value = openTabs.value.filter((t) => t !== missingPath)
   if (navHistory.value[navHistoryIndex.value] === missingPath) {
     navHistory.value = navHistory.value.filter((_, idx) => idx !== navHistoryIndex.value)
@@ -1255,7 +1296,7 @@ const handleNoteNotFound = async (missingPath) => {
   await syncUrlWithNote(null, { replace: true })
 }
 
-const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
+const applyRouteFromUrl = async ({ isInitial = false, restorePath = null } = {}) => {
   if (!isMounted || suppressRouteWatch) return
   if (route.value?.matched?.length === 0) {
     suppressRouteWatch = true
@@ -1273,8 +1314,9 @@ const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
   }
 
   const check = validateNoteQueryParam(route.value?.query?.note)
-  if (!check.present) {
+  if (!check.present && !restorePath) {
     if (selectedFile.value !== null) {
+      selectionGeneration++
       pendingNavigation.value = null
       activeWorkspaceView.value = 'note'
       selectedFile.value = null
@@ -1286,7 +1328,8 @@ const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
     return
   }
 
-  if (!check.valid) {
+  if (check.present && !check.valid) {
+    selectionGeneration++
     pendingNavigation.value = null
     activeWorkspaceView.value = 'note'
     selectedFile.value = null
@@ -1299,11 +1342,12 @@ const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
     return
   }
 
-  const notePath = check.path
+  const notePath = check.path ?? restorePath
   if (selectedFile.value === notePath) {
     return
   }
 
+  selectionGeneration++
   pendingNavigation.value = null
   activeWorkspaceView.value = 'note'
   linkNotice.value = null
@@ -1354,7 +1398,8 @@ const applyRouteFromUrl = async ({ isInitial = false } = {}) => {
   const parentSegments = notePath.split('/')
   parentSegments.pop()
   selectedFolderPath.value = parentSegments.join('/')
-  void expandAncestors(notePath)
+  if (restorePath && !check.present) void syncUrlWithNote(notePath, { replace: true })
+  revealSelectedNote(notePath)
 }
 
 const unregisterRouterGuard = router.beforeEach(async (to, from) => {
@@ -1412,16 +1457,43 @@ const handleViewerState = (state) => {
   emit('state', state)
 }
 
+const applySavedNotesToIndex = async () => {
+  if (buildingSavedNotes) return
+  buildingSavedNotes = true
+  try {
+    while (isMounted && queuedIndexSaves.size) {
+      const generation = indexRequestGeneration
+      const base = vaultIndexData.value
+      const changes = new Map(queuedIndexSaves)
+      const { directory, complete, failures, folders, files, rawNotes: notes } = base
+      const raw = reconcileIndexWithPendingSaves({ directory, complete, failures, folders, files, notes }, changes)
+      const index = await indexBuilder.build(raw)
+      if (!isMounted || generation !== indexRequestGeneration || base !== vaultIndexData.value) continue
+      vaultIndexData.value = index
+      for (const [path, note] of changes) {
+        if (queuedIndexSaves.get(path) === note) queuedIndexSaves.delete(path)
+      }
+    }
+  } catch {
+    if (isMounted) indexError.value = true
+  } finally {
+    buildingSavedNotes = false
+  }
+}
+
 const handleContentSaved = (savedDoc) => {
   if (!savedDoc?.path) return
+  const note = { ...savedDoc }
+  queuedIndexSaves.set(note.path, note)
   if (
     activeIndexFetchGeneration !== null &&
     activeIndexFetchGeneration === indexRequestGeneration &&
     activeIndexFetchDirectory === props.vault.directory
   ) {
-    pendingSavedNotesForFetch.set(savedDoc.path, { ...savedDoc })
+    pendingSavedNotesForFetch.set(note.path, note)
+    savedNotesVersion++
   }
-  vaultIndexData.value = updateNoteInVaultIndex(vaultIndexData.value, savedDoc)
+  void applySavedNotesToIndex()
 }
 
 const handleOpenLink = async (linkPayload) => {
@@ -1430,6 +1502,10 @@ const handleOpenLink = async (linkPayload) => {
 
   let resolved = linkPayload
   const rawTarget = linkPayload.rawTarget || linkPayload.target || ''
+  const sourcePath = selectedFile.value || ''
+  const folderOf = (path) => path.slice(0, path.lastIndexOf('/') + 1)
+  const knownLocalTarget = resolved.type === 'resolved' && resolved.path &&
+    folderOf(resolved.path) === folderOf(sourcePath)
 
   if (
     rawTarget &&
@@ -1437,9 +1513,13 @@ const handleOpenLink = async (linkPayload) => {
       resolved.type === 'unverified' ||
       (linkPayload.kind === 'wikilink' && !rawTarget.includes('/')))
   ) {
-    await discoverUnloadedFolders()
+    if (!knownLocalTarget && !vaultIndexData.value.complete) {
+      const selection = ++selectionGeneration
+      await discoverUnloadedFolders()
+      if (!isMounted || selection !== selectionGeneration) return
+    }
     resolved = resolveLink({
-      sourcePath: selectedFile.value || '',
+      sourcePath,
       linkTarget: rawTarget,
       knownFiles: knownMarkdownFiles.value,
       aliasesByFile: vaultIndexData.value.aliasesByFile,
@@ -1449,8 +1529,7 @@ const handleOpenLink = async (linkPayload) => {
   }
 
   if (resolved.type === 'resolved' && resolved.path) {
-    await expandAncestors(resolved.path)
-    await selectNote(resolved.path, { anchor: resolved.anchor || null })
+    await selectNote(resolved.path, { anchor: resolved.anchor || null, reveal: true })
   } else if (resolved.type === 'unverified') {
     linkNotice.value = {
       type: 'unverified',
@@ -1517,27 +1596,26 @@ const createNoteFromPendingLink = async (rawTarget, kind = 'wikilink') => {
     }
     if (!isMounted || directory !== props.vault.directory) return false
     invalidateVaultIndexRequest()
-    await fetchDirectory('')
-    if (target.parentPath) {
-      await expandAncestors(created.path)
-      await fetchDirectory(target.parentPath)
-    }
     linkNotice.value = null
-    vaultIndexData.value = updateNoteInVaultIndex(vaultIndexData.value, {
+    handleContentSaved({
       path: created.path,
       name: created.path.split('/').pop(),
       content: initialContent || '',
       revision: created.revision,
     })
-    await fetchVaultIndexSafe()
     await selectNote(created.path, {
       anchor: target.anchor || null,
+      reveal: true,
       initialDoc: {
         path: created.path,
         content: initialContent || '',
         revision: created.revision,
       },
     })
+    if (!isMounted || directory !== props.vault.directory) return false
+    const folders = target.parentPath ? ['', target.parentPath] : ['']
+    await Promise.all(folders.map((folder) => fetchDirectory(folder)))
+    if (isMounted && directory === props.vault.directory) void fetchVaultIndexSafe()
     return true
   } catch (err) {
     if (err?.code === 'UNAUTHORIZED') {
@@ -1558,8 +1636,7 @@ const createNoteFromPendingLink = async (rawTarget, kind = 'wikilink') => {
 
 const openCandidateLink = async (candidatePath, anchor = null) => {
   linkNotice.value = null
-  await expandAncestors(candidatePath)
-  await selectNote(candidatePath, { anchor })
+  await selectNote(candidatePath, { anchor, reveal: true })
 }
 
 const handleSelectTag = (tag) => {
@@ -1658,28 +1735,25 @@ const submitCreate = async () => {
       const created = await vaultApi.createVaultNote(directory, payload)
       if (!isMounted || directory !== props.vault.directory) return
       invalidateVaultIndexRequest()
-      await fetchDirectory(parentPath)
-      if (parentPath) {
-        const nextExpanded = new Set(expandedFolders.value)
-        nextExpanded.add(parentPath)
-        expandedFolders.value = nextExpanded
-      }
       createMode.value = null
       newEntryName.value = ''
-      vaultIndexData.value = updateNoteInVaultIndex(vaultIndexData.value, {
+      handleContentSaved({
         path: created.path,
         name: created.path.split('/').pop(),
         content: initialContent,
         revision: created.revision,
       })
-      await fetchVaultIndexSafe()
       await selectNote(created.path, {
+        reveal: true,
         initialDoc: {
           path: created.path,
           content: initialContent,
           revision: created.revision,
         },
       })
+      if (!isMounted || directory !== props.vault.directory) return
+      await fetchDirectory(parentPath)
+      if (isMounted && directory === props.vault.directory) void fetchVaultIndexSafe()
     }
   } catch (err) {
     if (!isMounted) return
@@ -1948,6 +2022,7 @@ const setRelocationError = (operation, err) => {
   }
 
   if (err?.code === 'FAILED_TO_RELOCATE_ENTRY' || err?.code === 'INVALID_VAULT_RESPONSE') {
+    noteCache?.invalidate(operation.vaultDirectory)
     const message = 'The move result is uncertain. Refresh the vault before retrying.'
     Object.assign(operation, { stage: 'uncertain', loading: false, error: message })
     relocateState.value = operation
@@ -1974,6 +2049,8 @@ const setRelocationError = (operation, err) => {
 }
 
 const remapRelocatedPaths = (sourcePath, newPath) => {
+  noteCache?.invalidate(props.vault.directory, sourcePath)
+  noteCache?.invalidate(props.vault.directory, newPath)
   const remapPath = (filePath) => {
     if (!filePath) return filePath
     if (filePath === sourcePath) return newPath
@@ -2193,6 +2270,9 @@ const executeRelocate = async (sourcePath, rawTargetPath, options = {}) => {
     }
 
     invalidateVaultIndexRequest()
+    for (const path of [...(res.updatedFiles ?? []), ...(res.failedFiles ?? [])]) {
+      noteCache?.invalidate(directory, path)
+    }
     if (operation.affectedDocumentPath && viewerState.value.dirty) {
       const afterRequest = relocationSnapshot(sourcePath, targetPath)
       if (!authorization || !sameRelocationIdentity(snapshot, afterRequest) || !sameRelocationEditorState(authorization, afterRequest)) {
@@ -2340,6 +2420,7 @@ const requestDeleteEntry = (entry) => {
 }
 
 const cleanupAfterDeletedPath = (deletedPath) => {
+  noteCache?.invalidate(props.vault.directory, deletedPath)
   const isDeletedOrInside = (p) => p === deletedPath || p.startsWith(`${deletedPath}/`)
   const previousSelected = selectedFile.value
   openTabs.value = openTabs.value.filter((t) => !isDeletedOrInside(t))
@@ -2397,6 +2478,7 @@ const confirmDeleteEntry = async (mode = vaultSettings.value.deleteBehavior) => 
     cleanupAfterDeletedPath(targetPath)
     await refreshWorkspace()
   } catch (err) {
+    noteCache?.invalidate(directory, targetPath)
     if (err?.code === 'UNAUTHORIZED') {
       emit('unauthorized')
       return
@@ -2441,14 +2523,14 @@ const handleRestoreTrashItem = async (item, customTargetPath = undefined) => {
       targetPath: customTargetPath,
     })
     if (!isMounted || directory !== props.vault.directory) return
+    noteCache?.invalidate(directory, res.path)
     invalidateVaultIndexRequest()
     trashItems.value = trashItems.value.filter((i) => i.id !== item.id)
     trashRestoreConflict.value = null
-    await refreshWorkspace()
     if (res.type === 'file' && isMarkdownFile(res.path)) {
-      await expandAncestors(res.path)
-      await selectNote(res.path)
+      await selectNote(res.path, { reveal: true })
     }
+    await refreshWorkspace()
   } catch (err) {
     if (err?.code === 'UNAUTHORIZED') {
       emit('unauthorized')
@@ -2507,8 +2589,7 @@ const openTodayDailyNote = async () => {
     (f) => f.toLowerCase() === targetPath.toLowerCase()
   )
   if (existing) {
-    await expandAncestors(existing)
-    await selectNote(existing)
+    await selectNote(existing, { reveal: true })
     return
   }
 
@@ -2526,29 +2607,24 @@ const openTodayDailyNote = async () => {
     if (!isMounted || directory !== props.vault.directory) return
     const notePath = created?.path || targetPath
     invalidateVaultIndexRequest()
-    await fetchDirectory('')
-    if (folder) {
-      let acc = ''
-      for (const seg of folder.split('/')) {
-        acc = acc ? `${acc}/${seg}` : seg
-        await fetchDirectory(acc)
-      }
-    }
-    await expandAncestors(notePath)
-    vaultIndexData.value = updateNoteInVaultIndex(vaultIndexData.value, {
+    handleContentSaved({
       path: notePath,
       name: notePath.split('/').pop(),
       content: initialContent,
       revision: created?.revision || '',
     })
-    void fetchVaultIndexSafe()
     await selectNote(notePath, {
+      reveal: true,
       initialDoc: {
         path: notePath,
         content: initialContent,
         revision: created?.revision,
       },
     })
+    if (!isMounted || directory !== props.vault.directory) return
+    const folders = folder ? ['', folder] : ['']
+    await Promise.all(folders.map((folderPath) => fetchDirectory(folderPath)))
+    if (isMounted && directory === props.vault.directory) void fetchVaultIndexSafe()
   } catch (err) {
     if (!isMounted) return
     if (err?.code === 'UNAUTHORIZED') {
@@ -2556,8 +2632,7 @@ const openTodayDailyNote = async () => {
       return
     }
     if (err?.code === 'VAULT_ENTRY_EXISTS') {
-      await expandAncestors(targetPath)
-      await selectNote(targetPath)
+      await selectNote(targetPath, { reveal: true })
       return
     }
     addToast(err?.message || 'Could not open daily note.', 'error')
@@ -2581,6 +2656,34 @@ const handleAttachmentUploaded = async (uploaded) => {
     await fetchDirectory(folder)
   }
   void fetchVaultIndexSafe()
+}
+
+const startInitialIndex = () => {
+  if (!initialIndexPending || !initialRootReady) return
+  if (selectedFile.value && initialNoteReady !== selectedFile.value) return
+  initialIndexPending = false
+  if (!indexLoading.value) void fetchVaultIndexSafe()
+}
+
+const handleInitialNoteReady = () => {
+  initialNoteReady = selectedFile.value
+  startInitialIndex()
+}
+
+const startVaultWorkspace = async () => {
+  const generation = directoryRequestGeneration
+  const directory = props.vault.directory
+  initialIndexPending = true
+  initialRootReady = false
+  initialNoteReady = null
+  const navigation = noteCache ? loadVaultNavigation(directory) : { tabs: [], active: null }
+  openTabs.value = navigation.tabs
+  const root = fetchDirectory('')
+  await applyRouteFromUrl({ isInitial: true, restorePath: navigation.active })
+  await root
+  if (!isMounted || generation !== directoryRequestGeneration || directory !== props.vault.directory) return
+  initialRootReady = true
+  startInitialIndex()
 }
 
 const openCommandPaletteModal = () => {
@@ -2659,6 +2762,11 @@ watch(quickSwitcherQuery, () => {
   quickSwitcherActiveIndex.value = 0
 })
 
+watch([openTabs, selectedFile], () => {
+  if (noteCache) saveVaultNavigation(props.vault.directory, openTabs.value, selectedFile.value)
+  startInitialIndex()
+})
+
 const handleGlobalKeydown = (event) => {
   const mod = event.ctrlKey || event.metaKey
   if (mod && event.altKey && event.key.toLowerCase() === 'd') {
@@ -2705,6 +2813,7 @@ const handleDocumentClick = (e) => {
 watch(
   () => [props.vault.id, props.vault.directory],
   async () => {
+    selectionGeneration++
     relocateState.value = null
     clearDragState()
     pendingNavigation.value = null
@@ -2740,13 +2849,7 @@ watch(
     navHistory.value = []
     navHistoryIndex.value = -1
     hasLoadedRoot.value = false
-    fetchDirectory('')
-    fetchVaultIndexSafe()
-    if (route.value?.name === 'vault' && route.value?.params?.directory === props.vault.directory) {
-      await applyRouteFromUrl({ isInitial: true })
-    } else {
-      await syncUrlWithNote(null, { replace: true })
-    }
+    await startVaultWorkspace()
   }
 )
 
@@ -2777,13 +2880,13 @@ onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
   document.addEventListener('pointerdown', handleDocumentClick)
   window.addEventListener('resize', closeContextMenu)
-  fetchDirectory('')
-  fetchVaultIndexSafe()
-  void applyRouteFromUrl({ isInitial: true })
+  void startVaultWorkspace()
 })
 
 onUnmounted(() => {
   isMounted = false
+  indexBuilder.close()
+  selectionGeneration++
   unregisterRouterGuard()
   relocateState.value = null
   clearDragState()
@@ -3040,7 +3143,7 @@ defineExpose({
           :vault-name="vault.name"
           :accent-color="vault.accentColor || ''"
           :bookmarked="isBookmarked(selectedFile)"
-          :backlink-count="activeBacklinks.linked.length"
+          :backlink-count="linkedBacklinks.length"
           :known-files="knownMarkdownFiles"
           :aliases-by-file="vaultIndexData.aliasesByFile"
           :index-complete="vaultIndexData.complete"
@@ -3057,6 +3160,7 @@ defineExpose({
           @select-tag="handleSelectTag"
           @rename-note="handleRenameFromNoteTitle"
           @content-saved="handleContentSaved"
+          @content-ready="handleInitialNoteReady"
           @attachment-uploaded="handleAttachmentUploaded"
           @toggle-bookmark="selectedFile && toggleBookmark(selectedFile)"
           @open-backlinks="layout.contextOpen = true; rightPanelTab = 'backlinks'; persistLayout()"

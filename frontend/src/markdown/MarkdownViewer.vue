@@ -36,8 +36,9 @@ export function saveEditorPreferences(prefs) {
 </script>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, inject } from 'vue'
 import * as vaultApi from '../vaults/api.js'
+import { noteCacheKey } from '../vaults/noteCache.js'
 import { findHeadingOffset } from './links.js'
 import { initialMarkdownH1 } from './render.js'
 import { parseNoteDocument, splitFrontmatter, updateBodyInMarkdown } from './properties.js'
@@ -48,6 +49,10 @@ import NoteAlertBanners from './components/NoteAlertBanners.vue'
 import NoteStatusHud from './components/NoteStatusHud.vue'
 
 const { getVaultMarkdown, saveVaultMarkdown, MAX_MARKDOWN_BYTES } = vaultApi
+const noteCache = inject(noteCacheKey, null)
+const readNote = (directory, path, options) => noteCache
+  ? noteCache.read(directory, path, options)
+  : getVaultMarkdown(directory, path)
 const hasVaultApi = (name) => name in vaultApi && typeof vaultApi[name] === 'function'
 
 const props = defineProps({
@@ -82,6 +87,7 @@ const emit = defineEmits([
   'toggle-bookmark',
   'open-backlinks',
   'reveal-in-explorer',
+  'content-ready',
 ])
 
 const editorPreferences = ref(loadEditorPreferences())
@@ -111,6 +117,7 @@ const toggleInlineTitle = () => {
 }
 
 const editorRef = ref(null)
+const editorGeneration = ref(0)
 const loading = ref(true)
 const refreshing = ref(false)
 const saving = ref(false)
@@ -447,6 +454,16 @@ const load = async (isRefresh = false) => {
   recoveryRequestId++
   reloading.value = false
   saving.value = false
+  if (!isRefresh) editorGeneration.value++
+  const { directory, path } = props
+  const cached = !isRefresh ? noteCache?.get(directory, path) : null
+  let notifiedReady = false
+  const notifyReady = () => {
+    if (!notifiedReady && isMounted && reqId === activeRequestId) {
+      notifiedReady = true
+      emit('content-ready')
+    }
+  }
 
   if (
     !isRefresh &&
@@ -458,6 +475,7 @@ const load = async (isRefresh = false) => {
     error.value = null
     errorCode.value = null
     const initialContent = props.initialDocument.content ?? ''
+    noteCache?.put(directory, path, { content: initialContent, revision: props.initialDocument.revision })
     baseContent.value = initialContent
     draft.value = initialContent
     revision.value = props.initialDocument.revision
@@ -471,33 +489,50 @@ const load = async (isRefresh = false) => {
     shouldAutoFocus.value = true
     publishState()
     await nextTick()
-    editorRef.value?.focus()
+    if (reqId === activeRequestId && isMounted) editorRef.value?.focus()
+    notifyReady()
     return
   }
 
   shouldAutoFocus.value = false
 
   if (!isRefresh) {
-    loading.value = true
+    loading.value = !cached
     error.value = null
     errorCode.value = null
-    baseContent.value = ''
-    draft.value = ''
-    revision.value = null
+    baseContent.value = cached?.content ?? ''
+    draft.value = baseContent.value
+    revision.value = cached?.revision ?? null
     documentVersion.value = 0
     saveState.value = 'saved'
-    hasConfirmedContent.value = false
+    hasConfirmedContent.value = Boolean(cached)
     stale.value = false
     saveError.value = ''
     conflict.value = false
     saveResultUnknown.value = false
+    saveNotice.value = ''
   } else {
     refreshing.value = true
   }
 
   try {
-    const result = await getVaultMarkdown(props.directory, props.path)
+    const read = readNote(directory, path, { fresh: isRefresh })
+    if (cached) {
+      if (props.anchor) void applyAnchor(props.anchor)
+      void nextTick(notifyReady)
+    }
+    const result = await read
     if (!isMounted || reqId !== activeRequestId) return
+    if (cached) {
+      if (result.revision === revision.value) return
+      if (
+        hasUnconfirmedChanges.value || documentVersion.value !== 0 ||
+        revision.value !== cached.revision || saving.value || reloading.value || props.relocating
+      ) {
+        if (revision.value === cached.revision) stale.value = true
+        return
+      }
+    }
     baseContent.value = result.content
     draft.value = result.content
     revision.value = result.revision || null
@@ -514,6 +549,10 @@ const load = async (isRefresh = false) => {
     }
   } catch (err) {
     if (!isMounted || reqId !== activeRequestId) return
+    if (err.code === 'NOTE_READ_SUPERSEDED') {
+      if (!hasConfirmedContent.value) error.value = 'The note changed while opening. Try again.'
+      return
+    }
     if (err.code === 'UNAUTHORIZED') {
       clearProtectedContent()
       stale.value = false
@@ -523,7 +562,13 @@ const load = async (isRefresh = false) => {
       return
     }
     errorCode.value = err.code || 'FAILED_TO_FETCH_MARKDOWN'
-    if (isRefresh && hasConfirmedContent.value) {
+    if (cached && (hasUnconfirmedChanges.value || saving.value || reloading.value || props.relocating)) {
+      stale.value = true
+    } else if (cached && err.code === 'VAULT_PATH_NOT_FOUND') {
+      hasConfirmedContent.value = false
+      error.value = 'Note not found in vault.'
+      emit('not-found', path)
+    } else if ((isRefresh || cached) && hasConfirmedContent.value) {
       stale.value = true
     } else if (err.code === 'VAULT_FILE_TOO_LARGE') {
       error.value = 'Note exceeds the 2 MiB limit and cannot be displayed.'
@@ -542,6 +587,7 @@ const load = async (isRefresh = false) => {
       loading.value = false
       refreshing.value = false
       publishState()
+      void nextTick(notifyReady)
     }
   }
 }
@@ -590,6 +636,7 @@ const save = async () => {
 
       baseContent.value = snapshotContent
       revision.value = result.revision
+      noteCache?.put(props.directory, props.path, { content: snapshotContent, revision: result.revision })
       conflict.value = false
       saveResultUnknown.value = false
       emit('content-saved', {
@@ -693,7 +740,7 @@ const verifyServer = async () => {
   const recoveryId = ++recoveryRequestId
   saveError.value = ''
   try {
-    const remote = await getVaultMarkdown(props.directory, props.path)
+    const remote = await readNote(props.directory, props.path, { fresh: true })
     if (!isMounted || reqId !== activeRequestId || recoveryId !== recoveryRequestId) return
     if (remote.content === draft.value) {
       baseContent.value = remote.content
@@ -745,7 +792,7 @@ const reloadServerCopy = async () => {
     path === props.path
 
   try {
-    const remote = await getVaultMarkdown(directory, path)
+    const remote = await readNote(directory, path, { fresh: true })
     if (!isCurrent()) return
     if (remote.directory !== directory || remote.path !== path) {
       saveError.value = 'Could not confirm the server copy. Your draft is preserved.'
@@ -817,7 +864,7 @@ const reconcileRelocatedDraft = async (transfer) => {
   reloading.value = true
   publishState()
   try {
-    const remote = await getVaultMarkdown(transfer.directory, transfer.destinationPath)
+    const remote = await readNote(transfer.directory, transfer.destinationPath, { fresh: true })
     if (!isCurrent()) return
     if (remote?.directory !== transfer.directory || remote.path !== transfer.destinationPath || typeof remote.content !== 'string') {
       throw new Error('The moved note response did not match its destination.')
@@ -1140,6 +1187,7 @@ defineExpose({
           />
 
           <MarkdownEditor
+            :key="editorGeneration"
             ref="editorRef"
             :model-value="editorText"
             :disabled="relocating || reloading || loading"

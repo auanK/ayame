@@ -309,6 +309,29 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(api.saveVaultMarkdown).not.toHaveBeenCalled()
   })
 
+  it('opens a resolved link while its folder listing is still pending', async () => {
+    const folder = deferred()
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, folders: ['projects'],
+      files: ['projects/Roadmap.md'], notes: [],
+    })
+    const wrapper = await mountBrowser()
+    api.getVaultEntries.mockReturnValueOnce(folder.promise)
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'projects/Roadmap.md', content: 'Roadmap body', revision: 'a'.repeat(64),
+    })
+    await wrapper.vm.handleOpenLink({
+      type: 'resolved', path: 'projects/Roadmap.md', rawTarget: '[[projects/Roadmap]]', kind: 'wikilink',
+    })
+    await flushPromises()
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Roadmap body')
+    expect(api.getVaultEntries).toHaveBeenCalledWith('personal', 'projects')
+    expect(api.getVaultMarkdown.mock.invocationCallOrder.at(-1)).toBeLessThan(api.getVaultEntries.mock.invocationCallOrder.at(-1))
+    folder.resolve({ directory: 'personal', path: 'projects', entries: projectsEntries })
+    await flushPromises()
+    expect(wrapper.find('[data-file-path="projects/Roadmap.md"]').exists()).toBe(true)
+  })
+
   it('6. navigates internal links (wikilinks and relative markdown links), resolves unexpanded folders, expands tree ancestors, and highlights the target note', async () => {
     const wrapper = await mountBrowser()
 
