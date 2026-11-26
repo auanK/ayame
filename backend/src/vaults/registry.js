@@ -163,7 +163,7 @@ const mapDbRowToRecord = (row) => ({
   accentColor: typeof row.accent_color === 'string' ? row.accent_color : '',
   pinned: Boolean(row.pinned),
   hasCover: Boolean(row.has_cover),
-  coverUpdatedAt: typeof row.cover_updated_at === 'number' ? row.cover_updated_at : null,
+  coverUpdatedAt: row.has_cover && typeof row.cover_updated_at === 'number' ? row.cover_updated_at : null,
 })
 
 const getRegisteredRowByDirectory = (database, directory) => {
@@ -474,7 +474,6 @@ export const setVaultCover = (
     fail('UNSUPPORTED_IMAGE_TYPE', 'Unsupported cover image type')
   }
 
-  const updatedAt = Date.now()
   const tx = database.transaction(() => {
     const existing = getRegisteredRowByDirectory(database, directory)
     if (!existing) {
@@ -483,11 +482,15 @@ export const setVaultCover = (
           INSERT INTO vault (id, name, directory, cover_mime, cover_blob, cover_updated_at)
           VALUES (?, ?, ?, ?, ?, ?)
         `)
-        .run(idFn(), directory, directory, mime, buffer, updatedAt)
+        .run(idFn(), directory, directory, mime, buffer, Date.now())
     } else {
       database
-        .prepare('UPDATE vault SET cover_mime = ?, cover_blob = ?, cover_updated_at = ? WHERE directory = ?')
-        .run(mime, buffer, updatedAt, directory)
+        .prepare(`
+          UPDATE vault
+          SET cover_mime = ?, cover_blob = ?, cover_updated_at = MAX(?, COALESCE(cover_updated_at, 0) + 1)
+          WHERE directory = ?
+        `)
+        .run(mime, buffer, Date.now(), directory)
     }
     return getRegisteredRowByDirectory(database, directory)
   })
@@ -519,7 +522,7 @@ export const getVaultCover = (database, vaultsRoot, directory) => {
 export const clearVaultCover = (database, vaultsRoot, directory) => {
   resolveVaultRoot(vaultsRoot, directory)
   database
-    .prepare('UPDATE vault SET cover_mime = NULL, cover_blob = NULL, cover_updated_at = NULL WHERE directory = ?')
+    .prepare('UPDATE vault SET cover_mime = NULL, cover_blob = NULL WHERE directory = ?')
     .run(directory)
 
   const record = getRegisteredRowByDirectory(database, directory)

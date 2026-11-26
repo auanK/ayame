@@ -261,9 +261,12 @@ export const deleteVaultCover = async (directory) => {
   return { vault: validateVault(data.vault) }
 }
 
-export const getVaultCoverUrl = (directory, coverUpdatedAt) => {
+export const getVaultCoverUrl = (directory, coverUpdatedAt, { thumbnail = false } = {}) => {
   const base = `/vaults/${encodeURIComponent(directory ?? '')}/cover`
-  return coverUpdatedAt ? `${base}?v=${encodeURIComponent(String(coverUpdatedAt))}` : base
+  const query = new URLSearchParams()
+  if (coverUpdatedAt) query.set('v', String(coverUpdatedAt))
+  if (thumbnail) query.set('variant', 'thumbnail')
+  return query.size ? `${base}?${query}` : base
 }
 
 export const unregisterVault = async (id) => {

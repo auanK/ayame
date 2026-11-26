@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import VaultsPanel from './VaultsPanel.vue'
 import * as api from './api.js'
 
-vi.mock('./api.js', () => ({
+vi.mock('./api.js', async (importOriginal) => ({
   getVaults: vi.fn(),
   registerVault: vi.fn(),
   createVault: vi.fn(),
@@ -11,7 +11,7 @@ vi.mock('./api.js', () => ({
   reorderVaults: vi.fn(),
   uploadVaultCover: vi.fn(),
   deleteVaultCover: vi.fn(),
-  getVaultCoverUrl: vi.fn((dir, v) => `/vaults/${encodeURIComponent(dir)}/cover${v ? `?v=${v}` : ''}`),
+  getVaultCoverUrl: (await importOriginal()).getVaultCoverUrl,
   unregisterVault: vi.fn(),
 }))
 
@@ -507,12 +507,18 @@ describe('VaultsPanel', () => {
     })
     await flushPromises()
     expect(api.uploadVaultCover).toHaveBeenCalledWith('Isekai', fakeFile)
-    expect(wrapper.find('[data-testid="vault-cover-image"]').attributes('src')).toBe('/vaults/Isekai/cover?v=999')
+    const cover = wrapper.get('[data-testid="vault-cover-image"]')
+    expect(cover.attributes()).toMatchObject({
+      src: '/vaults/Isekai/cover?v=999&variant=thumbnail',
+      loading: 'lazy',
+      decoding: 'async',
+    })
 
     // Edit customized vault and remove cover
     await wrapper.find('[data-testid="edit-vault-button"]').trigger('click')
     const editor = wrapper.find('[data-testid="vault-editor"]')
     expect(editor.exists()).toBe(true)
+    expect(editor.get('.vault-cover-thumb').attributes('src')).toBe('/vaults/Isekai/cover?v=999')
     api.getVaults.mockResolvedValueOnce({ vaults: [existing] })
     await editor.find('[data-testid="remove-cover-button"]').trigger('click')
     await flushPromises()

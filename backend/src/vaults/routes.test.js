@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import os from 'node:os'
+import sharp from 'sharp'
 import { createApp } from '../app.js'
 import { openDatabase } from '../database.js'
 import { createOwner, createSession } from '../auth/authentication.js'
@@ -1299,6 +1300,79 @@ test('vault organization endpoints support create, patch metadata, reorder, and 
     })
     assert.equal(missingCoverRes.statusCode, 404)
     assert.deepEqual(missingCoverRes.json(), { error: 'VAULT_COVER_NOT_FOUND' })
+  } finally {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true, force: true })
+  }
+})
+
+test('vault cover thumbnails are smaller, private, and independently versioned', async (t) => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-cover-thumbnails-'))
+  fs.mkdirSync(path.join(vaultsRoot, 'personal'))
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+  const coverUrl = '/vaults/personal/cover'
+  const headers = { cookie }
+  const now = Date.now()
+  t.mock.method(Date, 'now', () => now)
+
+  try {
+    const original = await sharp({
+      create: { width: 1280, height: 640, channels: 3, background: '#94307a' },
+    }).png().toBuffer()
+    const upload = await app.inject({
+      method: 'PUT', url: coverUrl, headers: { cookie, 'content-type': 'image/png' }, payload: original,
+    })
+    assert.equal(upload.statusCode, 200)
+    const { coverUpdatedAt } = upload.json().vault
+    const thumbnailUrl = `${coverUrl}?variant=thumbnail&v=${coverUpdatedAt}`
+
+    const source = await app.inject({ url: coverUrl, headers })
+    assert.equal(source.headers['cache-control'], 'private, no-cache')
+    assert.deepEqual(source.rawPayload, original)
+
+    const thumb = await app.inject({ url: thumbnailUrl, headers })
+    assert.equal(thumb.statusCode, 200)
+    assert.equal(thumb.headers['content-type'], 'image/webp')
+    assert.equal(thumb.headers['cache-control'], 'private, max-age=300, immutable')
+    assert.equal(thumb.headers.vary, 'Cookie')
+    assert.ok(thumb.rawPayload.length < original.length)
+    const { width, height } = await sharp(thumb.rawPayload).metadata()
+    assert.deepEqual([width, height], [640, 320])
+
+    const etag = thumb.headers.etag
+    assert.match(etag, /^"[a-f0-9]{64}"$/)
+    const cached = await app.inject({ url: thumbnailUrl, headers: { cookie, 'if-none-match': `W/${etag}` } })
+    assert.equal(cached.statusCode, 304)
+    assert.equal(cached.headers.etag, etag)
+    assert.equal(cached.body, '')
+    const unauthorized = await app.inject({ url: thumbnailUrl, headers: { 'if-none-match': etag } })
+    assert.equal(unauthorized.statusCode, 401)
+
+    const removed = await app.inject({ method: 'DELETE', url: coverUrl, headers })
+    assert.equal(removed.json().vault.coverUpdatedAt, null)
+    assert.equal((await app.inject({ url: thumbnailUrl, headers })).statusCode, 404)
+
+    const frameWidth = 960
+    const frameHeight = 480
+    const frameBytes = frameWidth * frameHeight * 3
+    const frames = Buffer.concat([Buffer.alloc(frameBytes, 40), Buffer.alloc(frameBytes, 120)])
+    const animation = await sharp(frames, {
+      raw: { width: frameWidth, height: frameHeight * 2, channels: 3, pageHeight: frameHeight },
+    }).gif({ delay: [100, 240] }).toBuffer()
+    const replacement = await app.inject({
+      method: 'PUT', url: coverUrl, headers: { cookie, 'content-type': 'image/gif' }, payload: animation,
+    })
+    assert.equal(replacement.statusCode, 200)
+    assert.ok(replacement.json().vault.coverUpdatedAt > coverUpdatedAt)
+
+    const stale = await app.inject({ url: thumbnailUrl, headers: { cookie, 'if-none-match': etag } })
+    assert.equal(stale.statusCode, 200)
+    assert.equal(stale.headers['cache-control'], 'private, no-cache')
+    assert.notEqual(stale.headers.etag, etag)
+    assert.ok(stale.rawPayload.length < animation.length)
+    const animated = await sharp(stale.rawPayload, { animated: true }).metadata()
+    assert.deepEqual([animated.width, animated.pageHeight, animated.pages], [640, 320, 2])
+    assert.deepEqual(animated.delay, [100, 240])
   } finally {
     await app.close()
     fs.rmSync(vaultsRoot, { recursive: true, force: true })

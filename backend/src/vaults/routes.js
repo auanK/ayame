@@ -13,6 +13,7 @@ import {
 import { collectVaultStats, mergeVaults } from './discovery.js'
 import { createVaultScanner } from './vaultScanner.js'
 import { SUPPORTED_IMAGE_MIMES } from './images.js'
+import { createCoverThumbnailCache } from './coverThumbnails.js'
 import { MAX_ATTACHMENT_BYTES, saveVaultAttachment, readVaultMedia } from './attachments.js'
 import { listVaultEntries } from './browser.js'
 import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
@@ -82,6 +83,7 @@ const VAULT_META_ERROR_STATUS = {
 
 export const registerVaultRoutes = (app, db, vaultsRoot) => {
   const scanner = createVaultScanner(vaultsRoot)
+  const getThumbnail = createCoverThumbnailCache()
   app.addHook('onClose', () => scanner.close())
   app.addHook('onSend', async (req, _reply, payload) => {
     if (req.routeOptions.url?.startsWith('/vaults') && req.method !== 'GET') {
@@ -366,11 +368,24 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
   app.get('/vaults/:directory/cover', async (req, reply) => {
     try {
       const cover = getVaultCover(db, vaultsRoot, req.params.directory)
-      reply.header('content-type', cover.mimeType)
       reply.header('content-security-policy', "default-src 'none'")
       reply.header('x-content-type-options', 'nosniff')
       reply.header('cache-control', 'private, no-cache')
-      return reply.send(cover.buffer)
+      if (req.query.variant !== 'thumbnail') {
+        return reply.type(cover.mimeType).send(cover.buffer)
+      }
+
+      const thumbnail = await getThumbnail(cover)
+      reply.header('vary', 'Cookie')
+      reply.header('etag', thumbnail.etag)
+      if (cover.updatedAt > 0 && req.query.v === String(cover.updatedAt)) {
+        reply.header('cache-control', 'private, max-age=300, immutable')
+      }
+      const validators = req.headers['if-none-match']?.split(',') ?? []
+      if (validators.some((tag) => tag.trim() === '*' || tag.trim().replace(/^W\//, '') === thumbnail.etag)) {
+        return reply.code(304).send()
+      }
+      return reply.type(thumbnail.mimeType).send(thumbnail.buffer)
     } catch (err) {
       const status = VAULT_META_ERROR_STATUS[err.code]
       if (status) return reply.code(status).send({ error: err.code })

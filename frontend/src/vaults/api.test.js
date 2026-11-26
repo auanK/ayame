@@ -589,6 +589,8 @@ describe('vault API', () => {
       const removed = await deleteVaultCover('personal')
       expect(removed.vault.hasCover).toBe(false)
       expect(getVaultCoverUrl('Personal Dir', 999)).toBe('/vaults/Personal%20Dir/cover?v=999')
+      expect(getVaultCoverUrl('Personal Dir', 999, { thumbnail: true }))
+        .toBe('/vaults/Personal%20Dir/cover?v=999&variant=thumbnail')
     })
 
     it('supports uploadVaultAttachment and getVaultMediaUrl', async () => {

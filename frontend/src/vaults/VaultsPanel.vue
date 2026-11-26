@@ -130,7 +130,7 @@
             :needs-refresh="needsRefresh"
             :operation="operation"
             :selected-tag="selectedTag"
-            :cover-url-for="coverUrlFor"
+            :cover-url-for="coverThumbnailUrlFor"
             :banner-style-for="bannerStyleFor"
             :format-relative-time="formatRelativeTime"
             @drag-over="handleCategoryDragOver"
@@ -167,7 +167,7 @@
             :needs-refresh="needsRefresh"
             :operation="operation"
             :selected-tag="selectedTag"
-            :cover-url="coverUrlFor(vault)"
+            :cover-url="coverThumbnailUrlFor(vault)"
             :banner-style="bannerStyleFor(vault)"
             :formatted-time="formatRelativeTime(vault.lastModifiedAt)"
             @open="emit('open', $event)"
@@ -436,13 +436,12 @@ const addCustomCategoryBucket = () => {
   newCategoryName.value = ''
 }
 
-const coverUrlFor = (vault) => {
-  if (hasApi('getVaultCoverUrl')) {
-    return api.getVaultCoverUrl(vault.directory, vault.coverUpdatedAt)
-  }
-  const base = `/vaults/${encodeURIComponent(vault.directory)}/cover`
-  return vault.coverUpdatedAt ? `${base}?v=${encodeURIComponent(String(vault.coverUpdatedAt))}` : base
+const coverUrlFor = (vault, options) => {
+  if (!vault?.hasCover) return ''
+  return api.getVaultCoverUrl(vault.directory, vault.coverUpdatedAt, options)
 }
+
+const coverThumbnailUrlFor = (vault) => coverUrlFor(vault, { thumbnail: true })
 
 const bannerStyleFor = (vault) => {
   if (!vault || vault.hasCover || !vault.accentColor) return undefined

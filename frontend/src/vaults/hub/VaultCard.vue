@@ -26,6 +26,8 @@
         v-if="vault.hasCover"
         class="vault-cover-img"
         data-testid="vault-cover-image"
+        loading="lazy"
+        decoding="async"
         :src="coverUrl"
         :alt="`Cover for ${vault.name}`"
       />
