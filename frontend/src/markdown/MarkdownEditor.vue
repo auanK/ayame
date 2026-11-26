@@ -834,7 +834,6 @@ defineExpose({
 :deep(.cm-editor) {
   min-height: 100%;
   background: transparent;
-  outline: none;
   font-family: var(--reading-font-body);
   font-size: var(--reading-font-size);
   font-weight: 400;
@@ -851,9 +850,9 @@ defineExpose({
   color: var(--reading-text);
 }
 
-:deep(.cm-content:focus-visible) {
-  outline: 2px solid var(--reading-focus-ring);
-  outline-offset: -2px;
+:deep(.cm-editor.cm-focused),
+:deep(.cm-content:focus) {
+  outline: none;
 }
 
 :deep(.cm-line) {
