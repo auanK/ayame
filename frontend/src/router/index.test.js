@@ -278,6 +278,63 @@ describe('Vue Router 4 & URL persistence (Sections 41-52)', () => {
       ).toBe('true')
       wrapper2.unmount()
     })
+
+    it.each([false, true])('reopens a vault from the session cache (expired: %s)', async (expired) => {
+      const path = 'Cosmologia/A Gênese.md'
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+      const { wrapper } = await mountAppAt(`/vault/Isekai?note=${encodeURIComponent(path)}`)
+      try {
+        expect(wrapper.getComponent(MarkdownViewer).vm.getText()).toBe(`# ${path}`)
+        expect(vaultApi.getVaultEntries).toHaveBeenCalledWith('Isekai', 'Cosmologia')
+
+        await wrapper.get('[data-testid="back-to-vaults-button"]').trigger('click')
+        await flushPromises()
+        expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(false)
+        vaultApi.getVaultEntries.mockClear()
+        vaultApi.getVaultIndex.mockClear()
+        vaultApi.getVaultMarkdown.mockClear()
+
+        const root = createDeferred()
+        const folder = createDeferred()
+        const index = createDeferred()
+        const note = createDeferred()
+        if (expired) {
+          now.mockReturnValue(31_000)
+          vaultApi.getVaultEntries.mockReturnValueOnce(root.promise).mockReturnValueOnce(folder.promise)
+          vaultApi.getVaultIndex.mockReturnValueOnce(index.promise)
+          vaultApi.getVaultMarkdown.mockReturnValueOnce(note.promise)
+        }
+
+        await wrapper.get('[data-vault-directory="Isekai"] [data-testid="open-vault-button"]').trigger('click')
+        await flushPromises()
+        const viewer = wrapper.getComponent(MarkdownViewer)
+        expect(viewer.vm.getText()).toBe(`# ${path}`)
+        expect(viewer.props('indexComplete')).toBe(true)
+        expect(wrapper.find('[data-testid="browser-loading"]').exists()).toBe(false)
+        expect(wrapper.find('button[data-file-path="README.md"]').exists()).toBe(true)
+        expect(wrapper.find('button[data-file-path="Cosmologia/A Gênese.md"]').exists()).toBe(true)
+
+        if (expired) {
+          expect(vaultApi.getVaultEntries).toHaveBeenCalledWith('Isekai', '')
+          expect(vaultApi.getVaultEntries).toHaveBeenCalledWith('Isekai', 'Cosmologia')
+          expect(vaultApi.getVaultIndex).toHaveBeenCalledExactlyOnceWith('Isekai')
+          expect(vaultApi.getVaultMarkdown).toHaveBeenCalledExactlyOnceWith('Isekai', path)
+          root.resolve({ directory: 'Isekai', path: '', entries: [] })
+          folder.resolve({ directory: 'Isekai', path: 'Cosmologia', entries: [] })
+          index.resolve({ directory: 'Isekai', complete: true, folders: [], files: [], notes: [] })
+          note.resolve({ directory: 'Isekai', path, content: '# Updated', revision: 'c'.repeat(64) })
+          await flushPromises()
+          expect(viewer.vm.getText()).toBe('# Updated')
+        } else {
+          expect(vaultApi.getVaultEntries).not.toHaveBeenCalled()
+          expect(vaultApi.getVaultIndex).not.toHaveBeenCalled()
+          expect(vaultApi.getVaultMarkdown).not.toHaveBeenCalled()
+        }
+      } finally {
+        wrapper.unmount()
+        now.mockRestore()
+      }
+    })
   })
 
   // 44. Deep link Unicode e caracteres especiais

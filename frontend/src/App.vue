@@ -143,11 +143,14 @@ import * as authApi from './auth/api.js'
 import * as vaultApi from './vaults/api.js'
 import { createNoteCache, noteCacheKey } from './vaults/noteCache.js'
 import { clearVaultNavigation } from './vaults/vaultNavigationStorage.js'
+import { createVaultWorkspaceCache, vaultWorkspaceCacheKey } from './vaults/vaultWorkspaceCache.js'
 import { isValidVaultDirectory, useAyameRouter } from './router/index.js'
 
 const { router, route } = useAyameRouter()
 const noteCache = createNoteCache((directory, path) => vaultApi.getVaultMarkdown(directory, path))
 provide(noteCacheKey, noteCache)
+const vaultWorkspaceCache = createVaultWorkspaceCache()
+provide(vaultWorkspaceCacheKey, vaultWorkspaceCache)
 
 const view = ref('loading')
 const pending = ref(false)
@@ -429,6 +432,7 @@ const handleEditorState = (state) => {
 
 const clearAuthenticatedState = () => {
   noteCache.clear()
+  vaultWorkspaceCache.clear()
   clearVaultNavigation()
   authGeneration++
   vaultResolveGeneration++
@@ -500,6 +504,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   noteCache.clear()
+  vaultWorkspaceCache.clear()
   isMounted = false
   authGeneration++
   vaultResolveGeneration++

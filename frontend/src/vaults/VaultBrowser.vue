@@ -4,6 +4,7 @@ import * as vaultApi from './api.js'
 import { noteCacheKey } from './noteCache.js'
 import { loadVaultNavigation, saveVaultNavigation } from './vaultNavigationStorage.js'
 import { createVaultIndexBuilder } from './vaultIndexBuilder.js'
+import { isFreshWorkspaceSnapshot, vaultWorkspaceCacheKey } from './vaultWorkspaceCache.js'
 import {
   resolveLink,
   resolvePendingLinkCreationTarget,
@@ -66,6 +67,7 @@ const props = defineProps({
 
 const emit = defineEmits(['back', 'unauthorized', 'state', 'logout', 'open-account'])
 const noteCache = inject(noteCacheKey, null)
+const workspaceCache = inject(vaultWorkspaceCacheKey, null)
 
 const { router, route } = useAyameRouter({
   initialVaultDirectory: props.vault.directory,
@@ -248,6 +250,7 @@ const quickSwitcherRef = ref(null)
 const folderEntriesMap = ref(new Map())
 const expandedFolders = ref(new Set())
 const loadingFolders = ref(new Set())
+const staleCachedFolders = new Set()
 
 const loadingRoot = ref(true)
 const refreshing = ref(false)
@@ -523,6 +526,7 @@ const viewerState = ref({
 const directoryRequestIds = new Map()
 let directoryRequestGeneration = 0
 let indexRequestGeneration = 0
+let workspaceCacheGeneration = 0
 let activeIndexFetchGeneration = null
 let activeIndexFetchDirectory = ''
 const pendingSavedNotesForFetch = new Map()
@@ -543,6 +547,11 @@ const invalidateVaultIndexRequest = () => {
   indexRequestGeneration++
   clearActiveIndexFetch()
   queuedIndexSaves.clear()
+}
+
+const invalidateCachedWorkspace = (directory = props.vault.directory) => {
+  if (directory === props.vault.directory) workspaceCacheGeneration++
+  workspaceCache?.invalidate(directory)
 }
 
 const isMarkdownFile = (name) => {
@@ -741,6 +750,7 @@ const reconcileIndexWithPendingSaves = (raw, savedNotesMap) => {
 
 const fetchVaultIndexSafe = async () => {
   const generation = ++indexRequestGeneration
+  const cacheGeneration = workspaceCacheGeneration
   const directory = props.vault.directory
   const isCurrent = () =>
     isMounted && generation === indexRequestGeneration && directory === props.vault.directory
@@ -783,6 +793,7 @@ const fetchVaultIndexSafe = async () => {
       clearActiveIndexFetch()
       vaultIndexData.value = index
       indexFetchedAt = checkedAt
+      if (cacheGeneration === workspaceCacheGeneration) workspaceCache?.putIndex(directory, index, checkedAt)
       indexError.value = false
       return true
     }
@@ -806,6 +817,7 @@ const retryVaultIndex = async () => {
 
 const fetchDirectory = async (folderPath, { isRefresh = false } = {}) => {
   const generation = directoryRequestGeneration
+  const cacheGeneration = workspaceCacheGeneration
   const reqId = (directoryRequestIds.get(folderPath) || 0) + 1
   const directory = props.vault.directory
   directoryRequestIds.set(folderPath, reqId)
@@ -824,13 +836,16 @@ const fetchDirectory = async (folderPath, { isRefresh = false } = {}) => {
   try {
     const result = await vaultApi.getVaultEntries(directory, folderPath)
     if (!isCurrent()) return null
-    setFolderEntries(folderPath, result.entries || [])
+    const entries = result.entries || []
+    setFolderEntries(folderPath, entries)
+    staleCachedFolders.delete(folderPath)
+    if (cacheGeneration === workspaceCacheGeneration) workspaceCache?.putEntries(directory, folderPath, entries)
     if (folderPath === '') {
       hasLoadedRoot.value = true
       rootError.value = null
       stale.value = false
     }
-    return result.entries || []
+    return entries
   } catch (err) {
     if (!isCurrent()) return null
     if (err.code === 'UNAUTHORIZED') {
@@ -889,6 +904,7 @@ const discoverUnloadedFolders = async (maxDirectories = 48) => {
 const refreshWorkspace = async ({ refreshNote = false } = {}) => {
   if (refreshing.value || loadingRoot.value) return
   refreshing.value = true
+  invalidateCachedWorkspace()
   invalidateVaultIndexRequest()
   try {
     const noteRefresh = refreshNote ? viewerRef.value?.refresh() : null
@@ -911,6 +927,13 @@ const refreshWorkspace = async ({ refreshNote = false } = {}) => {
 
 const refreshFromUser = () => refreshWorkspace({ refreshNote: true })
 
+const loadVisibleFolder = (folderPath) => {
+  if (!folderEntriesMap.value.has(folderPath)) return fetchDirectory(folderPath)
+  if (staleCachedFolders.has(folderPath) && !loadingFolders.value.has(folderPath)) {
+    void fetchDirectory(folderPath)
+  }
+}
+
 const toggleFolder = async (folderPath) => {
   selectedFolderPath.value = folderPath
   const nextExpanded = new Set(expandedFolders.value)
@@ -921,9 +944,7 @@ const toggleFolder = async (folderPath) => {
   }
   nextExpanded.add(folderPath)
   expandedFolders.value = nextExpanded
-  if (!folderEntriesMap.value.has(folderPath)) {
-    await fetchDirectory(folderPath)
-  }
+  await loadVisibleFolder(folderPath)
 }
 
 const expandAncestors = async (filePath) => {
@@ -935,8 +956,9 @@ const expandAncestors = async (filePath) => {
   let current = ''
   for (const segment of segments) {
     current = current ? `${current}/${segment}` : segment
-    if (!folderEntriesMap.value.has(current)) {
-      await fetchDirectory(current)
+    const pendingEntries = loadVisibleFolder(current)
+    if (pendingEntries) {
+      await pendingEntries
       if (!isMounted || generation !== directoryRequestGeneration) return
     }
     expanded.push(current)
@@ -1296,6 +1318,7 @@ const confirmDiscardAndNavigate = async () => {
 
 const handleNoteNotFound = async (missingPath) => {
   if (!missingPath || selectedFile.value !== missingPath) return
+  invalidateCachedWorkspace()
   selectionGeneration++
   openTabs.value = openTabs.value.filter((t) => t !== missingPath)
   if (navHistory.value[navHistoryIndex.value] === missingPath) {
@@ -1478,6 +1501,7 @@ const applySavedNotesToIndex = async () => {
   try {
     while (isMounted && queuedIndexSaves.size) {
       const generation = indexRequestGeneration
+      const cacheGeneration = workspaceCacheGeneration
       const base = vaultIndexData.value
       const changes = new Map(queuedIndexSaves)
       const { directory, complete, failures, folders, files, rawNotes: notes } = base
@@ -1485,6 +1509,9 @@ const applySavedNotesToIndex = async () => {
       const index = await indexBuilder.build(raw)
       if (!isMounted || generation !== indexRequestGeneration || base !== vaultIndexData.value) continue
       vaultIndexData.value = index
+      if (indexFetchedAt !== null && cacheGeneration === workspaceCacheGeneration) {
+        workspaceCache?.putIndex(props.vault.directory, index, indexFetchedAt)
+      }
       for (const [path, note] of changes) {
         if (queuedIndexSaves.get(path) === note) queuedIndexSaves.delete(path)
       }
@@ -1498,6 +1525,7 @@ const applySavedNotesToIndex = async () => {
 
 const handleContentSaved = (savedDoc) => {
   if (!savedDoc?.path) return
+  workspaceCache?.invalidateIndex(props.vault.directory)
   const note = { ...savedDoc }
   queuedIndexSaves.set(note.path, note)
   if (
@@ -1609,6 +1637,7 @@ const createNoteFromPendingLink = async (rawTarget, kind = 'wikilink') => {
     if (!created || !created.path) {
       return false
     }
+    invalidateCachedWorkspace(directory)
     if (!isMounted || directory !== props.vault.directory) return false
     invalidateVaultIndexRequest()
     linkNotice.value = null
@@ -1723,6 +1752,7 @@ const submitCreate = async () => {
         parentPath,
         name: trimmed,
       })
+      invalidateCachedWorkspace(directory)
       if (!isMounted || directory !== props.vault.directory) return
       invalidateVaultIndexRequest()
       await fetchDirectory(parentPath)
@@ -1748,6 +1778,7 @@ const submitCreate = async () => {
       }
 
       const created = await vaultApi.createVaultNote(directory, payload)
+      invalidateCachedWorkspace(directory)
       if (!isMounted || directory !== props.vault.directory) return
       invalidateVaultIndexRequest()
       createMode.value = null
@@ -2037,6 +2068,7 @@ const setRelocationError = (operation, err) => {
   }
 
   if (err?.code === 'FAILED_TO_RELOCATE_ENTRY' || err?.code === 'INVALID_VAULT_RESPONSE') {
+    invalidateCachedWorkspace(operation.vaultDirectory)
     noteCache?.invalidate(operation.vaultDirectory)
     const message = 'The move result is uncertain. Refresh the vault before retrying.'
     Object.assign(operation, { stage: 'uncertain', loading: false, error: message })
@@ -2272,6 +2304,7 @@ const executeRelocate = async (sourcePath, rawTargetPath, options = {}) => {
     if (revision) payload.expectedRevision = revision
 
     const res = await vaultApi.relocateVaultEntry(directory, payload)
+    invalidateCachedWorkspace(directory)
     if (!isCurrentRelocation(operation)) return false
     if (
       !res ||
@@ -2482,6 +2515,7 @@ const confirmDeleteEntry = async (mode = vaultSettings.value.deleteBehavior) => 
     } else {
       await vaultApi.trashVaultEntry(directory, payload)
     }
+    invalidateCachedWorkspace(directory)
     if (!isMounted || directory !== props.vault.directory) return
     invalidateVaultIndexRequest()
     if (deleteConfirmState.value?.hasUnsavedDraft) {
@@ -2537,6 +2571,7 @@ const handleRestoreTrashItem = async (item, customTargetPath = undefined) => {
       id: item.id,
       targetPath: customTargetPath,
     })
+    invalidateCachedWorkspace(directory)
     if (!isMounted || directory !== props.vault.directory) return
     noteCache?.invalidate(directory, res.path)
     invalidateVaultIndexRequest()
@@ -2619,6 +2654,7 @@ const openTodayDailyNote = async () => {
       content: initialContent,
       createParents: Boolean(folder),
     })
+    invalidateCachedWorkspace(directory)
     if (!isMounted || directory !== props.vault.directory) return
     const notePath = created?.path || targetPath
     invalidateVaultIndexRequest()
@@ -2656,6 +2692,7 @@ const openTodayDailyNote = async () => {
 
 const handleAttachmentUploaded = async (uploaded) => {
   if (!uploaded?.path) return
+  invalidateCachedWorkspace()
   if (!vaultIndexData.value.files.includes(uploaded.path)) {
     vaultIndexData.value = {
       ...vaultIndexData.value,
@@ -2676,13 +2713,35 @@ const handleAttachmentUploaded = async (uploaded) => {
 const startVaultWorkspace = async () => {
   const generation = directoryRequestGeneration
   const directory = props.vault.directory
+  const cached = workspaceCache?.get(directory)
+  const root = cached?.folders.get('')
+  staleCachedFolders.clear()
+  if (cached) {
+    const folders = new Map()
+    for (const [path, snapshot] of cached.folders) {
+      folders.set(path, snapshot.entries)
+      if (path && !isFreshWorkspaceSnapshot(snapshot)) staleCachedFolders.add(path)
+    }
+    folderEntriesMap.value = folders
+  }
+  if (root) {
+    hasLoadedRoot.value = true
+    loadingRoot.value = false
+    rootError.value = null
+    stale.value = false
+  }
+  if (cached?.index) {
+    vaultIndexData.value = cached.index.data
+    indexFetchedAt = cached.index.checkedAt
+  }
+
   const navigation = noteCache ? loadVaultNavigation(directory) : { tabs: [], active: null }
   openTabs.value = navigation.tabs
-  void fetchDirectory('')
+  if (!isFreshWorkspaceSnapshot(root)) void fetchDirectory('', { isRefresh: Boolean(root) })
   await applyRouteFromUrl({ isInitial: true, restorePath: navigation.active })
   await nextTick()
   if (!isMounted || generation !== directoryRequestGeneration || directory !== props.vault.directory) return
-  if (!indexLoading.value) void fetchVaultIndexSafe()
+  if (!indexLoading.value && !isFreshWorkspaceSnapshot(cached?.index)) void fetchVaultIndexSafe()
 }
 
 const openCommandPaletteModal = () => {
@@ -2830,6 +2889,7 @@ watch(
     directoryRequestIds.clear()
     folderEntriesMap.value = new Map()
     expandedFolders.value = new Set()
+    loadingFolders.value = new Set()
     selectedFolderPath.value = ''
     selectedFile.value = null
     selectedAnchor.value = null
