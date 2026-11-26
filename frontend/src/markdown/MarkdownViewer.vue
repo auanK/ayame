@@ -67,6 +67,7 @@ const props = defineProps({
   knownTags: { type: Array, default: () => [] },
   anchor: { type: String, default: null },
   initialDocument: { type: Object, default: null },
+  takeIndexedDocument: { type: Function, default: null },
   relocating: { type: Boolean, default: false },
   vaultName: { type: String, default: '' },
   accentColor: { type: String, default: '' },
@@ -456,7 +457,16 @@ const load = async (isRefresh = false) => {
   saving.value = false
   if (!isRefresh) editorGeneration.value++
   const { directory, path } = props
-  const cached = !isRefresh ? noteCache?.get(directory, path) : null
+  let cached = !isRefresh ? noteCache?.get(directory, path) : null
+  if (!isRefresh && props.takeIndexedDocument) {
+    const hasInitialDocument = props.initialDocument?.path === path &&
+      typeof props.initialDocument.revision === 'string'
+    const indexed = props.takeIndexedDocument(directory, path, !cached && !hasInitialDocument)
+    if (indexed) {
+      cached = indexed
+      noteCache?.put(directory, path, indexed)
+    }
+  }
   let notifiedReady = false
   const notifyReady = () => {
     if (!notifiedReady && isMounted && reqId === activeRequestId) {

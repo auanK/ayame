@@ -332,6 +332,39 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     expect(wrapper.find('[data-file-path="projects/Roadmap.md"]').exists()).toBe(true)
   })
 
+  it('opens an indexed note before its first content response and avoids replaying the old index snapshot', async () => {
+    const indexed = { path: 'README.md', content: 'Indexed body', revision: 'a'.repeat(64) }
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory: 'personal', complete: true, files: [indexed.path], notes: [indexed],
+    })
+    const wrapper = await mountBrowser()
+    const firstRead = deferred()
+    api.getVaultMarkdown.mockReturnValueOnce(firstRead.promise)
+    await wrapper.find('[data-file-path="README.md"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-loading"]').exists()).toBe(false)
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe(indexed.content)
+    expect(api.getVaultMarkdown).toHaveBeenCalledWith('personal', indexed.path)
+
+    firstRead.resolve({ directory: 'personal', ...indexed, content: 'Updated body', revision: 'b'.repeat(64) })
+    await flushPromises()
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Updated body')
+
+    api.getVaultMarkdown.mockResolvedValueOnce({
+      directory: 'personal', path: 'Other.md', content: 'Other body', revision: 'c'.repeat(64),
+    })
+    await wrapper.vm.selectNote('Other.md')
+    await flushPromises()
+    const secondRead = deferred()
+    api.getVaultMarkdown.mockReturnValueOnce(secondRead.promise)
+    await wrapper.vm.selectNote(indexed.path)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="markdown-loading"]').exists()).toBe(true)
+    secondRead.resolve({ directory: 'personal', ...indexed, content: 'Fresh body', revision: 'd'.repeat(64) })
+    await flushPromises()
+    expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Fresh body')
+  })
+
   it('6. navigates internal links (wikilinks and relative markdown links), resolves unexpanded folders, expands tree ancestors, and highlights the target note', async () => {
     const wrapper = await mountBrowser()
 

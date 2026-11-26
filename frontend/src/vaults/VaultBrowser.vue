@@ -282,6 +282,17 @@ const vaultIndexData = shallowRef(
 const indexBuilder = createVaultIndexBuilder()
 const indexLoading = ref(false)
 const indexError = ref(false)
+let indexCanSupplyNotes = false
+const openedNotePaths = new Set()
+
+const takeIndexedDocument = (directory, path, useSnapshot) => {
+  if (directory !== props.vault.directory || openedNotePaths.has(path)) return null
+  openedNotePaths.add(path)
+  if (!useSnapshot || !indexCanSupplyNotes || vaultIndexData.value.directory !== directory) return null
+  const note = vaultIndexData.value.notesByPath[path]
+  if (typeof note?.content !== 'string' || !/^[a-f0-9]{64}$/.test(note.revision)) return null
+  return { content: note.content, revision: note.revision }
+}
 const graphModel = computed(() => buildGraphModel(vaultIndexData.value))
 const globalGraphRef = ref(null)
 const initialGraphLoad = loadGraphSettings(props.vault.directory)
@@ -531,6 +542,7 @@ const clearActiveIndexFetch = () => {
 }
 
 const invalidateVaultIndexRequest = () => {
+  indexCanSupplyNotes = false
   indexRequestGeneration++
   clearActiveIndexFetch()
   queuedIndexSaves.clear()
@@ -772,6 +784,7 @@ const fetchVaultIndexSafe = async () => {
       }
       clearActiveIndexFetch()
       vaultIndexData.value = index
+      indexCanSupplyNotes = true
       indexError.value = false
       return true
     }
@@ -2814,6 +2827,7 @@ watch(
   () => [props.vault.id, props.vault.directory],
   async () => {
     selectionGeneration++
+    openedNotePaths.clear()
     relocateState.value = null
     clearDragState()
     pendingNavigation.value = null
@@ -3153,6 +3167,7 @@ defineExpose({
           :known-tags="vaultIndexData.allTags.map((t) => t.tag)"
           :anchor="selectedAnchor"
           :initial-document="initialDocument"
+          :take-indexed-document="takeIndexedDocument"
           :relocating="Boolean(relocateState?.affectedDocumentPath && (relocateState.stage === 'confirm' || relocateState.loading || relocateState.stage === 'uncertain'))"
           @back="closeNote"
           @state="handleViewerState"
