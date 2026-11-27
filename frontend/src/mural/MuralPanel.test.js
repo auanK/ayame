@@ -10,6 +10,7 @@ vi.mock('./api.js', async (importOriginal) => ({
   writeMuralNote: vi.fn(),
   deleteMuralNote: vi.fn(),
   moveMuralNote: vi.fn(),
+  resizeMuralCard: vi.fn(),
   uploadMuralImage: vi.fn(),
   removeMuralImage: vi.fn(),
 }))
@@ -291,5 +292,103 @@ describe('MuralPanel', () => {
     await flushPromises()
     expect(order()).toEqual([id, thirdId, secondId])
     expect(wrapper.get('[role="alert"]').text()).toContain('Could not reorder the card')
+  })
+
+  it('resizes image cards optimistically via handle, resets on double-click, and rolls back on failure', async () => {
+    const imgCard = { ...initial, title: 'Photo', body: '', kind: 'image', imageVersion: 'v1', imageWidth: 320 }
+    api.listMuralCards.mockResolvedValue(board([imgCard]))
+    api.resizeMuralCard
+      .mockResolvedValueOnce({ note: { ...imgCard, imageWidth: 352 } })
+      .mockResolvedValueOnce({ note: { ...imgCard, imageWidth: null } })
+      .mockRejectedValueOnce(new Error('Network error'))
+
+    wrapper = mount(MuralPanel)
+    await flushPromises()
+
+    const tile = wrapper.get(`[data-mural-tile="${id}"]`)
+    const handle = tile.get('[data-mural-resize-handle]')
+    expect(tile.classes()).toContain('mural-tile--resized')
+
+    await handle.trigger('keydown', { key: 'ArrowRight' })
+    expect(api.resizeMuralCard).toHaveBeenNthCalledWith(1, id, 352)
+    await flushPromises()
+    expect(tile.attributes('style')).toContain('--mural-image-target-width: 352px')
+
+    await handle.trigger('dblclick')
+    expect(api.resizeMuralCard).toHaveBeenNthCalledWith(2, id, null)
+    await flushPromises()
+    expect(tile.classes()).not.toContain('mural-tile--resized')
+
+    await handle.trigger('keydown', { key: 'ArrowRight' })
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Could not resize the image')
+    expect(tile.classes()).not.toContain('mural-tile--resized')
+  })
+
+  it('supports Keep-style pointer live reordering with floating ghost and Escape cancel', async () => {
+    const secondId = 'b'.repeat(32)
+    const cards = [
+      { ...initial, title: 'First', position: 2 },
+      { ...initial, id: secondId, title: 'Second', position: 1 },
+    ]
+    api.listMuralCards.mockResolvedValue(board(cards))
+    api.moveMuralNote.mockResolvedValue({
+      note: { ...cards[1], position: 2 },
+      moved: true,
+      positions: [{ id: secondId, position: 2 }, { id, position: 1 }],
+    })
+
+    wrapper = mount(MuralPanel, { attachTo: document.body })
+    await flushPromises()
+
+    const firstTile = wrapper.get(`[data-mural-tile="${id}"]`).element
+    const secondTile = wrapper.get(`[data-mural-tile="${secondId}"]`).element
+    vi.spyOn(firstTile, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 200, top: 0, bottom: 120, width: 200, height: 120, x: 0, y: 0, toJSON() {},
+    })
+    vi.spyOn(secondTile, 'getBoundingClientRect').mockReturnValue({
+      left: 220, right: 420, top: 0, bottom: 120, width: 200, height: 120, x: 220, y: 0, toJSON() {},
+    })
+    const sectionEl = wrapper.get('[data-mural-section="notes"]').element
+    vi.spyOn(sectionEl, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 500, top: 0, bottom: 140, width: 500, height: 140, x: 0, y: 0, toJSON() {},
+    })
+
+    // Start dragging first card toward second card
+    const dispatchPointer = (target, type, init) => {
+      const ev = new Event(type, { bubbles: true, cancelable: true })
+      Object.assign(ev, { pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse', ...init })
+      target.dispatchEvent(ev)
+    }
+
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+
+    dispatchPointer(firstTile, 'pointerdown', { clientX: 50, clientY: 50 })
+    dispatchPointer(window, 'pointermove', { clientX: 300, clientY: 50 })
+    await flushPromises()
+    await nextFrame()
+    await flushPromises()
+
+    expect(document.body.querySelector('.mural-drag-ghost')).not.toBeNull()
+    expect(wrapper.get(`[data-mural-tile="${id}"]`).classes()).toContain('mural-tile--placeholder')
+
+    // Escape cancels without saving
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(document.body.querySelector('.mural-drag-ghost')).toBeNull()
+    expect(api.moveMuralNote).not.toHaveBeenCalled()
+
+    // Drag again and drop on second card
+    dispatchPointer(firstTile, 'pointerdown', { clientX: 50, clientY: 50 })
+    dispatchPointer(window, 'pointermove', { clientX: 300, clientY: 50 })
+    await flushPromises()
+    await nextFrame()
+    await flushPromises()
+
+    dispatchPointer(window, 'pointerup', { clientX: 300, clientY: 50 })
+    await flushPromises()
+    expect(api.moveMuralNote).toHaveBeenCalledWith(id, {
+      targetId: secondId, placement: 'after', expectedPosition: 2, expectedTargetPosition: 1,
+    })
   })
 })
