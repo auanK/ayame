@@ -57,6 +57,67 @@ test('a trashed vault disappears with its files and restores with the same regis
   assert.equal(restored.registered, true)
 })
 
+test('trashed vaults can be permanently deleted one-by-one or emptied while preserving active metadata for colliding names', async (t) => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-vault-perm-delete-'))
+  const dirA = 'Archive A'
+  const dirB = 'Archive B'
+  const dirC = 'Archive C'
+  for (const dir of [dirA, dirB, dirC]) {
+    fs.mkdirSync(path.join(vaultsRoot, dir))
+    fs.writeFileSync(path.join(vaultsRoot, dir, 'note.md'), `Note in ${dir}`)
+  }
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+  t.after(async () => {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true })
+  })
+  const headers = { cookie }
+
+  // Register A and B so SQLite holds metadata rows for them
+  assert.equal((await app.inject({ method: 'POST', url: '/vaults', headers, payload: { name: 'Custom A', directory: dirA } })).statusCode, 201)
+  assert.equal((await app.inject({ method: 'POST', url: '/vaults', headers, payload: { name: 'Custom B', directory: dirB } })).statusCode, 201)
+
+  const trashA = (await app.inject({ method: 'POST', url: `/vaults/${encodeURIComponent(dirA)}/trash-vault`, headers })).json()
+  const trashB = (await app.inject({ method: 'POST', url: `/vaults/${encodeURIComponent(dirB)}/trash-vault`, headers })).json()
+  const trashC = (await app.inject({ method: 'POST', url: `/vaults/${encodeURIComponent(dirC)}/trash-vault`, headers })).json()
+
+  // Unauthorized & validation checks
+  assert.equal((await app.inject({ method: 'DELETE', url: `/vaults/trash/${trashA.id}` })).statusCode, 401)
+  assert.equal((await app.inject({ method: 'DELETE', url: '/vaults/trash' })).statusCode, 401)
+  assert.equal((await app.inject({ method: 'DELETE', url: '/vaults/trash/not-a-uuid', headers })).statusCode, 400)
+  assert.equal((await app.inject({ method: 'DELETE', url: '/vaults/trash/00000000-0000-4000-8000-000000000000', headers })).statusCode, 404)
+
+  // Recreate active Archive A before deleting the old trashed Archive A copy:
+  // active metadata ('Custom A') must be preserved!
+  fs.mkdirSync(path.join(vaultsRoot, dirA))
+  const delA = await app.inject({ method: 'DELETE', url: `/vaults/trash/${trashA.id}`, headers })
+  assert.equal(delA.statusCode, 200)
+  assert.deepEqual(delA.json(), { deleted: true, id: trashA.id, directory: dirA })
+  assert.equal(fs.existsSync(path.join(vaultsRoot, '.ayame-vault-trash', trashA.id)), false)
+
+  // Now permanently delete B when no active B exists -> orphaned SQLite row must be pruned
+  const delB = await app.inject({ method: 'DELETE', url: `/vaults/trash/${trashB.id}`, headers })
+  assert.equal(delB.statusCode, 200)
+  assert.equal(fs.existsSync(path.join(vaultsRoot, '.ayame-vault-trash', trashB.id)), false)
+
+  // Only Archive C remains in trash; empty trash permanently deletes it
+  assert.deepEqual((await app.inject({ url: '/vaults/trash', headers })).json().items.map((i) => i.directory), [dirC])
+  const emptyRes = await app.inject({ method: 'DELETE', url: '/vaults/trash', headers })
+  assert.equal(emptyRes.statusCode, 200)
+  assert.deepEqual(emptyRes.json(), { deleted: 1 })
+  assert.deepEqual((await app.inject({ url: '/vaults/trash', headers })).json().items, [])
+  assert.equal(fs.existsSync(path.join(vaultsRoot, '.ayame-vault-trash', trashC.id)), false)
+
+  // Active Archive A keeps 'Custom A' registration; recreated Archive B starts unregistered
+  fs.mkdirSync(path.join(vaultsRoot, dirB))
+  const listAfter = (await app.inject({ url: '/vaults', headers })).json().vaults
+  const vaultA = listAfter.find((v) => v.directory === dirA)
+  const vaultB = listAfter.find((v) => v.directory === dirB)
+  assert.equal(vaultA?.registered, true)
+  assert.equal(vaultA?.name, 'Custom A')
+  assert.equal(vaultB?.registered, false)
+})
+
 test('vault routes fail with 401 UNAUTHORIZED without valid session', async () => {
   const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-unauth-root-'))
   const db = openDatabase(':memory:')

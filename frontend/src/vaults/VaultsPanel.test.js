@@ -13,6 +13,11 @@ vi.mock('./api.js', async (importOriginal) => ({
   deleteVaultCover: vi.fn(),
   getVaultCoverUrl: (await importOriginal()).getVaultCoverUrl,
   unregisterVault: vi.fn(),
+  getTrashedVaults: vi.fn(),
+  moveVaultToTrash: vi.fn(),
+  restoreTrashedVault: vi.fn(),
+  deleteTrashedVault: vi.fn(),
+  emptyVaultTrash: vi.fn(),
 }))
 
 const detected = { id: null, name: 'personal', directory: 'Personal Dir', registered: false }
@@ -53,6 +58,11 @@ beforeEach(() => {
   api.uploadVaultCover.mockResolvedValue({ vault: { ...customized, hasCover: true, coverUpdatedAt: 100 } })
   api.deleteVaultCover.mockResolvedValue({ vault: { ...customized, hasCover: false, coverUpdatedAt: null } })
   api.unregisterVault.mockResolvedValue({ ok: true })
+  api.getTrashedVaults.mockResolvedValue({ items: [] })
+  api.moveVaultToTrash.mockResolvedValue({ id: 't1', directory: 'personal' })
+  api.restoreTrashedVault.mockResolvedValue({ directory: 'personal' })
+  api.deleteTrashedVault.mockResolvedValue({ deleted: true, id: 't1', directory: 'personal' })
+  api.emptyVaultTrash.mockResolvedValue({ deleted: 0 })
 })
 
 describe('VaultsPanel', () => {
@@ -657,5 +667,45 @@ describe('VaultsPanel', () => {
     expect(api.updateVault).toHaveBeenCalledWith('alpha', { category: 'Personal' })
 
     wrapper.unmount()
+  })
+
+  it('supports permanently deleting a trashed vault and emptying the vault trash with confirmation', async () => {
+    const trashedA = { id: '11111111-1111-4111-8111-111111111111', directory: 'OldVault', trashedAt: 2000 }
+    const trashedB = { id: '22222222-2222-4222-8222-222222222222', directory: 'ScratchVault', trashedAt: 1000 }
+    api.getTrashedVaults.mockResolvedValueOnce({ items: [trashedA, trashedB] })
+    api.deleteTrashedVault.mockResolvedValueOnce({ deleted: true, id: trashedA.id, directory: trashedA.directory })
+    api.emptyVaultTrash.mockResolvedValueOnce({ deleted: 1 })
+
+    const wrapper = await mountPanel([customized])
+
+    await wrapper.findAll('button').find((b) => b.text() === 'Vault trash').trigger('click')
+    await flushPromises()
+
+    const modal = wrapper.get('[data-testid="vault-trash"]')
+    expect(modal.findAll('.trashed-vaults li')).toHaveLength(2)
+
+    // Clicking Delete permanently requires confirmation first
+    await modal.findAll('[data-testid="delete-trashed-vault-button"]')[0].trigger('click')
+    expect(api.deleteTrashedVault).not.toHaveBeenCalled()
+
+    await modal.findAll('button').find((b) => b.text() === 'Cancel').trigger('click')
+    expect(modal.find('[data-testid="confirm-delete-trashed-vault"]').exists()).toBe(false)
+
+    await modal.findAll('[data-testid="delete-trashed-vault-button"]')[0].trigger('click')
+    await modal.get('[data-testid="confirm-delete-trashed-vault"]').trigger('click')
+    await flushPromises()
+
+    expect(api.deleteTrashedVault).toHaveBeenCalledWith(trashedA.id)
+    expect(modal.findAll('.trashed-vaults li')).toHaveLength(1)
+    expect(modal.text()).toContain('ScratchVault')
+
+    // Emptying trash also requires explicit confirmation
+    await modal.get('[data-testid="empty-vault-trash-button"]').trigger('click')
+    expect(api.emptyVaultTrash).not.toHaveBeenCalled()
+    await modal.get('[data-testid="confirm-empty-vault-trash"]').trigger('click')
+    await flushPromises()
+
+    expect(api.emptyVaultTrash).toHaveBeenCalledTimes(1)
+    expect(modal.text()).toContain('The vault trash is empty.')
   })
 })

@@ -80,3 +80,29 @@ export const restoreTrashedVault = (vaultsRoot, id) => {
   try { fs.rmdirSync(entry.item) } catch {}
   return { directory: entry.directory }
 }
+
+export const deleteTrashedVault = (vaultsRoot, id) => {
+  if (!validId(id)) fail('INVALID_TRASH_ID')
+  const trash = trashRootFor(vaultsRoot)
+  const entry = trash && readTrashItem(trash, id)
+  if (!entry) fail('VAULT_TRASH_NOT_FOUND')
+  if (path.dirname(entry.item) !== trash) fail('INVALID_VAULT_ROOT')
+  fs.rmSync(entry.item, { recursive: true, force: false })
+  return { deleted: true, id: entry.id, directory: entry.directory }
+}
+
+export const emptyVaultTrash = (vaultsRoot) => {
+  const trash = trashRootFor(vaultsRoot)
+  if (!trash) return { deleted: 0, directories: [] }
+  const entries = fs.readdirSync(trash)
+    .filter(validId)
+    .map((id) => readTrashItem(trash, id))
+    .filter(Boolean)
+  const directories = []
+  for (const entry of entries) {
+    if (path.dirname(entry.item) !== trash) fail('INVALID_VAULT_ROOT')
+    fs.rmSync(entry.item, { recursive: true, force: false })
+    directories.push(entry.directory)
+  }
+  return { deleted: directories.length, directories }
+}

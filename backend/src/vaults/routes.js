@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import {
   MAX_VAULT_COVER_BYTES,
   listRegisteredVaults,
@@ -19,7 +21,7 @@ import { listVaultEntries } from './browser.js'
 import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
 import { saveVaultMarkdown } from './writer.js'
 import { createVaultFolder, createVaultNote } from './creator.js'
-import { listTrashedVaults, moveVaultToTrash, restoreTrashedVault } from './vaultTrash.js'
+import { listTrashedVaults, moveVaultToTrash, restoreTrashedVault, deleteTrashedVault, emptyVaultTrash } from './vaultTrash.js'
 import {
   relocateVaultEntry,
   moveVaultEntryToTrash,
@@ -82,6 +84,17 @@ const VAULT_META_ERROR_STATUS = {
   UNSUPPORTED_IMAGE_TYPE: 415,
 }
 
+const pruneOrphanedVaultMetadata = (db, vaultsRoot, directories) => {
+  if (!directories.length) return
+  const root = fs.realpathSync.native(vaultsRoot)
+  const remaining = new Set(listTrashedVaults(vaultsRoot).map((item) => item.directory))
+  for (const directory of new Set(directories)) {
+    if (remaining.has(directory)) continue
+    if (fs.existsSync(path.join(root, directory))) continue
+    db.prepare('DELETE FROM vault WHERE directory = ?').run(directory)
+  }
+}
+
 export const registerVaultRoutes = (app, db, vaultsRoot) => {
   const scanner = createVaultScanner(vaultsRoot)
   const getThumbnail = createCoverThumbnailCache()
@@ -121,6 +134,30 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
   app.post('/vaults/trash/:id/restore', { config: { noStore: true } }, (req, reply) => {
     try {
       return restoreTrashedVault(vaultsRoot, req.params.id)
+    } catch (error) {
+      const status = OPERATION_ERROR_STATUS[error.code] ?? VAULT_META_ERROR_STATUS[error.code]
+      if (status) return reply.code(status).send({ error: error.code })
+      throw error
+    }
+  })
+
+  app.delete('/vaults/trash/:id', { config: { noStore: true } }, (req, reply) => {
+    try {
+      const result = deleteTrashedVault(vaultsRoot, req.params.id)
+      pruneOrphanedVaultMetadata(db, vaultsRoot, [result.directory])
+      return result
+    } catch (error) {
+      const status = OPERATION_ERROR_STATUS[error.code] ?? VAULT_META_ERROR_STATUS[error.code]
+      if (status) return reply.code(status).send({ error: error.code })
+      throw error
+    }
+  })
+
+  app.delete('/vaults/trash', { config: { noStore: true } }, (req, reply) => {
+    try {
+      const result = emptyVaultTrash(vaultsRoot)
+      pruneOrphanedVaultMetadata(db, vaultsRoot, result.directories)
+      return { deleted: result.deleted }
     } catch (error) {
       const status = OPERATION_ERROR_STATUS[error.code] ?? VAULT_META_ERROR_STATUS[error.code]
       if (status) return reply.code(status).send({ error: error.code })

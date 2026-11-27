@@ -258,19 +258,85 @@
       title-id="vault-trash-title"
       test-id="vault-trash"
       :close-disabled="Boolean(operation)"
-      @close="showVaultTrash = false"
+      @close="closeVaultTrash"
     >
       <p v-if="vaultTrashError" class="error-message" role="alert">{{ vaultTrashError }}</p>
+      <div v-if="confirmDeleteTrashed" class="vault-trash-confirm" role="alert">
+        <span v-if="confirmDeleteTrashed === 'all'">
+          Permanently delete all {{ trashedVaults.length }} trashed {{ trashedVaults.length === 1 ? 'vault' : 'vaults' }} and all their notes? This cannot be undone.
+        </span>
+        <span v-else>
+          Permanently delete “{{ confirmDeleteTrashed.directory }}” and all its notes? This cannot be undone.
+        </span>
+        <div class="vault-trash-confirm-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-compact"
+            :disabled="Boolean(operation)"
+            @click="confirmDeleteTrashed = null"
+          >
+            Cancel
+          </button>
+          <button
+            v-if="confirmDeleteTrashed === 'all'"
+            type="button"
+            class="btn btn-danger btn-compact"
+            data-testid="confirm-empty-vault-trash"
+            :disabled="Boolean(operation)"
+            @click="emptyAllVaultTrash"
+          >
+            Confirm empty trash
+          </button>
+          <button
+            v-else
+            type="button"
+            class="btn btn-danger btn-compact"
+            data-testid="confirm-delete-trashed-vault"
+            :disabled="Boolean(operation)"
+            @click="deleteTrashedVaultForever(confirmDeleteTrashed)"
+          >
+            Confirm deletion
+          </button>
+        </div>
+      </div>
       <p v-if="operation === 'loading-trash'" class="status-message" role="status">Loading trash…</p>
       <p v-else-if="!trashedVaults.length && !vaultTrashError" class="status-message">The vault trash is empty.</p>
       <ul v-if="trashedVaults.length" class="trashed-vaults">
         <li v-for="item in trashedVaults" :key="item.id">
           <span>{{ item.directory }}</span>
-          <button type="button" class="btn btn-secondary btn-compact" :disabled="Boolean(operation)" @click="restoreVault(item)">
-            Restore
-          </button>
+          <div class="trashed-vault-actions">
+            <button
+              type="button"
+              class="btn btn-secondary btn-compact"
+              data-testid="restore-trashed-vault-button"
+              :disabled="Boolean(operation)"
+              @click="restoreVault(item)"
+            >
+              Restore
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary btn-compact btn-danger"
+              data-testid="delete-trashed-vault-button"
+              :disabled="Boolean(operation)"
+              @click="confirmDeleteTrashed = item"
+            >
+              Delete permanently
+            </button>
+          </div>
         </li>
       </ul>
+      <template v-if="trashedVaults.length" #footer>
+        <button
+          type="button"
+          class="btn btn-secondary btn-compact btn-danger"
+          data-testid="empty-vault-trash-button"
+          :disabled="Boolean(operation) || confirmDeleteTrashed === 'all'"
+          @click="confirmDeleteTrashed = 'all'"
+        >
+          Empty trash
+        </button>
+      </template>
     </BaseModal>
   </section>
 </template>
@@ -310,6 +376,7 @@ const vaultToTrash = ref(null)
 const showVaultTrash = ref(false)
 const trashedVaults = ref([])
 const vaultTrashError = ref('')
+const confirmDeleteTrashed = ref(null)
 
 const editDraft = ref({
   name: '',
@@ -740,10 +807,16 @@ const trashVault = async () => {
   }
 }
 
+const closeVaultTrash = () => {
+  showVaultTrash.value = false
+  confirmDeleteTrashed.value = null
+}
+
 const openVaultTrash = async () => {
   if (operation.value) return
   showVaultTrash.value = true
   vaultTrashError.value = ''
+  confirmDeleteTrashed.value = null
   trashedVaults.value = []
   operation.value = 'loading-trash'
   try {
@@ -762,6 +835,7 @@ const restoreVault = async (item) => {
   if (operation.value) return
   operation.value = 'restoring-vault'
   vaultTrashError.value = ''
+  confirmDeleteTrashed.value = null
   try {
     await api.restoreTrashedVault(item.id)
     if (!mounted) return
@@ -772,6 +846,42 @@ const restoreVault = async (item) => {
     if (error.code === 'UNAUTHORIZED') showUnauthorized()
     else if (error.code === 'VAULT_ALREADY_EXISTS') vaultTrashError.value = 'A folder with this name already exists.'
     else vaultTrashError.value = 'Could not restore this vault. Try again.'
+  } finally {
+    if (mounted) operation.value = ''
+  }
+}
+
+const deleteTrashedVaultForever = async (item) => {
+  if (operation.value || !item) return
+  operation.value = 'deleting-vault'
+  vaultTrashError.value = ''
+  try {
+    await api.deleteTrashedVault(item.id)
+    if (!mounted) return
+    trashedVaults.value = trashedVaults.value.filter(({ id }) => id !== item.id)
+    confirmDeleteTrashed.value = null
+  } catch (error) {
+    if (!mounted) return
+    if (error.code === 'UNAUTHORIZED') showUnauthorized()
+    else vaultTrashError.value = 'Could not permanently delete this vault. Try again.'
+  } finally {
+    if (mounted) operation.value = ''
+  }
+}
+
+const emptyAllVaultTrash = async () => {
+  if (operation.value) return
+  operation.value = 'emptying-vault-trash'
+  vaultTrashError.value = ''
+  try {
+    await api.emptyVaultTrash()
+    if (!mounted) return
+    trashedVaults.value = []
+    confirmDeleteTrashed.value = null
+  } catch (error) {
+    if (!mounted) return
+    if (error.code === 'UNAUTHORIZED') showUnauthorized()
+    else vaultTrashError.value = 'Could not empty the vault trash. Try again.'
   } finally {
     if (mounted) operation.value = ''
   }
@@ -1281,5 +1391,28 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 0.75rem;
   overflow-wrap: anywhere;
+}
+
+.trashed-vault-actions,
+.vault-trash-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.vault-trash-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--ayame-error-border);
+  border-left: 2px solid var(--ayame-error);
+  border-radius: var(--radius-xs);
+  background: var(--ayame-error-bg);
+  color: var(--ayame-text);
+  font-size: 0.84rem;
 }
 </style>

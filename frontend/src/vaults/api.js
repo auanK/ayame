@@ -609,6 +609,20 @@ export const restoreTrashedVault = async (id) => {
   return handleOperationResponse(response, 'VAULT_RESTORE_FAILED')
 }
 
+export const deleteTrashedVault = async (id) => {
+  const response = await request(`/vaults/trash/${encodeURIComponent(id)}`, {
+    method: 'DELETE', credentials: 'same-origin',
+  }, 'VAULT_DELETE_FAILED')
+  return handleOperationResponse(response, 'VAULT_DELETE_FAILED')
+}
+
+export const emptyVaultTrash = async () => {
+  const response = await request('/vaults/trash', {
+    method: 'DELETE', credentials: 'same-origin',
+  }, 'VAULT_EMPTY_TRASH_FAILED')
+  return handleOperationResponse(response, 'VAULT_EMPTY_TRASH_FAILED')
+}
+
 export const getVaultIndex = async (directory) => {
   const url = `/vaults/${encodeURIComponent(directory ?? '')}/index`
   const response = await request(url, {
