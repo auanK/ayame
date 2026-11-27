@@ -51,6 +51,7 @@
             :class="{
               'mural-card--with-image': card.imageVersion,
               'mural-card--image-only': card.kind === 'image' && card.imageVersion,
+              'mural-card--has-bg': card.kind !== 'image' && card.imageVersion,
             }"
             :style="{ '--mural-accent': muralAccent(card.color) }"
             :disabled="disabled"
@@ -63,7 +64,7 @@
             @keydown.alt.right.prevent="moveWithKeyboard(card.id, 1)"
           >
             <img
-              v-if="card.imageVersion"
+              v-if="card.kind === 'image' && card.imageVersion"
               class="mural-card-image"
               :src="getMuralImageUrl(card.id, card.imageVersion)"
               alt=""
@@ -72,6 +73,18 @@
               draggable="false"
               @load="onImageLoad(card.id, $event)"
             />
+            <template v-else-if="card.imageVersion">
+              <img
+                class="mural-card-bg-image"
+                :src="getMuralImageUrl(card.id, card.imageVersion)"
+                alt=""
+                loading="lazy"
+                decoding="async"
+                draggable="false"
+                @load="onImageLoad(card.id, $event)"
+              />
+              <span class="mural-card-bg-scrim" aria-hidden="true" />
+            </template>
             <span v-if="card.kind !== 'image' || card.title" class="mural-card-content">
               <strong v-if="card.title || !card.preview">{{ card.title || 'Untitled' }}</strong>
               <span v-if="card.preview" class="mural-card-preview">{{ card.preview }}</span>
@@ -211,9 +224,12 @@ const widthForCard = (card, widthOverride = null) => {
 const heightForCard = (card, width) => {
   const measured = tileHeights.get(card.id)
   if (measured && measured > 0) return measured
-  const ratio = imageRatios.get(card.id)
-  if (card.imageVersion && ratio > 0) return Math.max(96, Math.round(width / ratio))
-  return card.imageVersion ? Math.round(width * 0.75) : 120
+  if (card.kind === 'image' && card.imageVersion) {
+    const ratio = imageRatios.get(card.id)
+    if (ratio > 0) return Math.max(96, Math.round(width / ratio))
+    return Math.round(width * 0.75)
+  }
+  return card.imageVersion ? 150 : 120
 }
 
 const buildItemsForSection = (section) => {
@@ -323,7 +339,7 @@ const startResize = (event, card) => {
   if (resizeOp || drag.value || pointer || props.disabled || event.button !== 0 || event.isPrimary === false) return
   event.preventDefault()
   const tile = tileEls.get(card.id) || event.currentTarget.closest('[data-mural-tile]')
-  const image = tile?.querySelector('.mural-card-image')
+  const image = tile?.querySelector('.mural-card-image, .mural-card-bg-image')
   const imgRect = image?.getBoundingClientRect()
   const maxWidth = maxWidthForBoard()
   const currentWidth = widthForCard(card)
@@ -731,6 +747,7 @@ onBeforeUnmount(() => {
 }
 
 .mural-card {
+  position: relative;
   width: 100%;
   min-width: 0;
   display: flex;
@@ -749,11 +766,16 @@ onBeforeUnmount(() => {
 }
 .mural-card:hover { --mural-card-surface: color-mix(in srgb, var(--mural-accent) 16%, var(--ayame-surface)); }
 .mural-card:disabled { cursor: progress; }
-.mural-card--with-image {
+.mural-card--image-only {
   width: 100%;
   background: transparent;
   border: 0;
   align-items: start;
+}
+.mural-card--has-bg {
+  min-height: 8.5rem;
+  border: 1px solid color-mix(in srgb, var(--mural-accent) 36%, var(--ayame-border));
+  background: var(--mural-card-surface);
 }
 .mural-card-image {
   display: block;
@@ -761,15 +783,47 @@ onBeforeUnmount(() => {
   height: auto;
   border-radius: var(--radius-sm);
 }
+.mural-card-bg-image {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+.mural-card-bg-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: color-mix(in srgb, color-mix(in srgb, var(--mural-accent) 32%, var(--ayame-surface)) 74%, transparent);
+  transition: background-color 140ms ease;
+}
+.mural-card--has-bg:hover .mural-card-bg-scrim {
+  background: color-mix(in srgb, color-mix(in srgb, var(--mural-accent) 36%, var(--ayame-surface)) 66%, transparent);
+}
 .mural-card-content { width: 100%; display: grid; gap: 0.4rem; padding: 0.75rem; }
-.mural-card--with-image .mural-card-content {
+.mural-card--image-only .mural-card-content {
   width: 100%;
   margin-top: 2px;
   border: 1px solid color-mix(in srgb, var(--mural-accent) 26%, var(--ayame-border));
   border-radius: var(--radius-sm);
   background: var(--mural-card-surface);
+  padding: 0.35rem 0.45rem;
 }
-.mural-card--image-only .mural-card-content { padding: 0.35rem 0.45rem; }
+.mural-card--has-bg .mural-card-content {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  border: 0;
+  margin-top: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+.mural-card--has-bg .mural-card-preview {
+  color: color-mix(in srgb, var(--ayame-text) 88%, var(--ayame-text-muted));
+}
 .mural-card-content strong { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; font-size: 0.86rem; }
 .mural-card-preview {
   overflow: hidden;

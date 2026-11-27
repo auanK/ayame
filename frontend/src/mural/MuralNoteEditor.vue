@@ -5,7 +5,10 @@
   >
     <div
       class="mural-sheet"
-      :class="{ 'mural-sheet--image-only': imageOnly }"
+      :class="{
+        'mural-sheet--image-only': imageOnly,
+        'mural-sheet--has-bg': Boolean(imageUrl && !imageOnly),
+      }"
       :data-mural-color="draft.color"
       :style="{ '--mural-accent': muralAccent(draft.color) }"
       data-testid="mural-note-editor"
@@ -14,7 +17,7 @@
       :aria-label="imageOnly ? 'Image card' : existing ? 'Note' : 'New note'"
       @keydown.tab="cycleFocus"
     >
-      <div v-if="imageUrl" class="mural-sheet-hero">
+      <div v-if="imageUrl && imageOnly" class="mural-sheet-hero">
         <img :src="imageUrl" :alt="imageOnly ? draft.title || 'Mural image' : ''" decoding="async" />
         <button
           v-if="imageOnly && canResize && !trashed"
@@ -30,6 +33,10 @@
           <span>Resize</span>
         </button>
       </div>
+      <template v-else-if="imageUrl">
+        <img class="mural-sheet-bg-image" :src="imageUrl" alt="" decoding="async" />
+        <div class="mural-sheet-bg-scrim" aria-hidden="true" />
+      </template>
 
       <div class="mural-sheet-body">
         <div class="mural-sheet-title-row">
@@ -318,6 +325,49 @@ onUnmounted(() => {
 
 .mural-sheet--image-only {
   width: min(100%, 52rem);
+}
+
+.mural-sheet--has-bg {
+  position: relative;
+}
+
+.mural-sheet-bg-image {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+
+.mural-sheet-bg-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: color-mix(in srgb, color-mix(in srgb, var(--mural-accent) 30%, var(--ayame-surface)) 76%, transparent);
+  transition: background-color 180ms ease;
+}
+
+.mural-sheet--has-bg .mural-sheet-body,
+.mural-sheet--has-bg .mural-sheet-toolbar {
+  position: relative;
+  z-index: 2;
+}
+
+.mural-sheet--has-bg .mural-sheet-body {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.mural-sheet--has-bg .mural-sheet-toolbar {
+  background: color-mix(in srgb, color-mix(in srgb, var(--mural-accent) 22%, var(--ayame-surface)) 82%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.mural-sheet--has-bg .mural-ghost-btn {
+  color: color-mix(in srgb, var(--ayame-text) 86%, var(--ayame-text-muted));
 }
 
 @keyframes mural-sheet-enter {

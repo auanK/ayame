@@ -31,6 +31,9 @@ export const computeCardWidth = (
     if (card.imageWidth != null && Number.isFinite(card.imageWidth)) {
       return Math.min(maxW, Math.max(MURAL_MIN_IMAGE_WIDTH, Math.round(card.imageWidth)))
     }
+    if (card.kind === 'note') {
+      return Math.min(safeContainer, Math.max(140, Math.round(baseWidth)))
+    }
     let width = Math.min(maxW, Math.round(baseWidth * 1.15))
     if (aspectRatio != null && Number.isFinite(aspectRatio) && aspectRatio > 0 && width / aspectRatio > maxDefaultImageHeight) {
       width = Math.min(maxW, Math.max(MURAL_MIN_IMAGE_WIDTH, Math.round(maxDefaultImageHeight * aspectRatio)))

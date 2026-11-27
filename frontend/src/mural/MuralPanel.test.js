@@ -530,8 +530,36 @@ describe('MuralPanel', () => {
     await flushPromises()
     const imgSheet = wrapper.get('[data-testid="mural-note-editor"]')
     expect(imgSheet.classes()).toContain('mural-sheet--image-only')
+    expect(imgSheet.find('.mural-sheet-hero').exists()).toBe(true)
+    expect(imgSheet.find('.mural-sheet-bg-image').exists()).toBe(false)
     expect(imgSheet.attributes('data-mural-color')).toBe('lavender')
     expect(imgSheet.get('[data-testid="mural-note-title"]').attributes('placeholder')).toBe('Add a caption…')
     expect(imgSheet.find('[data-testid="mural-note-body"]').exists()).toBe(false)
+  })
+
+  it('renders a text note background image behind the color-tinted card and sheet rather than as a header block', async () => {
+    const bgNote = { ...initial, kind: 'note', color: 'ochre', title: 'Backdrop', body: 'Over background', imageVersion: 'bg1' }
+    api.listMuralCards.mockResolvedValue(board([{ ...bgNote, preview: bgNote.body }]))
+    api.readMuralNote.mockResolvedValueOnce({ note: bgNote })
+
+    wrapper = mount(MuralPanel)
+    await flushPromises()
+
+    const card = wrapper.get(`[data-card-id="${id}"]`)
+    expect(card.classes()).toContain('mural-card--with-image')
+    expect(card.classes()).toContain('mural-card--has-bg')
+    expect(card.find('.mural-card-bg-image').exists()).toBe(true)
+    expect(card.find('.mural-card-bg-scrim').exists()).toBe(true)
+    expect(card.find('.mural-card-image').exists()).toBe(false)
+
+    await card.trigger('click')
+    await flushPromises()
+
+    const sheet = wrapper.get('[data-testid="mural-note-editor"]')
+    expect(sheet.classes()).toContain('mural-sheet--has-bg')
+    expect(sheet.find('.mural-sheet-bg-image').exists()).toBe(true)
+    expect(sheet.find('.mural-sheet-bg-scrim').exists()).toBe(true)
+    expect(sheet.find('.mural-sheet-hero').exists()).toBe(false)
+    expect(sheet.attributes('data-mural-color')).toBe('ochre')
   })
 })

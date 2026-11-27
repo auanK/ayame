@@ -81,4 +81,12 @@ describe('mural skyline layout & drop math', () => {
     })
     expect(idx1Stable).toBe(1)
   })
+
+  it('keeps un-resized text notes with a background image at base column width while honoring explicit resize', () => {
+    const containerWidth = 1000
+    const base = computeBaseColumnWidth(containerWidth, MURAL_GAP)
+    expect(computeCardWidth({ kind: 'note', imageVersion: 'v1' }, containerWidth, base, { aspectRatio: 0.4 })).toBe(base)
+    expect(computeCardWidth({ kind: 'note', imageVersion: 'v1', imageWidth: 420 }, containerWidth, base)).toBe(420)
+    expect(computeCardWidth({ kind: 'image', imageVersion: 'v1' }, containerWidth, base)).toBe(Math.round(base * 1.15))
+  })
 })
