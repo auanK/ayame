@@ -17,7 +17,7 @@ const MAX_ANIMATED_PREVIEW_BYTES = 256 * 1024
 const NO_STORE = { config: { noStore: true, affectsVault: false } }
 const IMAGE_ROUTE = `${ROOT}/:id/image`
 const IMAGE_JOIN = 'FROM mural_note LEFT JOIN mural_image ON mural_image.card_id = mural_note.id'
-const NOTE_FIELDS = 'id, title, body, color, pinned, archived, position, revision, updated_at AS updatedAt, kind, version AS imageVersion, image_width AS imageWidth'
+const NOTE_FIELDS = 'id, title, body, color, pinned, archived, position, revision, updated_at AS updatedAt, kind, version AS imageVersion, image_width AS imageWidth, trashed_at AS trashedAt'
 const validId = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id)
 const positiveInteger = (value) => Number.isSafeInteger(value) && value > 0
 const publicNote = (row) => ({ ...row, pinned: Boolean(row.pinned), archived: Boolean(row.archived) })
@@ -31,22 +31,34 @@ const makePage = (rows) => {
     next: rows.length > PAGE_SIZE ? `${last.pinned}:${last.position}` : null,
   }
 }
+const makeTrashPage = (rows) => {
+  const last = rows[PAGE_SIZE - 1]
+  return {
+    cards: rows.slice(0, PAGE_SIZE).map(publicNote),
+    next: rows.length > PAGE_SIZE ? `${last.trashedAt}:${last.position}` : null,
+  }
+}
 
 export function registerMuralRoutes(app, db) {
   const cardsQuery = `
-    SELECT id, title, substr(body, 1, ${MURAL_PREVIEW_LENGTH}) AS preview, color, pinned, archived, position, kind, version AS imageVersion, image_width AS imageWidth
+    SELECT id, title, substr(body, 1, ${MURAL_PREVIEW_LENGTH}) AS preview, color, pinned, archived, position, kind, version AS imageVersion, image_width AS imageWidth, trashed_at AS trashedAt
     ${IMAGE_JOIN}
   `
   const list = db.prepare(`${cardsQuery}
-    WHERE archived = ? AND (pinned, position) < (?, ?)
+    WHERE trashed_at IS NULL AND archived = ? AND (pinned, position) < (?, ?)
     ORDER BY pinned DESC, position DESC LIMIT ?
   `)
   const listGroup = db.prepare(`${cardsQuery}
-    WHERE archived = ? AND pinned = ? AND position < ?
+    WHERE trashed_at IS NULL AND archived = ? AND pinned = ? AND position < ?
     ORDER BY position DESC LIMIT ?
+  `)
+  const listTrashed = db.prepare(`${cardsQuery}
+    WHERE trashed_at IS NOT NULL AND (trashed_at, position) < (?, ?)
+    ORDER BY trashed_at DESC, position DESC LIMIT ?
   `)
   const read = db.prepare(`SELECT ${NOTE_FIELDS} ${IMAGE_JOIN} WHERE id = ?`)
   const deleteNote = db.prepare('DELETE FROM mural_note WHERE id = ?')
+  const clearTrash = db.prepare('DELETE FROM mural_note WHERE trashed_at IS NOT NULL')
   const removeNote = db.transaction((id, expectedRevision) => {
     const note = read.get(id)
     if (!note) return {}
@@ -55,6 +67,25 @@ export function registerMuralRoutes(app, db) {
     return {}
   })
   const nextPosition = db.prepare('SELECT coalesce(max(position), 0) + 1 AS position FROM mural_note')
+  const markTrashed = db.prepare('UPDATE mural_note SET trashed_at = ?, pinned = 0, revision = revision + 1, updated_at = ? WHERE id = ?')
+  const markRestored = db.prepare('UPDATE mural_note SET trashed_at = NULL, archived = 0, position = ?, revision = revision + 1, updated_at = ? WHERE id = ?')
+  const trashNote = db.transaction((id, expectedRevision) => {
+    const note = read.get(id)
+    if (!note) return null
+    if (note.revision !== expectedRevision) return { conflict: publicNote(note) }
+    if (note.trashedAt !== null) return { note: publicNote(note) }
+    const now = Date.now()
+    markTrashed.run(now, now, id)
+    return { note: publicNote(read.get(id)) }
+  })
+  const restoreNote = db.transaction((id, expectedRevision) => {
+    const note = read.get(id)
+    if (!note) return null
+    if (note.revision !== expectedRevision) return { conflict: publicNote(note) }
+    if (note.trashedAt === null) return { note: publicNote(note) }
+    markRestored.run(nextPosition.get().position, Date.now(), id)
+    return { note: publicNote(read.get(id)) }
+  })
   const insert = db.prepare(`
     INSERT INTO mural_note (id, title, body, color, pinned, archived, position, revision, updated_at, kind)
     VALUES (@id, @title, @body, @color, @pinned, @archived, @position, 1, @now, @kind)
@@ -70,6 +101,7 @@ export function registerMuralRoutes(app, db) {
       if (expectedRevision !== null) return null
       insert.run({ id, ...data, position: nextPosition.get().position, now: Date.now(), kind: 'note' })
     } else {
+      if (existing.trashedAt !== null) return { conflict: publicNote(existing) }
       if (existing.kind === 'image' && data.body) return { invalid: true }
       // A retried save can succeed if the exact change is already present.
       if (Object.entries(data).every(([key, value]) => existing[key] === value)) return { note: publicNote(existing) }
@@ -82,17 +114,17 @@ export function registerMuralRoutes(app, db) {
   })
 
   const neighbor = {
-    up: db.prepare('SELECT id, position FROM mural_note WHERE archived = 0 AND pinned = ? AND position > ? ORDER BY position ASC LIMIT 1'),
-    down: db.prepare('SELECT id, position FROM mural_note WHERE archived = 0 AND pinned = ? AND position < ? ORDER BY position DESC LIMIT 1'),
+    up: db.prepare('SELECT id, position FROM mural_note WHERE trashed_at IS NULL AND archived = 0 AND pinned = ? AND position > ? ORDER BY position ASC LIMIT 1'),
+    down: db.prepare('SELECT id, position FROM mural_note WHERE trashed_at IS NULL AND archived = 0 AND pinned = ? AND position < ? ORDER BY position DESC LIMIT 1'),
   }
   const setPosition = db.prepare('UPDATE mural_note SET position = ? WHERE id = ?')
-  const positionOf = db.prepare('SELECT id, position, pinned, archived FROM mural_note WHERE id = ?')
-  const positionsInGroup = db.prepare('SELECT id, position FROM mural_note WHERE archived = ? AND pinned = ? ORDER BY position DESC')
+  const positionOf = db.prepare('SELECT id, position, pinned, archived, trashed_at AS trashedAt FROM mural_note WHERE id = ?')
+  const positionsInGroup = db.prepare('SELECT id, position FROM mural_note WHERE trashed_at IS NULL AND archived = ? AND pinned = ? ORDER BY position DESC')
   const setPinned = db.prepare('UPDATE mural_note SET pinned = ?, revision = revision + 1, updated_at = ? WHERE id = ?')
   const moveNote = db.transaction((id, direction, expectedPosition) => {
     const note = read.get(id)
     if (!note) return null
-    if (note.archived || note.position !== expectedPosition) return { conflict: publicNote(note) }
+    if (note.trashedAt !== null || note.archived || note.position !== expectedPosition) return { conflict: publicNote(note) }
     const target = neighbor[direction].get(note.pinned, note.position)
     if (target) {
       setPosition.run(0, id)
@@ -107,7 +139,14 @@ export function registerMuralRoutes(app, db) {
     const source = positionOf.get(id)
     if (!source) return null
     const target = positionOf.get(targetId)
-    if (!target || source.archived !== target.archived || source.position !== expectedPosition || target.position !== expectedTargetPosition) {
+    if (
+      !target ||
+      source.trashedAt !== null ||
+      target.trashedAt !== null ||
+      source.archived !== target.archived ||
+      source.position !== expectedPosition ||
+      target.position !== expectedTargetPosition
+    ) {
       return { conflict: publicNote(read.get(id)) }
     }
 
@@ -127,8 +166,21 @@ export function registerMuralRoutes(app, db) {
   })
 
   app.get(ROOT, NO_STORE, (req, reply) => {
-    const { archived = 'false', after, groups, pinned } = req.query
+    const { archived = 'false', trashed = 'false', after, groups, pinned } = req.query
     if (archived !== 'true' && archived !== 'false') return invalid(reply)
+    if (trashed !== 'true' && trashed !== 'false') return invalid(reply)
+    if (trashed === 'true') {
+      if (archived === 'true' || groups !== undefined || pinned !== undefined) return invalid(reply)
+      const trashCursor = typeof after === 'string' ? /^([1-9][0-9]{0,15}):([1-9][0-9]{0,15})$/.exec(after) : null
+      if (after !== undefined && (!trashCursor || !positiveInteger(Number(trashCursor[1])) || !positiveInteger(Number(trashCursor[2])))) {
+        return invalid(reply)
+      }
+      return reply.send(makeTrashPage(listTrashed.all(
+        Number(trashCursor?.[1] ?? Number.MAX_SAFE_INTEGER),
+        Number(trashCursor?.[2] ?? Number.MAX_SAFE_INTEGER),
+        PAGE_SIZE + 1
+      )))
+    }
     if (groups !== undefined && (groups !== 'true' || pinned !== undefined || after !== undefined)) return invalid(reply)
     if (pinned !== undefined && pinned !== 'true' && pinned !== 'false') return invalid(reply)
     const cursor = typeof after === 'string' ? /^([01]):([1-9][0-9]{0,15})$/.exec(after) : null
@@ -151,6 +203,11 @@ export function registerMuralRoutes(app, db) {
     return row ? reply.send({ note: publicNote(row) }) : missing(reply)
   })
 
+  app.delete(`${ROOT}/trash`, NO_STORE, (_req, reply) => {
+    const { changes } = clearTrash.run()
+    return reply.send({ deleted: changes })
+  })
+
   app.delete(`${ROOT}/:id`, NO_STORE, (req, reply) => {
     const { id } = req.params
     const expectedRevision = parseRevision(req.query.revision)
@@ -158,6 +215,26 @@ export function registerMuralRoutes(app, db) {
     const { conflict } = removeNote.immediate(id, expectedRevision)
     if (conflict) return reply.code(409).send({ error: 'MURAL_NOTE_CONFLICT', note: conflict })
     return reply.send({ deleted: true })
+  })
+
+  app.post(`${ROOT}/:id/trash`, NO_STORE, (req, reply) => {
+    const { id } = req.params
+    const expectedRevision = parseRevision(req.query.revision)
+    if (!validId(id) || !positiveInteger(expectedRevision)) return invalid(reply)
+    const result = trashNote.immediate(id, expectedRevision)
+    if (!result) return missing(reply)
+    if (result.conflict) return reply.code(409).send({ error: 'MURAL_NOTE_CONFLICT', note: result.conflict })
+    return reply.send(result)
+  })
+
+  app.post(`${ROOT}/:id/restore`, NO_STORE, (req, reply) => {
+    const { id } = req.params
+    const expectedRevision = parseRevision(req.query.revision)
+    if (!validId(id) || !positiveInteger(expectedRevision)) return invalid(reply)
+    const result = restoreNote.immediate(id, expectedRevision)
+    if (!result) return missing(reply)
+    if (result.conflict) return reply.code(409).send({ error: 'MURAL_NOTE_CONFLICT', note: result.conflict })
+    return reply.send(result)
   })
 
   app.put(`${ROOT}/:id`, { ...NO_STORE, bodyLimit: 128 * 1024 }, (req, reply) => {
@@ -211,7 +288,7 @@ export function registerMuralRoutes(app, db) {
   const resizeCard = db.transaction((id, imageWidth) => {
     const note = read.get(id)
     if (!note) return null
-    if (imageWidth !== null && !note.imageVersion) return { invalid: true }
+    if (note.trashedAt !== null || (imageWidth !== null && !note.imageVersion)) return { invalid: true }
     setImageWidth.run(imageWidth, Date.now(), id)
     return { note: publicNote(read.get(id)) }
   })
@@ -225,6 +302,7 @@ export function registerMuralRoutes(app, db) {
         position: nextPosition.get().position, now: Date.now(), kind: 'image',
       })
     } else {
+      if (note.trashedAt !== null) return { conflict: publicNote(note) }
       if (create && note.kind !== 'image') return { conflict: publicNote(note) }
       if (image?.version === note.imageVersion) return { note: publicNote(note) }
       if (!image && note.kind === 'image') return { invalid: true }

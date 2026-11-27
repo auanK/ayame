@@ -263,3 +263,57 @@ test('mural cards with images persist custom imageWidth and reset cleanly', asyn
   assert.equal(removed.statusCode, 200)
   assert.equal(removed.json().note.imageWidth, null)
 })
+
+test('mural trash isolates trashed notes, supports restore, permanent delete, and empty trash', async (t) => {
+  const db = openDatabase(':memory:')
+  await createOwner(db, { username: 'mural-user', password: 'password123' })
+  const headers = { cookie: `ayame_session=${createSession(db).rawToken}` }
+  const app = createApp({ db, vaultsRoot: os.tmpdir() })
+  t.after(() => app.close())
+
+  const putNote = (cardId, payload) => app.inject({ method: 'PUT', url: `${base}/${cardId}`, headers, payload })
+  assert.equal((await putNote(id(1), { ...noteFields, pinned: true, expectedRevision: null })).statusCode, 200)
+  assert.equal((await putNote(id(2), { ...noteFields, title: 'Keep me', expectedRevision: null })).statusCode, 200)
+  assert.equal((await putNote(id(3), { ...noteFields, title: 'Trash me too', expectedRevision: null })).statusCode, 200)
+
+  // Stale revision rejected
+  assert.equal((await app.inject({ method: 'POST', url: `${base}/${id(1)}/trash?revision=99`, headers })).statusCode, 409)
+
+  // Trash card 1 (unpins automatically, hides from active/archived, appears in ?trashed=true)
+  const trashed = await app.inject({ method: 'POST', url: `${base}/${id(1)}/trash?revision=1`, headers })
+  assert.equal(trashed.statusCode, 200)
+  assert.equal(trashed.json().note.pinned, false)
+  assert.ok(trashed.json().note.trashedAt > 0)
+  assert.equal(trashed.json().note.revision, 2)
+
+  const activeList = (await app.inject({ url: base, headers })).json()
+  assert.deepEqual(activeList.cards.map((c) => c.id), [id(3), id(2)])
+  assert.equal((await app.inject({ url: `${base}?archived=true`, headers })).json().cards.length, 0)
+  const trashList = (await app.inject({ url: `${base}?trashed=true`, headers })).json()
+  assert.deepEqual(trashList.cards.map((c) => c.id), [id(1)])
+
+  // Trashed cards block editing, resizing, and reordering
+  assert.equal((await putNote(id(1), { ...noteFields, title: 'Nope', expectedRevision: 2 })).statusCode, 409)
+  assert.equal((await app.inject({ method: 'PUT', url: `${base}/${id(1)}/size`, headers, payload: { imageWidth: 300 } })).statusCode, 400)
+  assert.equal((await app.inject({ method: 'PUT', url: `${base}/${id(1)}/position`, headers, payload: { targetId: id(2), placement: 'before', expectedPosition: 1, expectedTargetPosition: 2 } })).statusCode, 409)
+
+  // Restore card 1 back to active list
+  const restored = await app.inject({ method: 'POST', url: `${base}/${id(1)}/restore?revision=2`, headers })
+  assert.equal(restored.statusCode, 200)
+  assert.equal(restored.json().note.trashedAt, null)
+  assert.equal(restored.json().note.revision, 3)
+  assert.equal((await app.inject({ url: `${base}?trashed=true`, headers })).json().cards.length, 0)
+  assert.equal((await app.inject({ url: base, headers })).json().cards[0].id, id(1))
+
+  // Trash both card 1 and card 3, delete card 1 permanently, then empty remaining trash
+  assert.equal((await app.inject({ method: 'POST', url: `${base}/${id(1)}/trash?revision=3`, headers })).statusCode, 200)
+  assert.equal((await app.inject({ method: 'POST', url: `${base}/${id(3)}/trash?revision=1`, headers })).statusCode, 200)
+  assert.equal((await app.inject({ method: 'DELETE', url: `${base}/${id(1)}?revision=4`, headers })).statusCode, 200)
+  assert.deepEqual((await app.inject({ url: `${base}?trashed=true`, headers })).json().cards.map((c) => c.id), [id(3)])
+
+  const emptied = await app.inject({ method: 'DELETE', url: `${base}/trash`, headers })
+  assert.equal(emptied.statusCode, 200)
+  assert.equal(emptied.json().deleted, 1)
+  assert.equal((await app.inject({ url: `${base}?trashed=true`, headers })).json().cards.length, 0)
+  assert.deepEqual((await app.inject({ url: base, headers })).json().cards.map((c) => c.id), [id(2)])
+})

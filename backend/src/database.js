@@ -24,7 +24,8 @@ const MURAL_V3_COLS = [
   'id', 'title', 'body', 'color', 'pinned', 'archived', 'position', 'revision', 'updated_at',
 ]
 const MURAL_V4_COLS = [...MURAL_V3_COLS, 'kind']
-const MURAL_COLS = [...MURAL_V4_COLS, 'image_width']
+const MURAL_V5_COLS = [...MURAL_V4_COLS, 'image_width']
+const MURAL_COLS = [...MURAL_V5_COLS, 'trashed_at']
 const MURAL_IMAGE_COLS = ['card_id', 'version', 'mime', 'original', 'thumbnail']
 
 const initializeMuralImages = (db) => {
@@ -37,7 +38,7 @@ const initializeMuralImages = (db) => {
       thumbnail BLOB NOT NULL
     );
   `)
-  db.pragma('user_version = 5')
+  db.pragma('user_version = 6')
 }
 
 const initializeMural = (db) => {
@@ -53,7 +54,8 @@ const initializeMural = (db) => {
       revision INTEGER NOT NULL CHECK (revision > 0),
       updated_at INTEGER NOT NULL,
       kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'image')),
-      image_width INTEGER CHECK (image_width IS NULL OR (image_width BETWEEN ${MURAL_MIN_IMAGE_WIDTH} AND ${MURAL_MAX_IMAGE_WIDTH}))
+      image_width INTEGER CHECK (image_width IS NULL OR (image_width BETWEEN ${MURAL_MIN_IMAGE_WIDTH} AND ${MURAL_MAX_IMAGE_WIDTH})),
+      trashed_at INTEGER
     );
     CREATE INDEX mural_note_listing ON mural_note(archived, pinned DESC, position DESC);
   `)
@@ -97,8 +99,9 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
   const isV3Schema = userVersion === 3 && userTables.length === 4 && tableNames === 'mural_note,owner,session,vault'
   const isV4Schema = userVersion === 4 && userTables.length === 5 && tableNames === 'mural_image,mural_note,owner,session,vault'
   const isV5Schema = userVersion === 5 && userTables.length === 5 && tableNames === 'mural_image,mural_note,owner,session,vault'
+  const isV6Schema = userVersion === 6 && userTables.length === 5 && tableNames === 'mural_image,mural_note,owner,session,vault'
 
-  if (!isFresh && !isV1Schema && !isV2Schema && !isV3Schema && !isV4Schema && !isV5Schema) {
+  if (!isFresh && !isV1Schema && !isV2Schema && !isV3Schema && !isV4Schema && !isV5Schema && !isV6Schema) {
     failCorruption(db, 'Database corrupted: unexpected schema')
   }
 
@@ -197,11 +200,12 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
       !hasExactColumns(db, 'vault', V2_VAULT_COLS) ||
       (isV3Schema && !hasExactColumns(db, 'mural_note', MURAL_V3_COLS)) ||
       (isV4Schema && (!hasExactColumns(db, 'mural_note', MURAL_V4_COLS) || !hasExactColumns(db, 'mural_image', MURAL_IMAGE_COLS))) ||
-      (isV5Schema && (!hasExactColumns(db, 'mural_note', MURAL_COLS) || !hasExactColumns(db, 'mural_image', MURAL_IMAGE_COLS)))
+      (isV5Schema && (!hasExactColumns(db, 'mural_note', MURAL_V5_COLS) || !hasExactColumns(db, 'mural_image', MURAL_IMAGE_COLS))) ||
+      (isV6Schema && (!hasExactColumns(db, 'mural_note', MURAL_COLS) || !hasExactColumns(db, 'mural_image', MURAL_IMAGE_COLS)))
     ) {
       failCorruption(db, 'Database corrupted: unexpected vault schema')
     }
-    if (isV2Schema || isV3Schema || isV4Schema) {
+    if (isV2Schema || isV3Schema || isV4Schema || isV5Schema) {
       try {
         db.transaction(() => {
           if (isV2Schema) {
@@ -210,11 +214,18 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
             db.exec(`
               ALTER TABLE mural_note ADD COLUMN kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'image'));
               ALTER TABLE mural_note ADD COLUMN image_width INTEGER CHECK (image_width IS NULL OR (image_width BETWEEN ${MURAL_MIN_IMAGE_WIDTH} AND ${MURAL_MAX_IMAGE_WIDTH}));
+              ALTER TABLE mural_note ADD COLUMN trashed_at INTEGER;
             `)
             initializeMuralImages(db)
+          } else if (isV4Schema) {
+            db.exec(`
+              ALTER TABLE mural_note ADD COLUMN image_width INTEGER CHECK (image_width IS NULL OR (image_width BETWEEN ${MURAL_MIN_IMAGE_WIDTH} AND ${MURAL_MAX_IMAGE_WIDTH}));
+              ALTER TABLE mural_note ADD COLUMN trashed_at INTEGER;
+            `)
+            db.pragma('user_version = 6')
           } else {
-            db.exec(`ALTER TABLE mural_note ADD COLUMN image_width INTEGER CHECK (image_width IS NULL OR (image_width BETWEEN ${MURAL_MIN_IMAGE_WIDTH} AND ${MURAL_MAX_IMAGE_WIDTH}))`)
-            db.pragma('user_version = 5')
+            db.exec('ALTER TABLE mural_note ADD COLUMN trashed_at INTEGER;')
+            db.pragma('user_version = 6')
           }
         }).immediate()
       } catch (err) {
