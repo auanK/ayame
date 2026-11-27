@@ -95,7 +95,11 @@
         @loaded="handleVaultsLoaded"
         @open="handleOpenVault"
         @unauthorized="handleVaultUnauthorized"
-      />
+      >
+        <template #mural>
+          <MuralPanel @state="handleEditorState" @unauthorized="handleVaultUnauthorized" />
+        </template>
+      </VaultsPanel>
       <p
         v-if="errorMessage"
         class="error-message workspace-global-error"
@@ -131,7 +135,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted, provide } from 'vue'
+import { ref, shallowRef, watch, onMounted, onUnmounted, provide } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import SetupForm from './auth/SetupForm.vue'
@@ -139,6 +143,8 @@ import LoginForm from './auth/LoginForm.vue'
 import AccountModal from './auth/AccountModal.vue'
 import VaultsPanel from './vaults/VaultsPanel.vue'
 import VaultBrowser from './vaults/VaultBrowser.vue'
+import MuralPanel from './mural/MuralPanel.vue'
+import { createMuralNoteCache, muralNoteCacheKey } from './mural/noteCache.js'
 import * as authApi from './auth/api.js'
 import * as vaultApi from './vaults/api.js'
 import { createNoteCache, noteCacheKey } from './vaults/noteCache.js'
@@ -149,6 +155,8 @@ import { isValidVaultDirectory, useAyameRouter } from './router/index.js'
 const { router, route } = useAyameRouter()
 const noteCache = createNoteCache((directory, path) => vaultApi.getVaultMarkdown(directory, path))
 provide(noteCacheKey, noteCache)
+const muralNoteCache = shallowRef(createMuralNoteCache())
+provide(muralNoteCacheKey, muralNoteCache)
 const vaultWorkspaceCache = createVaultWorkspaceCache()
 provide(vaultWorkspaceCacheKey, vaultWorkspaceCache)
 
@@ -170,6 +178,13 @@ let isMounted = true
 let authGeneration = 0
 let vaultResolveGeneration = 0
 
+const unregisterMuralGuard = router.beforeEach((to, from) => {
+  if (from.name === 'vaults' && to.name !== 'vaults' && (editorDirty.value || editorSaving.value || editorReloading.value)) {
+    return false
+  }
+  return true
+})
+
 const ensureInitialRouteReady = async () => {
   if (route.value.matched.length === 0) {
     try {
@@ -180,6 +195,13 @@ const ensureInitialRouteReady = async () => {
 
 const handleVaultsLoaded = (vaults) => {
   if (Array.isArray(vaults)) {
+    const directories = new Set(vaults.map((vault) => vault.directory))
+    for (const { directory } of knownVaults.value ?? []) {
+      if (!directories.has(directory)) {
+        noteCache.invalidate(directory)
+        vaultWorkspaceCache.invalidate(directory)
+      }
+    }
     knownVaults.value = vaults
   }
   prefetchedVaults.value = null
@@ -432,6 +454,8 @@ const handleEditorState = (state) => {
 
 const clearAuthenticatedState = () => {
   noteCache.clear()
+  muralNoteCache.value.clear()
+  muralNoteCache.value = createMuralNoteCache()
   vaultWorkspaceCache.clear()
   clearVaultNavigation()
   authGeneration++
@@ -503,7 +527,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  unregisterMuralGuard()
   noteCache.clear()
+  muralNoteCache.value.clear()
   vaultWorkspaceCache.clear()
   isMounted = false
   authGeneration++

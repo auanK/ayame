@@ -89,6 +89,8 @@ export const findExactDirectoryEntry = (entries, directory) => {
   return match
 }
 
+export const VAULT_TRASH_DIRECTORY = '.ayame-vault-trash'
+
 export const resolveVaultRoot = (vaultsRoot, directory) => {
   if (
     typeof vaultsRoot !== 'string' ||
@@ -101,6 +103,7 @@ export const resolveVaultRoot = (vaultsRoot, directory) => {
     directory.includes('\\') ||
     directory === '.' ||
     directory === '..' ||
+    directory.toLowerCase() === VAULT_TRASH_DIRECTORY ||
     directory.trim() !== directory
   ) {
     failVaultDirectory()

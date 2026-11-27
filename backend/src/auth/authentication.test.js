@@ -576,7 +576,7 @@ test('database initialization: existing truly empty SQLite file initializes norm
         .all()
         .map((r) => r.name)
         .sort()
-      assert.deepEqual(tables, ['owner', 'session', 'vault'])
+      assert.deepEqual(tables, ['mural_image', 'mural_note', 'owner', 'session', 'vault'])
     } finally {
       closeDatabase(db)
     }

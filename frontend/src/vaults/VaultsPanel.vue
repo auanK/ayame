@@ -22,6 +22,12 @@
         <button
           type="button"
           class="btn btn-secondary btn-compact"
+          :disabled="Boolean(operation)"
+          @click="openVaultTrash"
+        >Vault trash</button>
+        <button
+          type="button"
+          class="btn btn-secondary btn-compact"
           data-testid="refresh-vaults-button"
           :disabled="Boolean(operation)"
           @click="refreshVaults"
@@ -55,6 +61,7 @@
     />
 
     <div class="vaults-panel-content">
+      <slot name="mural" />
       <p v-if="errorMessage" class="error-message" role="alert" aria-live="polite">
         {{ errorMessage }}
       </p>
@@ -140,6 +147,7 @@
             @open-card="openVaultFromCard"
             @edit="startEdit"
             @reset="resetVault"
+            @trash="vaultToTrash = $event"
             @toggle-pin="togglePin"
             @upload-cover="triggerCoverInput"
             @toggle-tag="toggleTagFilter"
@@ -174,6 +182,7 @@
             @open-card="openVaultFromCard"
             @edit="startEdit"
             @reset="resetVault"
+            @trash="vaultToTrash = $event"
             @toggle-pin="togglePin"
             @upload-cover="triggerCoverInput"
             @toggle-tag="toggleTagFilter"
@@ -210,12 +219,44 @@
       @upload-cover="triggerCoverInput"
       @remove-cover="removeCover"
     />
+    <ConfirmModal
+      v-if="vaultToTrash"
+      title="Move vault to trash?"
+      :message="`Move “${vaultToTrash.name}” and all its notes to the vault trash? You can restore it there.`"
+      confirm-label="Move to trash"
+      confirm-test-id="confirm-trash-vault"
+      :disabled="Boolean(operation)"
+      @cancel="vaultToTrash = null"
+      @confirm="trashVault"
+    />
+    <BaseModal
+      v-if="showVaultTrash"
+      title="Vault trash"
+      title-id="vault-trash-title"
+      test-id="vault-trash"
+      :close-disabled="Boolean(operation)"
+      @close="showVaultTrash = false"
+    >
+      <p v-if="vaultTrashError" class="error-message" role="alert">{{ vaultTrashError }}</p>
+      <p v-if="operation === 'loading-trash'" class="status-message" role="status">Loading trash…</p>
+      <p v-else-if="!trashedVaults.length && !vaultTrashError" class="status-message">The vault trash is empty.</p>
+      <ul v-if="trashedVaults.length" class="trashed-vaults">
+        <li v-for="item in trashedVaults" :key="item.id">
+          <span>{{ item.directory }}</span>
+          <button type="button" class="btn btn-secondary btn-compact" :disabled="Boolean(operation)" @click="restoreVault(item)">
+            Restore
+          </button>
+        </li>
+      </ul>
+    </BaseModal>
   </section>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as api from './api.js'
+import BaseModal from '../components/BaseModal.vue'
+import ConfirmModal from '../components/ConfirmModal.vue'
 import VaultsToolbar from './hub/VaultsToolbar.vue'
 import VaultCard from './hub/VaultCard.vue'
 import VaultCategoryGroup from './hub/VaultCategoryGroup.vue'
@@ -241,6 +282,10 @@ const editError = ref('')
 const editingDirectory = ref(null)
 const editingWasRegistered = ref(false)
 const needsRefresh = ref(false)
+const vaultToTrash = ref(null)
+const showVaultTrash = ref(false)
+const trashedVaults = ref([])
+const vaultTrashError = ref('')
 
 const editDraft = ref({
   name: '',
@@ -648,6 +693,65 @@ const refreshAfterMutation = async (failureMessage) => {
   }
 }
 
+const trashVault = async () => {
+  if (operation.value || !vaultToTrash.value) return
+  const { directory } = vaultToTrash.value
+  operation.value = 'trashing-vault'
+  errorMessage.value = ''
+  try {
+    await api.moveVaultToTrash(directory)
+    if (!mounted) return
+    vaultToTrash.value = null
+    vaults.value = vaults.value.filter((vault) => vault.directory !== directory)
+    emit('loaded', vaults.value)
+    await refreshAfterMutation('Vault moved to trash. Refresh to update the vault list.')
+  } catch (error) {
+    if (!mounted) return
+    vaultToTrash.value = null
+    if (error.code === 'UNAUTHORIZED') showUnauthorized()
+    else errorMessage.value = 'Could not move this vault to trash. Refresh and try again.'
+  } finally {
+    if (mounted) operation.value = ''
+  }
+}
+
+const openVaultTrash = async () => {
+  if (operation.value) return
+  showVaultTrash.value = true
+  vaultTrashError.value = ''
+  trashedVaults.value = []
+  operation.value = 'loading-trash'
+  try {
+    const { items } = await api.getTrashedVaults()
+    if (mounted) trashedVaults.value = items
+  } catch (error) {
+    if (!mounted) return
+    if (error.code === 'UNAUTHORIZED') showUnauthorized()
+    else vaultTrashError.value = 'Could not load the vault trash.'
+  } finally {
+    if (mounted) operation.value = ''
+  }
+}
+
+const restoreVault = async (item) => {
+  if (operation.value) return
+  operation.value = 'restoring-vault'
+  vaultTrashError.value = ''
+  try {
+    await api.restoreTrashedVault(item.id)
+    if (!mounted) return
+    trashedVaults.value = trashedVaults.value.filter(({ id }) => id !== item.id)
+    await refreshAfterMutation('Vault restored. Refresh to update the vault list.')
+  } catch (error) {
+    if (!mounted) return
+    if (error.code === 'UNAUTHORIZED') showUnauthorized()
+    else if (error.code === 'VAULT_ALREADY_EXISTS') vaultTrashError.value = 'A folder with this name already exists.'
+    else vaultTrashError.value = 'Could not restore this vault. Try again.'
+  } finally {
+    if (mounted) operation.value = ''
+  }
+}
+
 const saveVault = async (vault) => {
   if (!vault || operation.value || needsRefresh.value || editingDirectory.value !== vault.directory) {
     return
@@ -999,3 +1103,21 @@ onBeforeUnmount(() => {
   mounted = false
 })
 </script>
+
+<style scoped>
+.trashed-vaults {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trashed-vaults li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  overflow-wrap: anywhere;
+}
+</style>

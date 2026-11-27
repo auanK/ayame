@@ -34,6 +34,7 @@
         @open-card="emit('open-card', $event)"
         @edit="emit('edit', $event)"
         @reset="emit('reset', $event)"
+        @trash="emit('trash', $event)"
         @toggle-pin="emit('toggle-pin', $event)"
         @upload-cover="emit('upload-cover', $event)"
         @toggle-tag="emit('toggle-tag', $event)"
@@ -71,6 +72,7 @@ const emit = defineEmits([
   'open-card',
   'edit',
   'reset',
+  'trash',
   'toggle-pin',
   'upload-cover',
   'toggle-tag',

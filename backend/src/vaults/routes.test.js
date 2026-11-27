@@ -20,6 +20,43 @@ const setupAuthApp = async (vaultsRoot) => {
   return { db, app, cookie }
 }
 
+test('a trashed vault disappears with its files and restores with the same registered metadata', async (t) => {
+  const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-vault-trash-'))
+  const directory = 'Reading notes'
+  const vaultPath = path.join(vaultsRoot, directory)
+  const notePath = path.join(vaultPath, 'entry.md')
+  fs.mkdirSync(vaultPath)
+  fs.writeFileSync(notePath, 'Keep this note.')
+  const { app, cookie } = await setupAuthApp(vaultsRoot)
+  t.after(async () => {
+    await app.close()
+    fs.rmSync(vaultsRoot, { recursive: true })
+  })
+  const headers = { cookie }
+  const trashUrl = `/vaults/${encodeURIComponent(directory)}/trash-vault`
+  const register = await app.inject({ method: 'POST', url: '/vaults', headers, payload: { name: 'Reading', directory } })
+  assert.equal(register.statusCode, 201)
+  assert.equal((await app.inject({ method: 'POST', url: trashUrl })).statusCode, 401)
+  const moved = await app.inject({ method: 'POST', url: trashUrl, headers })
+  assert.equal(moved.statusCode, 200)
+  assert.equal(fs.existsSync(vaultPath), false)
+  assert.deepEqual((await app.inject({ url: '/vaults', headers })).json().vaults, [])
+  const listed = await app.inject({ url: '/vaults/trash', headers })
+  assert.deepEqual(listed.json().items.map((item) => item.directory), [directory])
+  assert.equal((await app.inject({ url: '/vaults/.ayame-vault-trash/entries', headers })).statusCode, 400)
+
+  const restore = () => app.inject({ method: 'POST', url: `/vaults/trash/${moved.json().id}/restore`, headers })
+  fs.mkdirSync(vaultPath)
+  assert.equal((await restore()).statusCode, 409)
+  fs.rmdirSync(vaultPath)
+  assert.equal((await restore()).statusCode, 200)
+  assert.equal(fs.readFileSync(notePath, 'utf8'), 'Keep this note.')
+  assert.deepEqual((await app.inject({ url: '/vaults/trash', headers })).json().items, [])
+  const [restored] = (await app.inject({ url: '/vaults', headers })).json().vaults
+  assert.equal(restored.name, 'Reading')
+  assert.equal(restored.registered, true)
+})
+
 test('vault routes fail with 401 UNAUTHORIZED without valid session', async () => {
   const vaultsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-unauth-root-'))
   const db = openDatabase(':memory:')

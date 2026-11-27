@@ -6,18 +6,18 @@ const MAX_INPUT_PIXELS = 24_000_000
 
 const hash = (buffer) => createHash('sha256').update(buffer).digest('hex')
 
-const resizeCover = async (buffer, animated) => {
+export const resizeImageThumbnail = async (buffer, { animated = false, width = 640, height = 320 } = {}) => {
   const { default: sharp } = await import('sharp')
   return sharp(buffer, { animated, limitInputPixels: MAX_INPUT_PIXELS })
     .autoOrient()
-    .resize({ width: 640, height: 320, fit: 'inside', withoutEnlargement: true })
+    .resize({ width, height, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 72, effort: 2 })
     .toBuffer()
 }
 
 const createThumbnail = async ({ buffer, mimeType }, sourceHash) => {
   const animated = mimeType === 'image/gif' || mimeType === 'image/webp'
-  const resized = await resizeCover(buffer, animated).catch(() => null)
+  const resized = await resizeImageThumbnail(buffer, { animated }).catch(() => null)
   if (resized && resized.length < buffer.length) {
     return { buffer: resized, mimeType: 'image/webp', etag: `"${hash(resized)}"` }
   }

@@ -4,7 +4,15 @@ import App from './App.vue'
 import MarkdownEditor from './markdown/MarkdownEditor.vue'
 import { AUTOSAVE_DELAY_MS } from './markdown/MarkdownViewer.vue'
 import * as api from './auth/api.js'
+import * as muralApi from './mural/api.js'
 import * as vaultApi from './vaults/api.js'
+
+vi.mock('./mural/api.js', () => ({
+  listMuralCards: vi.fn(),
+  readMuralNote: vi.fn(),
+  writeMuralNote: vi.fn(),
+  moveMuralNote: vi.fn(),
+}))
 
 vi.mock('./auth/api.js', () => ({
   getAuthStatus: vi.fn(),
@@ -33,6 +41,7 @@ describe('App authentication flow', () => {
     vi.clearAllMocks()
     localStorage.clear()
     sessionStorage.clear()
+    muralApi.listMuralCards.mockResolvedValue({ pinned: { cards: [], next: null }, notes: { cards: [], next: null } })
     vaultApi.getVaults.mockResolvedValue({ vaults: [] })
     vaultApi.getVaultEntries.mockResolvedValue({ directory: 'personal', path: '', entries: [] })
     vaultApi.getVaultMarkdown.mockResolvedValue({ directory: 'personal-dir', path: 'README.md', content: '# Welcome', revision: 'a'.repeat(64) })
@@ -607,6 +616,50 @@ describe('App authentication flow', () => {
       expect(wrapper.find('[data-testid="vaults-panel"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(true)
+    })
+
+    it('keeps mural notes in memory across a vault visit and discards them on sign-out', async () => {
+      const id = 'a'.repeat(32)
+      const note = { id, title: 'Mural', body: 'Cached text', color: 'neutral', pinned: false, archived: false, revision: 1, position: 1 }
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      api.logout.mockResolvedValue({ ok: true })
+      api.login.mockResolvedValue({ ok: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+      muralApi.listMuralCards.mockResolvedValue({
+        pinned: { cards: [], next: null }, notes: { cards: [{ ...note, preview: note.body }], next: null },
+      })
+      muralApi.readMuralNote.mockResolvedValueOnce({ note }).mockResolvedValueOnce({ note: { ...note, body: 'New session', revision: 2 } })
+
+      const wrapper = mount(App)
+      const openNote = async () => {
+        await wrapper.get(`[data-card-id="${id}"]`).trigger('click')
+        await flushPromises()
+        return wrapper.get('[data-testid="mural-note-body"]').element.value
+      }
+      const closeNote = () => wrapper.get('[data-testid="mural-note-done"]').trigger('click')
+      try {
+        await flushPromises()
+        expect(await openNote()).toBe('Cached text')
+        await closeNote()
+        await wrapper.get('[data-testid="open-vault-button"]').trigger('click')
+        await flushPromises()
+        await wrapper.get('[data-testid="back-to-vaults-button"]').trigger('click')
+        await flushPromises()
+        expect(await openNote()).toBe('Cached text')
+        expect(muralApi.readMuralNote).toHaveBeenCalledTimes(1)
+
+        await closeNote()
+        await wrapper.get('[data-testid="logout-button"]').trigger('click')
+        await flushPromises()
+        await wrapper.get('input[name="username"]').setValue('auank')
+        await wrapper.get('input[name="password"]').setValue('password123')
+        await wrapper.get('form').trigger('submit')
+        await flushPromises()
+        expect(await openNote()).toBe('New session')
+        expect(muralApi.readMuralNote).toHaveBeenCalledTimes(2)
+      } finally {
+        wrapper.unmount()
+      }
     })
 
     it('logout while browser is active returns to login', async () => {

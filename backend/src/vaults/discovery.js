@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { resolveVaultRoot } from './filesystem.js'
+import { resolveVaultRoot, VAULT_TRASH_DIRECTORY } from './filesystem.js'
 
 const isInternalArtifact = (name) =>
   name === '.trash' ||
@@ -29,7 +29,7 @@ export const discoverVaultDirectories = (vaultsRoot) => {
   const discovered = []
 
   for (const entry of entries) {
-    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+    if (entry.isSymbolicLink() || !entry.isDirectory() || entry.name.toLowerCase() === VAULT_TRASH_DIRECTORY) {
       continue
     }
 

@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
+import { MURAL_COLORS } from '../../shared/mural.js'
 
 const OWNER_COLS = ['id', 'username', 'password_hash']
 const SESSION_COLS = ['token_hash', 'expires_at']
@@ -19,6 +20,43 @@ const V2_VAULT_COLS = [
   'cover_blob',
   'cover_updated_at',
 ]
+const MURAL_V3_COLS = [
+  'id', 'title', 'body', 'color', 'pinned', 'archived', 'position', 'revision', 'updated_at',
+]
+const MURAL_COLS = [...MURAL_V3_COLS, 'kind']
+const MURAL_IMAGE_COLS = ['card_id', 'version', 'mime', 'original', 'thumbnail']
+
+const initializeMuralImages = (db) => {
+  db.exec(`
+    CREATE TABLE mural_image (
+      card_id TEXT NOT NULL PRIMARY KEY REFERENCES mural_note(id) ON DELETE CASCADE,
+      version TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      original BLOB NOT NULL,
+      thumbnail BLOB NOT NULL
+    );
+  `)
+  db.pragma('user_version = 4')
+}
+
+const initializeMural = (db) => {
+  db.exec(`
+    CREATE TABLE mural_note (
+      id TEXT NOT NULL PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      color TEXT NOT NULL CHECK (color IN (${MURAL_COLORS.map((color) => `'${color}'`).join(', ')})),
+      pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)),
+      archived INTEGER NOT NULL CHECK (archived IN (0, 1)),
+      position INTEGER NOT NULL UNIQUE,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      updated_at INTEGER NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'image'))
+    );
+    CREATE INDEX mural_note_listing ON mural_note(archived, pinned DESC, position DESC);
+  `)
+  initializeMuralImages(db)
+}
 
 const hasExactColumns = (db, table, expected) => {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name)
@@ -49,17 +87,15 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
     .map((r) => r.name)
     .sort()
 
-  const hasExpectedTables =
-    userTables.length === 3 &&
-    userTables[0] === 'owner' &&
-    userTables[1] === 'session' &&
-    userTables[2] === 'vault'
-
+  const tableNames = userTables.join(',')
+  const hasLegacyTables = userTables.length === 3 && tableNames === 'owner,session,vault'
   const isFresh = userTables.length === 0 && userVersion === 0
-  const isV1Schema = userVersion === 1 && hasExpectedTables
-  const isV2Schema = userVersion === 2 && hasExpectedTables
+  const isV1Schema = userVersion === 1 && hasLegacyTables
+  const isV2Schema = userVersion === 2 && hasLegacyTables
+  const isV3Schema = userVersion === 3 && userTables.length === 4 && tableNames === 'mural_note,owner,session,vault'
+  const isV4Schema = userVersion === 4 && userTables.length === 5 && tableNames === 'mural_image,mural_note,owner,session,vault'
 
-  if (!isFresh && !isV1Schema && !isV2Schema) {
+  if (!isFresh && !isV1Schema && !isV2Schema && !isV3Schema && !isV4Schema) {
     failCorruption(db, 'Database corrupted: unexpected schema')
   }
 
@@ -112,7 +148,7 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
           cover_updated_at INTEGER
         );
       `)
-      db.pragma('user_version = 2')
+      initializeMural(db)
     })
     try {
       initialize()
@@ -130,7 +166,7 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
       failCorruption(db, 'Database corrupted: unexpected vault schema')
     }
 
-    const migrateV1ToV2 = db.transaction(() => {
+    const migrateV1 = db.transaction(() => {
       db.exec(`
         ALTER TABLE vault ADD COLUMN position INTEGER;
         ALTER TABLE vault ADD COLUMN category TEXT NOT NULL DEFAULT '';
@@ -142,22 +178,39 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
         ALTER TABLE vault ADD COLUMN cover_blob BLOB;
         ALTER TABLE vault ADD COLUMN cover_updated_at INTEGER;
       `)
-      db.pragma('user_version = 2')
+      initializeMural(db)
     })
     try {
-      migrateV1ToV2()
+      migrateV1.immediate()
     } catch (err) {
       db.close()
       throw err
     }
-  } else if (isV2Schema) {
+  } else {
     validateOwnerSessionInvariants()
     if (
       !hasExactColumns(db, 'owner', OWNER_COLS) ||
       !hasExactColumns(db, 'session', SESSION_COLS) ||
-      !hasExactColumns(db, 'vault', V2_VAULT_COLS)
+      !hasExactColumns(db, 'vault', V2_VAULT_COLS) ||
+      (isV3Schema && !hasExactColumns(db, 'mural_note', MURAL_V3_COLS)) ||
+      (isV4Schema && (!hasExactColumns(db, 'mural_note', MURAL_COLS) || !hasExactColumns(db, 'mural_image', MURAL_IMAGE_COLS)))
     ) {
       failCorruption(db, 'Database corrupted: unexpected vault schema')
+    }
+    if (isV2Schema || isV3Schema) {
+      try {
+        db.transaction(() => {
+          if (isV2Schema) {
+            initializeMural(db)
+          } else {
+            db.exec("ALTER TABLE mural_note ADD COLUMN kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'image'))")
+            initializeMuralImages(db)
+          }
+        }).immediate()
+      } catch (err) {
+        db.close()
+        throw err
+      }
     }
   }
 

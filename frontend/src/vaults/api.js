@@ -558,6 +558,7 @@ export const createVaultNote = async (directory, { parentPath = '', name, conten
 }
 
 const OPERATION_ERROR_CODES = [
+  'VAULT_ALREADY_EXISTS',
   'INVALID_VAULT_DIRECTORY',
   'INVALID_VAULT_PATH',
   'INVALID_OPERATION_PAYLOAD',
@@ -587,6 +588,25 @@ const handleOperationResponse = async (response, fallbackCode) => {
     throw apiError(fallbackCode)
   }
   return readJson(response)
+}
+
+export const getTrashedVaults = async () => {
+  const response = await request('/vaults/trash', { credentials: 'same-origin' }, 'VAULT_TRASH_LOAD_FAILED')
+  return handleOperationResponse(response, 'VAULT_TRASH_LOAD_FAILED')
+}
+
+export const moveVaultToTrash = async (directory) => {
+  const response = await request(`/vaults/${encodeURIComponent(directory)}/trash-vault`, {
+    method: 'POST', credentials: 'same-origin',
+  }, 'VAULT_TRASH_FAILED')
+  return handleOperationResponse(response, 'VAULT_TRASH_FAILED')
+}
+
+export const restoreTrashedVault = async (id) => {
+  const response = await request(`/vaults/trash/${encodeURIComponent(id)}/restore`, {
+    method: 'POST', credentials: 'same-origin',
+  }, 'VAULT_RESTORE_FAILED')
+  return handleOperationResponse(response, 'VAULT_RESTORE_FAILED')
 }
 
 export const getVaultIndex = async (directory) => {

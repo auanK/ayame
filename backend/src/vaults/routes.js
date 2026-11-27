@@ -19,6 +19,7 @@ import { listVaultEntries } from './browser.js'
 import { MAX_MARKDOWN_BYTES, readVaultMarkdown } from './reader.js'
 import { saveVaultMarkdown } from './writer.js'
 import { createVaultFolder, createVaultNote } from './creator.js'
+import { listTrashedVaults, moveVaultToTrash, restoreTrashedVault } from './vaultTrash.js'
 import {
   relocateVaultEntry,
   moveVaultEntryToTrash,
@@ -86,7 +87,7 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
   const getThumbnail = createCoverThumbnailCache()
   app.addHook('onClose', () => scanner.close())
   app.addHook('onSend', async (req, _reply, payload) => {
-    if (req.routeOptions.url?.startsWith('/vaults') && req.method !== 'GET') {
+    if (req.routeOptions.url?.startsWith('/vaults') && req.method !== 'GET' && req.routeOptions.config?.affectsVault !== false) {
       scanner.invalidate()
     }
     return payload
@@ -103,6 +104,28 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
     const { directories, stats } = await scanner.scan()
     const vaults = mergeVaults(directories, listRegisteredVaults(db), stats)
     return reply.send({ vaults })
+  })
+
+  app.get('/vaults/trash', { config: { noStore: true } }, () => ({ items: listTrashedVaults(vaultsRoot) }))
+
+  app.post('/vaults/:directory/trash-vault', { config: { noStore: true } }, (req, reply) => {
+    try {
+      return moveVaultToTrash(vaultsRoot, req.params.directory)
+    } catch (error) {
+      const status = VAULT_META_ERROR_STATUS[error.code]
+      if (status) return reply.code(status).send({ error: error.code })
+      throw error
+    }
+  })
+
+  app.post('/vaults/trash/:id/restore', { config: { noStore: true } }, (req, reply) => {
+    try {
+      return restoreTrashedVault(vaultsRoot, req.params.id)
+    } catch (error) {
+      const status = OPERATION_ERROR_STATUS[error.code] ?? VAULT_META_ERROR_STATUS[error.code]
+      if (status) return reply.code(status).send({ error: error.code })
+      throw error
+    }
   })
 
   app.get('/vaults/:directory/entries', async (req, reply) => {

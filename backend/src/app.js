@@ -18,6 +18,7 @@ import {
   revokeOtherSessions,
 } from './auth/authentication.js'
 import { registerVaultRoutes } from './vaults/routes.js'
+import { registerMuralRoutes } from './mural/routes.js'
 
 const createLoginRateLimiter = ({ maxAttempts = 10, windowMs = 15 * 60 * 1000 } = {}) => {
   const attemptsByKey = new Map()
@@ -235,6 +236,7 @@ export const createApp = ({
   })
 
   registerVaultRoutes(app, db, vaultsRoot)
+  registerMuralRoutes(app, db)
 
   return app
 }
