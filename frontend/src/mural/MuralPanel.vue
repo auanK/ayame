@@ -33,6 +33,7 @@
       :moving="moving"
       @open="openNote"
       @reorder="reorderCards"
+      @resize="resizeCard"
       @more="loadCards"
     />
     <span class="sr-only" role="status">{{ reorderStatus }}</span>
@@ -69,7 +70,7 @@
 <script setup>
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { MURAL_IMAGE_TYPES, MURAL_MAX_IMAGE_BYTES, MURAL_PREVIEW_LENGTH } from '../../../shared/mural.js'
-import { deleteMuralNote, getMuralImageUrl, listMuralCards, moveMuralNote, readMuralNote, removeMuralImage, uploadMuralImage, writeMuralNote } from './api.js'
+import { deleteMuralNote, getMuralImageUrl, listMuralCards, moveMuralNote, readMuralNote, removeMuralImage, resizeMuralCard, uploadMuralImage, writeMuralNote } from './api.js'
 import { createMuralNoteCache, muralNoteCacheKey } from './noteCache.js'
 import MuralCardGrid from './MuralCardGrid.vue'
 import MuralNoteEditor from './MuralNoteEditor.vue'
@@ -108,6 +109,7 @@ let noteRequest
 let saveTimer
 let saveTask
 let returnFocus
+const resizeGenerations = new Map()
 
 const sections = computed(() => GROUPS.map((group) => ({
   group,
@@ -122,6 +124,7 @@ const notePreview = (note) => ({
   color: note.color,
   kind: note.kind,
   imageVersion: note.imageVersion,
+  imageWidth: note.imageWidth ?? null,
   pinned: note.pinned,
   archived: note.archived,
   position: note.position,
@@ -451,6 +454,33 @@ const applyCardOrder = ({ note, positions }) => {
   }
 }
 
+const resizeCard = async ({ id, imageWidth }) => {
+  const existing = cards.value.find((item) => item.id === id)
+  if (!existing || !existing.imageVersion) return
+  const nextWidth = imageWidth ?? null
+  const prevWidth = existing.imageWidth ?? null
+  if (prevWidth === nextWidth) return
+
+  const gen = (resizeGenerations.get(id) ?? 0) + 1
+  resizeGenerations.set(id, gen)
+  listError.value = ''
+  cards.value = cards.value.map((item) => item.id === id ? { ...item, imageWidth: nextWidth } : item)
+  noteCache.updateImageWidth(id, nextWidth)
+
+  try {
+    const { note } = await resizeMuralCard(id, nextWidth)
+    if (!mounted || resizeGenerations.get(id) !== gen) return
+    const savedWidth = note?.imageWidth ?? null
+    cards.value = cards.value.map((item) => item.id === id ? { ...item, imageWidth: savedWidth } : item)
+    noteCache.updateImageWidth(id, savedWidth)
+  } catch (error) {
+    if (!mounted || useSessionError(error) || resizeGenerations.get(id) !== gen) return
+    cards.value = cards.value.map((item) => item.id === id ? { ...item, imageWidth: prevWidth } : item)
+    noteCache.updateImageWidth(id, prevWidth)
+    listError.value = 'Could not resize the image. Try again.'
+  }
+}
+
 const reorderCards = async ({ id, targetId, placement }) => {
   if (draft.value || loading.value || moving.value || imageBusy.value || opening.value) return
   const previous = cards.value
@@ -537,9 +567,9 @@ onUnmounted(() => {
 
 <style scoped>
 .mural {
-  padding: 0 0 1rem;
-  margin-bottom: 1.05rem;
-  border-bottom: 1px solid var(--ayame-border);
+  padding: 1.25rem 0 0;
+  margin-top: 1.35rem;
+  border-top: 1px solid var(--ayame-border);
 }
 
 .mural-header, .mural-actions { display: flex; align-items: center; gap: 0.5rem; }

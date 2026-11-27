@@ -23,6 +23,10 @@ export function createMuralNoteCache() {
       const entry = notes.get(id)
       if (entry) entry.note = { ...entry.note, position }
     },
+    updateImageWidth(id, imageWidth) {
+      const entry = notes.get(id)
+      if (entry) entry.note = { ...entry.note, imageWidth }
+    },
     invalidate(id) {
       notes.delete(id)
     },

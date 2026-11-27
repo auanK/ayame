@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
-import { MURAL_COLORS } from '../../shared/mural.js'
+import { MURAL_COLORS, MURAL_MAX_IMAGE_WIDTH, MURAL_MIN_IMAGE_WIDTH } from '../../shared/mural.js'
 
 const OWNER_COLS = ['id', 'username', 'password_hash']
 const SESSION_COLS = ['token_hash', 'expires_at']
@@ -23,7 +23,8 @@ const V2_VAULT_COLS = [
 const MURAL_V3_COLS = [
   'id', 'title', 'body', 'color', 'pinned', 'archived', 'position', 'revision', 'updated_at',
 ]
-const MURAL_COLS = [...MURAL_V3_COLS, 'kind']
+const MURAL_V4_COLS = [...MURAL_V3_COLS, 'kind']
+const MURAL_COLS = [...MURAL_V4_COLS, 'image_width']
 const MURAL_IMAGE_COLS = ['card_id', 'version', 'mime', 'original', 'thumbnail']
 
 const initializeMuralImages = (db) => {
@@ -36,7 +37,7 @@ const initializeMuralImages = (db) => {
       thumbnail BLOB NOT NULL
     );
   `)
-  db.pragma('user_version = 4')
+  db.pragma('user_version = 5')
 }
 
 const initializeMural = (db) => {
@@ -51,7 +52,8 @@ const initializeMural = (db) => {
       position INTEGER NOT NULL UNIQUE,
       revision INTEGER NOT NULL CHECK (revision > 0),
       updated_at INTEGER NOT NULL,
-      kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'image'))
+      kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'image')),
+      image_width INTEGER CHECK (image_width IS NULL OR (image_width BETWEEN ${MURAL_MIN_IMAGE_WIDTH} AND ${MURAL_MAX_IMAGE_WIDTH}))
     );
     CREATE INDEX mural_note_listing ON mural_note(archived, pinned DESC, position DESC);
   `)
@@ -94,8 +96,9 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
   const isV2Schema = userVersion === 2 && hasLegacyTables
   const isV3Schema = userVersion === 3 && userTables.length === 4 && tableNames === 'mural_note,owner,session,vault'
   const isV4Schema = userVersion === 4 && userTables.length === 5 && tableNames === 'mural_image,mural_note,owner,session,vault'
+  const isV5Schema = userVersion === 5 && userTables.length === 5 && tableNames === 'mural_image,mural_note,owner,session,vault'
 
-  if (!isFresh && !isV1Schema && !isV2Schema && !isV3Schema && !isV4Schema) {
+  if (!isFresh && !isV1Schema && !isV2Schema && !isV3Schema && !isV4Schema && !isV5Schema) {
     failCorruption(db, 'Database corrupted: unexpected schema')
   }
 
@@ -193,18 +196,25 @@ export const openDatabase = (dbPath = 'data/ayame.sqlite') => {
       !hasExactColumns(db, 'session', SESSION_COLS) ||
       !hasExactColumns(db, 'vault', V2_VAULT_COLS) ||
       (isV3Schema && !hasExactColumns(db, 'mural_note', MURAL_V3_COLS)) ||
-      (isV4Schema && (!hasExactColumns(db, 'mural_note', MURAL_COLS) || !hasExactColumns(db, 'mural_image', MURAL_IMAGE_COLS)))
+      (isV4Schema && (!hasExactColumns(db, 'mural_note', MURAL_V4_COLS) || !hasExactColumns(db, 'mural_image', MURAL_IMAGE_COLS))) ||
+      (isV5Schema && (!hasExactColumns(db, 'mural_note', MURAL_COLS) || !hasExactColumns(db, 'mural_image', MURAL_IMAGE_COLS)))
     ) {
       failCorruption(db, 'Database corrupted: unexpected vault schema')
     }
-    if (isV2Schema || isV3Schema) {
+    if (isV2Schema || isV3Schema || isV4Schema) {
       try {
         db.transaction(() => {
           if (isV2Schema) {
             initializeMural(db)
-          } else {
-            db.exec("ALTER TABLE mural_note ADD COLUMN kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'image'))")
+          } else if (isV3Schema) {
+            db.exec(`
+              ALTER TABLE mural_note ADD COLUMN kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'image'));
+              ALTER TABLE mural_note ADD COLUMN image_width INTEGER CHECK (image_width IS NULL OR (image_width BETWEEN ${MURAL_MIN_IMAGE_WIDTH} AND ${MURAL_MAX_IMAGE_WIDTH}));
+            `)
             initializeMuralImages(db)
+          } else {
+            db.exec(`ALTER TABLE mural_note ADD COLUMN image_width INTEGER CHECK (image_width IS NULL OR (image_width BETWEEN ${MURAL_MIN_IMAGE_WIDTH} AND ${MURAL_MAX_IMAGE_WIDTH}))`)
+            db.pragma('user_version = 5')
           }
         }).immediate()
       } catch (err) {

@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto'
-import { MURAL_COLORS, MURAL_MAX_BODY_LENGTH, MURAL_MAX_IMAGE_BYTES, MURAL_MAX_TITLE_LENGTH, MURAL_PREVIEW_LENGTH } from '../../../shared/mural.js'
+import {
+  MURAL_COLORS,
+  MURAL_MAX_BODY_LENGTH,
+  MURAL_MAX_IMAGE_BYTES,
+  MURAL_MAX_IMAGE_WIDTH,
+  MURAL_MAX_TITLE_LENGTH,
+  MURAL_MIN_IMAGE_WIDTH,
+  MURAL_PREVIEW_LENGTH,
+} from '../../../shared/mural.js'
 import { detectImageMime } from '../vaults/images.js'
 import { resizeImageThumbnail } from '../vaults/coverThumbnails.js'
 
@@ -9,7 +17,7 @@ const MAX_ANIMATED_PREVIEW_BYTES = 256 * 1024
 const NO_STORE = { config: { noStore: true, affectsVault: false } }
 const IMAGE_ROUTE = `${ROOT}/:id/image`
 const IMAGE_JOIN = 'FROM mural_note LEFT JOIN mural_image ON mural_image.card_id = mural_note.id'
-const NOTE_FIELDS = 'id, title, body, color, pinned, archived, position, revision, updated_at AS updatedAt, kind, version AS imageVersion'
+const NOTE_FIELDS = 'id, title, body, color, pinned, archived, position, revision, updated_at AS updatedAt, kind, version AS imageVersion, image_width AS imageWidth'
 const validId = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id)
 const positiveInteger = (value) => Number.isSafeInteger(value) && value > 0
 const publicNote = (row) => ({ ...row, pinned: Boolean(row.pinned), archived: Boolean(row.archived) })
@@ -26,7 +34,7 @@ const makePage = (rows) => {
 
 export function registerMuralRoutes(app, db) {
   const cardsQuery = `
-    SELECT id, title, substr(body, 1, ${MURAL_PREVIEW_LENGTH}) AS preview, color, pinned, archived, position, kind, version AS imageVersion
+    SELECT id, title, substr(body, 1, ${MURAL_PREVIEW_LENGTH}) AS preview, color, pinned, archived, position, kind, version AS imageVersion, image_width AS imageWidth
     ${IMAGE_JOIN}
   `
   const list = db.prepare(`${cardsQuery}
@@ -197,6 +205,16 @@ export function registerMuralRoutes(app, db) {
   `)
   const deleteImage = db.prepare('DELETE FROM mural_image WHERE card_id = ?')
   const recordImageChange = db.prepare('UPDATE mural_note SET revision = revision + 1, updated_at = ? WHERE id = ?')
+  const setImageWidth = db.prepare('UPDATE mural_note SET image_width = ?, updated_at = ? WHERE id = ?')
+  const clearImageWidth = db.prepare('UPDATE mural_note SET image_width = NULL WHERE id = ?')
+
+  const resizeCard = db.transaction((id, imageWidth) => {
+    const note = read.get(id)
+    if (!note) return null
+    if (imageWidth !== null && !note.imageVersion) return { invalid: true }
+    setImageWidth.run(imageWidth, Date.now(), id)
+    return { note: publicNote(read.get(id)) }
+  })
 
   const applyImage = db.transaction((id, expectedRevision, create, image) => {
     const note = read.get(id)
@@ -215,7 +233,10 @@ export function registerMuralRoutes(app, db) {
       recordImageChange.run(Date.now(), id)
     }
     if (image) storeImage.run({ id, ...image })
-    else deleteImage.run(id)
+    else {
+      deleteImage.run(id)
+      clearImageWidth.run(id)
+    }
     return { note: publicNote(read.get(id)) }
   })
 
@@ -267,9 +288,9 @@ export function registerMuralRoutes(app, db) {
     let resized
     try {
       const animated = mime === 'image/gif' || mime === 'image/webp'
-      resized = await resizeImageThumbnail(req.body, { height: 480, animated })
+      resized = await resizeImageThumbnail(req.body, { width: 960, height: 720, animated })
       if (animated && resized.length > MAX_ANIMATED_PREVIEW_BYTES) {
-        resized = await resizeImageThumbnail(req.body, { height: 480 })
+        resized = await resizeImageThumbnail(req.body, { width: 960, height: 720 })
       }
     } catch {
       return reply.code(415).send({ error: 'INVALID_MURAL_IMAGE' })
@@ -283,5 +304,18 @@ export function registerMuralRoutes(app, db) {
     const expectedRevision = parseRevision(req.query.revision)
     if (!validId(req.params.id) || !positiveInteger(expectedRevision)) return invalid(reply)
     return sendImageResult(reply, applyImage.immediate(req.params.id, expectedRevision, false, null))
+  })
+
+  app.put(`${ROOT}/:id/size`, { ...NO_STORE, bodyLimit: 1024 }, (req, reply) => {
+    const { id } = req.params
+    const { imageWidth } = req.body ?? {}
+    const validWidth =
+      imageWidth === null ||
+      (Number.isInteger(imageWidth) && imageWidth >= MURAL_MIN_IMAGE_WIDTH && imageWidth <= MURAL_MAX_IMAGE_WIDTH)
+    if (!validId(id) || !validWidth) return invalid(reply)
+    const result = resizeCard.immediate(id, imageWidth)
+    if (!result) return missing(reply)
+    if (result.invalid) return invalid(reply)
+    return reply.send(result)
   })
 }

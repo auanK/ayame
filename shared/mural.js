@@ -4,3 +4,5 @@ export const MURAL_MAX_BODY_LENGTH = 16_000
 export const MURAL_PREVIEW_LENGTH = 480
 export const MURAL_MAX_IMAGE_BYTES = 5 * 1024 * 1024
 export const MURAL_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+export const MURAL_MIN_IMAGE_WIDTH = 160
+export const MURAL_MAX_IMAGE_WIDTH = 960

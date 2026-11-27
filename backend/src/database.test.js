@@ -17,11 +17,11 @@ import {
   pruneExpiredSessions,
 } from './database.js'
 
-test('fresh DB initializes schema version 4 with vaults, mural notes, and images', () => {
+test('fresh DB initializes schema version 5 with vaults, mural notes, and images', () => {
   const db = openDatabase(':memory:')
   try {
     const version = db.pragma('user_version', { simple: true })
-    assert.equal(version, 4)
+    assert.equal(version, 5)
 
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
@@ -111,7 +111,7 @@ test('user_version 0 with existing owner and session tables is rejected without 
   }
 })
 
-test('version 1 schema migrates cleanly to version 4 and preserves owner, session, and vault rows', () => {
+test('version 1 schema migrates cleanly to version 5 and preserves owner, session, and vault rows', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-v1-to-v2-'))
   const dbPath = path.join(tempDir, 'v1.sqlite')
 
@@ -142,7 +142,7 @@ test('version 1 schema migrates cleanly to version 4 and preserves owner, sessio
 
     const db2 = openDatabase(dbPath)
     try {
-      assert.equal(db2.pragma('user_version', { simple: true }), 4)
+      assert.equal(db2.pragma('user_version', { simple: true }), 5)
       const tables = db2
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
         .all()
@@ -174,7 +174,7 @@ test('version 1 schema migrates cleanly to version 4 and preserves owner, sessio
 
     const db3 = openDatabase(dbPath)
     try {
-      assert.equal(db3.pragma('user_version', { simple: true }), 4)
+      assert.equal(db3.pragma('user_version', { simple: true }), 5)
       assert.deepEqual(
         db3.prepare('SELECT id, name, directory FROM vault').all(),
         [{ id: 'v-1', name: 'Notes', directory: 'notes' }]
@@ -187,7 +187,7 @@ test('version 1 schema migrates cleanly to version 4 and preserves owner, sessio
   }
 })
 
-test('version 2 schema migrates to version 4 and preserves owner, session, and vault metadata', () => {
+test('version 2 schema migrates to version 5 and preserves owner, session, and vault metadata', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-v2-reopen-'))
   const dbPath = path.join(tempDir, 'v2.sqlite')
 
@@ -207,7 +207,7 @@ test('version 2 schema migrates to version 4 and preserves owner, session, and v
 
     const db2 = openDatabase(dbPath)
     try {
-      assert.equal(db2.pragma('user_version', { simple: true }), 4)
+      assert.equal(db2.pragma('user_version', { simple: true }), 5)
       assert.equal(db2.prepare('SELECT count(*) AS count FROM mural_note').get().count, 0)
       assert.deepEqual(getOwner(db2), { id: 1, username: 'auank', password_hash: 'hash-1234' })
       assert.deepEqual(
@@ -303,6 +303,7 @@ test('version 3 mural notes are preserved by the image migration', (t) => {
   try {
     db.exec(`
       DROP TABLE mural_image;
+      ALTER TABLE mural_note DROP COLUMN image_width;
       ALTER TABLE mural_note DROP COLUMN kind;
       INSERT INTO mural_note (id, title, body, color, pinned, archived, position, revision, updated_at)
       VALUES ('sample', 'Existing note', 'Text to keep', 'fern', 1, 0, 7, 3, 109);
@@ -313,11 +314,43 @@ test('version 3 mural notes are preserved by the image migration', (t) => {
   }
   const migrated = openDatabase(filename)
   try {
-    assert.equal(migrated.pragma('user_version', { simple: true }), 4)
-    assert.deepEqual(migrated.prepare('SELECT body, color, kind, pinned, position, revision FROM mural_note').get(), {
-      body: 'Text to keep', color: 'fern', kind: 'note', pinned: 1, position: 7, revision: 3,
+    assert.equal(migrated.pragma('user_version', { simple: true }), 5)
+    assert.deepEqual(migrated.prepare('SELECT body, color, kind, image_width, pinned, position, revision FROM mural_note').get(), {
+      body: 'Text to keep', color: 'fern', kind: 'note', image_width: null, pinned: 1, position: 7, revision: 3,
     })
     assert.equal(migrated.prepare('SELECT count(*) AS count FROM mural_image').get().count, 0)
+  } finally {
+    closeDatabase(migrated)
+  }
+})
+
+test('version 4 mural notes and images migrate cleanly to version 5 with null image_width', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-mural-v4-'))
+  const filename = path.join(directory, 'ayame.sqlite')
+  t.after(() => {
+    fs.unlinkSync(filename)
+    fs.rmdirSync(directory)
+  })
+  const db = openDatabase(filename)
+  try {
+    db.exec(`
+      ALTER TABLE mural_note DROP COLUMN image_width;
+      INSERT INTO mural_note (id, title, body, color, pinned, archived, position, revision, updated_at, kind)
+      VALUES ('img-1', 'Cover', '', 'neutral', 0, 0, 1, 1, 200, 'image');
+      INSERT INTO mural_image (card_id, version, mime, original, thumbnail)
+      VALUES ('img-1', 'v1', 'image/png', X'89504E47', X'52494646');
+      PRAGMA user_version = 4;
+    `)
+  } finally {
+    closeDatabase(db)
+  }
+  const migrated = openDatabase(filename)
+  try {
+    assert.equal(migrated.pragma('user_version', { simple: true }), 5)
+    assert.deepEqual(migrated.prepare('SELECT id, kind, image_width FROM mural_note').get(), {
+      id: 'img-1', kind: 'image', image_width: null,
+    })
+    assert.equal(migrated.prepare('SELECT count(*) AS count FROM mural_image').get().count, 1)
   } finally {
     closeDatabase(migrated)
   }
@@ -345,7 +378,7 @@ test('unknown future user_version fails closed', () => {
         root_path TEXT NOT NULL UNIQUE
       );
     `)
-    rawDb.pragma('user_version = 5')
+    rawDb.pragma('user_version = 6')
     rawDb.close()
 
     assert.throws(

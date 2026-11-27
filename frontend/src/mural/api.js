@@ -33,6 +33,8 @@ export const deleteMuralNote = (id, revision) => request(`/${encodeURIComponent(
 
 export const moveMuralNote = (id, payload) => put(`/${encodeURIComponent(id)}/position`, payload)
 
+export const resizeMuralCard = (id, imageWidth) => put(`/${encodeURIComponent(id)}/size`, { imageWidth })
+
 const imagePath = (id) => `/${encodeURIComponent(id)}/image`
 
 export const getMuralImageUrl = (id, version, original = false) => {

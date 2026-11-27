@@ -158,7 +158,7 @@ test('mural images use private thumbnails and support standalone cards and remov
   assert.equal(thumbnail.headers.vary, 'Cookie')
   assert.ok(thumbnail.rawPayload.length < png.length)
   const { width, height } = await sharp(thumbnail.rawPayload).metadata()
-  assert.deepEqual([width, height], [640, 480])
+  assert.deepEqual([width, height], [960, 720])
   const conditional = await app.inject({ url: versioned, headers: { ...headers, 'if-none-match': thumbnail.headers.etag } })
   assert.equal(conditional.statusCode, 304)
   const original = await app.inject({ url: `${versioned}&variant=original`, headers })
@@ -217,4 +217,49 @@ test('dragging a card places it before or after a target and adopts its pinned g
   const ordered = await list()
   assert.deepEqual(ordered.map((card) => card.id), [2, 3, 6, 1, 5, 4].map(id))
   assert.equal(new Set(ordered.map((card) => card.position)).size, 6)
+})
+
+test('mural cards with images persist custom imageWidth and reset cleanly', async (t) => {
+  const db = openDatabase(':memory:')
+  await createOwner(db, { username: 'mural-user', password: 'password123' })
+  const headers = { cookie: `ayame_session=${createSession(db).rawToken}` }
+  const app = createApp({ db, vaultsRoot: os.tmpdir() })
+  t.after(() => app.close())
+
+  const png = await sharp({ create: { width: 800, height: 600, channels: 3, background: '#765080' } }).png().toBuffer()
+  const upload = (url) => app.inject({
+    method: 'PUT', url, headers: { ...headers, 'content-type': 'application/octet-stream' }, payload: png,
+  })
+  const resize = (cardId, imageWidth) => app.inject({
+    method: 'PUT', url: `${base}/${cardId}/size`, headers, payload: { imageWidth },
+  })
+
+  // Text-only note cannot be resized without an image
+  assert.equal((await app.inject({ method: 'PUT', url: `${base}/${id(1)}`, headers, payload: { ...noteFields, expectedRevision: null } })).statusCode, 200)
+  assert.equal((await resize(id(1), 420)).statusCode, 400)
+  assert.equal((await resize(id(99), 420)).statusCode, 404)
+
+  // Standalone image card
+  const created = await upload(`${base}/${id(2)}/image?create=image`)
+  assert.equal(created.json().note.imageWidth, null)
+  assert.equal((await resize(id(2), 159)).statusCode, 400)
+  assert.equal((await resize(id(2), 961)).statusCode, 400)
+  assert.equal((await resize(id(2), 200.5)).statusCode, 400)
+
+  const resized = await resize(id(2), 480)
+  assert.equal(resized.statusCode, 200)
+  assert.equal(resized.json().note.imageWidth, 480)
+  assert.equal((await app.inject({ url: `${base}/${id(2)}`, headers })).json().note.imageWidth, 480)
+  assert.equal((await app.inject({ url: base, headers })).json().cards.find((c) => c.id === id(2)).imageWidth, 480)
+
+  const reset = await resize(id(2), null)
+  assert.equal(reset.statusCode, 200)
+  assert.equal(reset.json().note.imageWidth, null)
+
+  // Note with background image resets imageWidth when the background is deleted
+  assert.equal((await upload(`${base}/${id(1)}/image?revision=1`)).statusCode, 200)
+  assert.equal((await resize(id(1), 520)).json().note.imageWidth, 520)
+  const removed = await app.inject({ method: 'DELETE', url: `${base}/${id(1)}/image?revision=2`, headers })
+  assert.equal(removed.statusCode, 200)
+  assert.equal(removed.json().note.imageWidth, null)
 })
