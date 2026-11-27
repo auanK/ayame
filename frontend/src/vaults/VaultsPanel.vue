@@ -61,7 +61,6 @@
     />
 
     <div class="vaults-panel-content">
-      <slot name="mural" />
       <p v-if="errorMessage" class="error-message" role="alert" aria-live="polite">
         {{ errorMessage }}
       </p>
@@ -194,6 +193,8 @@
           />
         </ul>
       </template>
+
+      <slot name="mural" />
     </div>
 
     <VaultFormModal

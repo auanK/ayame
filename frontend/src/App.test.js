@@ -12,6 +12,7 @@ vi.mock('./mural/api.js', () => ({
   readMuralNote: vi.fn(),
   writeMuralNote: vi.fn(),
   moveMuralNote: vi.fn(),
+  resizeMuralCard: vi.fn(),
 }))
 
 vi.mock('./auth/api.js', () => ({
@@ -616,6 +617,19 @@ describe('App authentication flow', () => {
       expect(wrapper.find('[data-testid="vaults-panel"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="vault-browser"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="authenticated-shell"]').exists()).toBe(true)
+    })
+
+    it('renders the mural section below the vaults list on the vaults hub', async () => {
+      api.getAuthStatus.mockResolvedValue({ initialized: true, authenticated: true })
+      vaultApi.getVaults.mockResolvedValue({ vaults: [detectedVault] })
+
+      const wrapper = mount(App)
+      await flushPromises()
+
+      const vaultsList = wrapper.get('ul[aria-label="Vaults"]').element
+      const muralPanel = wrapper.get('[data-testid="mural-panel"]').element
+      expect(vaultsList.compareDocumentPosition(muralPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      wrapper.unmount()
     })
 
     it('keeps mural notes in memory across a vault visit and discards them on sign-out', async () => {
