@@ -539,7 +539,9 @@ describe('MuralPanel', () => {
 
   it('renders a text note background image behind the color-tinted card and sheet rather than as a header block', async () => {
     const bgNote = { ...initial, kind: 'note', color: 'ochre', title: 'Backdrop', body: 'Over background', imageVersion: 'bg1' }
-    api.listMuralCards.mockResolvedValue(board([{ ...bgNote, preview: bgNote.body }]))
+    const imgWithCaptionId = 'e'.repeat(32)
+    const imgWithCaption = { ...initial, id: imgWithCaptionId, kind: 'image', title: 'Sunset', body: '', imageVersion: 'img1', position: 2 }
+    api.listMuralCards.mockResolvedValue(board([{ ...bgNote, preview: bgNote.body }, imgWithCaption]))
     api.readMuralNote.mockResolvedValueOnce({ note: bgNote })
 
     wrapper = mount(MuralPanel)
@@ -551,6 +553,11 @@ describe('MuralPanel', () => {
     expect(card.find('.mural-card-bg-image').exists()).toBe(true)
     expect(card.find('.mural-card-bg-scrim').exists()).toBe(true)
     expect(card.find('.mural-card-image').exists()).toBe(false)
+    expect(card.find('.mural-card-caption').exists()).toBe(false)
+
+    const photoCard = wrapper.get(`[data-card-id="${imgWithCaptionId}"]`)
+    expect(photoCard.classes()).toContain('mural-card--image-only')
+    expect(photoCard.get('.mural-card-caption').text()).toBe('Sunset')
 
     await card.trigger('click')
     await flushPromises()

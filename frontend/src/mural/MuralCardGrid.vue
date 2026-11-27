@@ -85,7 +85,11 @@
               />
               <span class="mural-card-bg-scrim" aria-hidden="true" />
             </template>
-            <span v-if="card.kind !== 'image' || card.title" class="mural-card-content">
+            <span
+              v-if="card.kind !== 'image' || card.title"
+              class="mural-card-content"
+              :class="{ 'mural-card-caption': card.kind === 'image' && card.imageVersion }"
+            >
               <strong v-if="card.title || !card.preview">{{ card.title || 'Untitled' }}</strong>
               <span v-if="card.preview" class="mural-card-preview">{{ card.preview }}</span>
             </span>
@@ -806,12 +810,31 @@ onBeforeUnmount(() => {
 }
 .mural-card-content { width: 100%; display: grid; gap: 0.4rem; padding: 0.75rem; }
 .mural-card--image-only .mural-card-content {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
   width: 100%;
-  margin-top: 2px;
-  border: 1px solid color-mix(in srgb, var(--mural-accent) 26%, var(--ayame-border));
-  border-radius: var(--radius-sm);
-  background: var(--mural-card-surface);
-  padding: 0.35rem 0.45rem;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0.3rem 0.5rem;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, color-mix(in srgb, var(--mural-accent) 26%, var(--ayame-surface)) 76%, transparent) 0%,
+    color-mix(in srgb, color-mix(in srgb, var(--mural-accent) 18%, var(--ayame-surface)) 54%, transparent) 100%
+  );
+  backdrop-filter: blur(4px);
+  color: var(--ayame-text);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+.mural-card--image-only .mural-card-content strong {
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.3;
+  -webkit-line-clamp: 2;
 }
 .mural-card--has-bg .mural-card-content {
   position: relative;
