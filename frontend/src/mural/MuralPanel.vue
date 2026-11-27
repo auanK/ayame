@@ -28,7 +28,7 @@
       v-if="sections.length"
       :sections="sections"
       :disabled="opening || imageBusy"
-      :reorder-disabled="loading || moving || Boolean(draft)"
+      :reorder-disabled="loading || Boolean(draft)"
       :loading="loading"
       :moving="moving"
       @open="openNote"
@@ -110,6 +110,18 @@ let saveTimer
 let saveTask
 let returnFocus
 const resizeGenerations = new Map()
+const serverPositions = new Map()
+const reorderQueue = []
+let drainingReorder = false
+let lastConfirmedCards = null
+
+const syncServerPositions = (list) => {
+  for (const card of list) {
+    if (card?.id && Number.isFinite(card.position)) {
+      serverPositions.set(card.id, card.position)
+    }
+  }
+}
 
 const sections = computed(() => GROUPS.map((group) => ({
   group,
@@ -167,6 +179,8 @@ const loadCards = async (group = null) => {
       cards.value = [...page.pinned.cards, ...page.notes.cards]
       nextPages.value = { pinned: page.pinned.next, notes: page.notes.next }
     }
+    syncServerPositions(cards.value)
+    lastConfirmedCards = cards.value
   } catch (error) {
     if (!request.signal.aborted && !useSessionError(error)) listError.value = 'Could not load the mural.'
   } finally {
@@ -243,6 +257,8 @@ const updateBoard = (note, previous) => {
   const updated = cards.value.filter((card) => card.id !== note.id)
   if (note.archived === archived.value) updated.push(notePreview(note))
   cards.value = updated.sort(sortCards)
+  syncServerPositions(cards.value)
+  if (!drainingReorder) lastConfirmedCards = cards.value
   if (listRequest) void loadCards()
 }
 
@@ -439,17 +455,25 @@ const retryMyVersion = () => {
   void save()
 }
 
-const applyCardOrder = ({ note, positions }) => {
+const applyCardOrder = ({ note, positions }, updateVisual = true) => {
   const nextPositions = new Map(positions.map(({ id, position }) => [id, position]))
-  for (const [id, position] of nextPositions) noteCache.updatePosition(id, position)
+  for (const [id, position] of nextPositions) {
+    noteCache.updatePosition(id, position)
+    serverPositions.set(id, position)
+  }
+  serverPositions.set(note.id, note.position)
   noteCache.put(note)
-  cards.value = cards.value.map((card) => {
+  const base = (lastConfirmedCards ?? cards.value).map((card) => {
     if (card.id === note.id) return notePreview(note)
     if (nextPositions.has(card.id)) return { ...card, position: nextPositions.get(card.id) }
     return card
   }).sort(sortCards)
+  lastConfirmedCards = base
+  if (updateVisual) {
+    cards.value = base
+  }
   for (const group of GROUPS) {
-    const last = cards.value.findLast((card) => groupOf(card) === group)
+    const last = (updateVisual ? base : cards.value).findLast((card) => groupOf(card) === group)
     if (nextPages.value[group] && last) nextPages.value[group] = `${Number(last.pinned)}:${last.position}`
   }
 }
@@ -481,8 +505,48 @@ const resizeCard = async ({ id, imageWidth }) => {
   }
 }
 
-const reorderCards = async ({ id, targetId, placement }) => {
-  if (draft.value || loading.value || moving.value || imageBusy.value || opening.value) return
+const drainReorderQueue = async () => {
+  if (drainingReorder) return
+  drainingReorder = true
+  moving.value = true
+  listError.value = ''
+  reorderStatus.value = ''
+  try {
+    while (reorderQueue.length > 0 && mounted) {
+      const { id, targetId, placement } = reorderQueue.shift()
+      const card = cards.value.find((item) => item.id === id) ?? lastConfirmedCards?.find((item) => item.id === id)
+      const target = cards.value.find((item) => item.id === targetId) ?? lastConfirmedCards?.find((item) => item.id === targetId)
+      const expectedPosition = serverPositions.get(id) ?? card?.position
+      const expectedTargetPosition = serverPositions.get(targetId) ?? target?.position
+      if (!expectedPosition || !expectedTargetPosition) continue
+
+      const result = await moveMuralNote(id, {
+        targetId,
+        placement,
+        expectedPosition,
+        expectedTargetPosition,
+      })
+      if (!mounted) return
+      applyCardOrder(result, reorderQueue.length === 0)
+    }
+    if (mounted) reorderStatus.value = 'Card order saved.'
+  } catch (error) {
+    reorderQueue.length = 0
+    if (!mounted || useSessionError(error)) return
+    if (lastConfirmedCards) cards.value = lastConfirmedCards
+    if (error.code === 'MURAL_POSITION_CONFLICT') {
+      if (error.note) noteCache.put(error.note)
+      await loadCards()
+    }
+    listError.value = 'Could not reorder the card. Try again.'
+  } finally {
+    drainingReorder = false
+    moving.value = false
+  }
+}
+
+const reorderCards = ({ id, targetId, placement }) => {
+  if (draft.value || loading.value || imageBusy.value || opening.value) return
   const previous = cards.value
   const card = previous.find((item) => item.id === id)
   const target = previous.find((item) => item.id === targetId)
@@ -491,26 +555,14 @@ const reorderCards = async ({ id, targetId, placement }) => {
   const reordered = previous.filter((item) => item.id !== id)
   reordered.splice(reordered.indexOf(target) + Number(placement === 'after'), 0, { ...card, pinned: target.pinned })
   if (reordered.every((item, index) => item.id === previous[index].id && item.pinned === previous[index].pinned)) return
-  cards.value = reordered
-  moving.value = true
-  listError.value = ''
-  reorderStatus.value = ''
-  try {
-    const result = await moveMuralNote(id, { targetId, placement, expectedPosition: card.position, expectedTargetPosition: target.position })
-    if (!mounted) return
-    applyCardOrder(result)
-    reorderStatus.value = 'Card order saved.'
-  } catch (error) {
-    if (!mounted || useSessionError(error)) return
-    cards.value = previous
-    if (error.code === 'MURAL_POSITION_CONFLICT') {
-      if (error.note) noteCache.put(error.note)
-      await loadCards()
-    }
-    listError.value = 'Could not reorder the card. Try again.'
-  } finally {
-    moving.value = false
+
+  if (!drainingReorder && reorderQueue.length === 0) {
+    syncServerPositions(previous)
+    lastConfirmedCards = previous
   }
+  cards.value = reordered
+  reorderQueue.push({ id, targetId, placement })
+  void drainReorderQueue()
 }
 
 const moveNote = async (direction) => {

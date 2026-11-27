@@ -1,7 +1,8 @@
 <template>
   <div
-    ref="grid"
+    ref="boardEl"
     class="mural-board"
+    :class="{ 'mural-board--animated': layoutReady }"
     @pointerdown="startPointer"
     @click.capture="suppressDragClick"
     @dragstart.prevent
@@ -14,17 +15,34 @@
       :aria-label="section.label"
     >
       <h4>{{ section.label }}</h4>
-      <div class="mural-grid" :class="{ 'mural-grid--packed': packed }">
+      <div
+        :ref="(el) => setCanvasRef(section.group, el)"
+        class="mural-canvas"
+        :style="{ height: `${sectionLayout(section.group).height}px` }"
+      >
+        <div
+          v-if="placeholderSlot(section.group)"
+          class="mural-placeholder"
+          :style="{
+            width: `${placeholderSlot(section.group).width}px`,
+            height: `${placeholderSlot(section.group).height}px`,
+            transform: `translate3d(${placeholderSlot(section.group).x}px, ${placeholderSlot(section.group).y}px, 0)`,
+          }"
+          aria-hidden="true"
+        />
+
         <div
           v-for="card in section.cards"
           :key="card.id"
+          :ref="(el) => setTileRef(card.id, el)"
           :data-mural-tile="card.id"
           class="mural-tile"
           :class="{
-            'mural-tile--placeholder': drag?.id === card.id,
-            'mural-tile--resized': effectiveWidthFor(card) !== null,
+            'mural-tile--dragging': drag?.id === card.id,
+            'mural-tile--resized': isResized(card),
             'mural-tile--resizing': activeResize?.id === card.id,
           }"
+          :style="tileStyle(section.group, card)"
         >
           <button
             type="button"
@@ -47,6 +65,7 @@
               loading="lazy"
               decoding="async"
               draggable="false"
+              @load="onImageLoad(card.id, $event)"
             />
             <span v-if="card.kind !== 'image' || card.title" class="mural-card-content">
               <strong v-if="card.title || !card.preview">{{ card.title || 'Untitled' }}</strong>
@@ -91,42 +110,6 @@
         {{ loading ? 'Loading…' : section.group === 'pinned' ? 'Load more pinned notes' : 'Load more notes' }}
       </button>
     </section>
-
-    <Teleport to="body">
-      <div
-        v-if="drag"
-        ref="ghostEl"
-        class="mural-drag-ghost"
-        :style="{
-          width: `${drag.width}px`,
-          minHeight: `${drag.height}px`,
-          '--mural-accent': muralAccent(drag.card.color),
-          transform: `translate3d(${drag.x}px, ${drag.y}px, 0) scale(1.02)`,
-        }"
-        aria-hidden="true"
-      >
-        <div
-          class="mural-card mural-card--ghost"
-          :class="{
-            'mural-card--with-image': drag.card.imageVersion,
-            'mural-card--image-only': drag.card.kind === 'image' && drag.card.imageVersion,
-          }"
-        >
-          <img
-            v-if="drag.card.imageVersion"
-            class="mural-card-image"
-            :src="getMuralImageUrl(drag.card.id, drag.card.imageVersion)"
-            alt=""
-            decoding="async"
-            draggable="false"
-          />
-          <span v-if="drag.card.kind !== 'image' || drag.card.title" class="mural-card-content">
-            <strong v-if="drag.card.title || !drag.card.preview">{{ drag.card.title || 'Untitled' }}</strong>
-            <span v-if="drag.card.preview" class="mural-card-preview">{{ drag.card.preview }}</span>
-          </span>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
@@ -135,6 +118,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { MURAL_MAX_IMAGE_WIDTH, MURAL_MIN_IMAGE_WIDTH } from '../../../shared/mural.js'
 import { getMuralImageUrl } from './api.js'
 import { muralAccent } from './colors.js'
+import {
+  MURAL_GAP,
+  computeBaseColumnWidth,
+  computeCardWidth,
+  findBestDropIndex,
+  packSkyline,
+} from './layout.js'
 
 const props = defineProps({
   sections: { type: Array, required: true },
@@ -146,124 +136,190 @@ const props = defineProps({
 
 const emit = defineEmits(['open', 'reorder', 'resize', 'more'])
 
-const grid = ref(null)
-const ghostEl = ref(null)
-const packed = ref(false)
-const liveSections = shallowRef(null)
+const boardEl = ref(null)
+const boardWidth = ref(1024)
+const layoutReady = ref(false)
+const layoutVersion = ref(0)
 const drag = shallowRef(null)
+const dragTarget = shallowRef(null)
 const activeResize = shallowRef(null)
-const displaySections = computed(() => liveSections.value ?? props.sections)
-const cards = computed(() => displaySections.value.flatMap((section) => section.cards))
-const cardsById = computed(() => new Map(cards.value.map((card) => [card.id, card])))
 
+const canvasEls = new Map()
+const tileEls = new Map()
+const tileHeights = new Map()
+const imageRatios = new Map()
 const observedTiles = new Set()
-let observer
+
+let boardObserver = null
+let tileObserver = null
 let pointer = null
 let resizeOp = null
 let dragFrame = 0
 let resizeFrame = 0
-let flipCleanupTimer = 0
 let blockClickUntil = 0
-let lastSwapAt = 0
-let dragSourceSection = null
-let dragSourceIndex = -1
-let cachedTiles = []
-let cachedSections = []
+const liveDragPos = { x: 0, y: 0 }
+
+const displaySections = computed(() => props.sections)
+const cards = computed(() => displaySections.value.flatMap((section) => section.cards))
+const cardsById = computed(() => new Map(cards.value.map((card) => [card.id, card])))
 
 const cardLabel = (card) => card.title || card.preview?.trim().slice(0, 48) || (card.kind === 'image' ? 'Image card' : 'Untitled note')
-const effectiveWidthFor = (card) => activeResize.value?.id === card.id ? activeResize.value.width : (card.imageWidth ?? null)
+const isResized = (card) => activeResize.value?.id === card.id || card.imageWidth != null
 const clampWidth = (width, maxWidth = MURAL_MAX_IMAGE_WIDTH) =>
   Math.max(MURAL_MIN_IMAGE_WIDTH, Math.min(maxWidth, Math.round(width)))
 
-const gridMetricsFor = (gridEl) => {
-  const style = getComputedStyle(gridEl)
-  const gap = Number.parseFloat(style.columnGap) || 0
-  const tracks = style.gridTemplateColumns.split(' ').filter(Boolean)
-  const firstTrack = Number.parseFloat(tracks[0])
-  const parentWidth = gridEl.getBoundingClientRect().width
-  const colCount = tracks.length > 0 && Number.isFinite(firstTrack) ? tracks.length : 1
-  const colWidth = Number.isFinite(firstTrack) && firstTrack > 0 ? firstTrack : Math.max(256, parentWidth)
-  return { gap, colCount, colWidth }
+const setCanvasRef = (group, el) => {
+  if (el) canvasEls.set(group, el)
+  else canvasEls.delete(group)
 }
 
-const sizeTiles = (tiles) => {
-  if (!grid.value) return
-  const metricsCache = new Map()
-  const tileEntries = []
+const setTileRef = (id, el) => {
+  if (el) tileEls.set(id, el)
+  else tileEls.delete(id)
+}
 
-  // Pass 1: compute and apply column span and target image width before reading heights.
-  for (const tile of tiles) {
-    const parent = tile.parentElement
-    if (!parent) continue
-    let metrics = metricsCache.get(parent)
-    if (!metrics) {
-      metrics = gridMetricsFor(parent)
-      metricsCache.set(parent, metrics)
+const onImageLoad = (id, event) => {
+  const img = event.target
+  if (img?.naturalWidth > 0 && img?.naturalHeight > 0) {
+    const ratio = img.naturalWidth / img.naturalHeight
+    if (imageRatios.get(id) !== ratio) {
+      imageRatios.set(id, ratio)
+      layoutVersion.value++
     }
-    const card = cardsById.value.get(tile.dataset.muralTile)
-    const width = card ? effectiveWidthFor(card) : null
-    if (width) {
-      const colSpan = Math.min(metrics.colCount, Math.max(1, Math.ceil((width + metrics.gap - 12) / (metrics.colWidth + metrics.gap))))
-      tile.style.gridColumn = colSpan > 1 ? `span ${colSpan}` : ''
-      tile.style.setProperty('--mural-image-target-width', `${width}px`)
-    } else {
-      tile.style.gridColumn = ''
-      tile.style.removeProperty('--mural-image-target-width')
-    }
-    tileEntries.push({ tile, gap: metrics.gap })
   }
+}
 
-  // Pass 2: measure heights and rendered image widths in one read batch.
-  const measurements = tileEntries.map(({ tile, gap }) => {
-    const rows = Math.ceil(tile.getBoundingClientRect().height + gap)
-    const image = tile.querySelector('.mural-card--with-image .mural-card-image')
-    return { tile, rows, imageWidth: image?.getBoundingClientRect().width }
+const widthForCard = (card, widthOverride = null) => {
+  const containerW = boardWidth.value || 1024
+  const baseW = computeBaseColumnWidth(containerW, MURAL_GAP)
+  const override = widthOverride ?? (activeResize.value?.id === card.id ? activeResize.value.width : null)
+  return computeCardWidth(card, containerW, baseW, {
+    overrideWidth: override,
+    aspectRatio: imageRatios.get(card.id) ?? null,
+  })
+}
+
+const heightForCard = (card, width) => {
+  const measured = tileHeights.get(card.id)
+  if (measured && measured > 0) return measured
+  const ratio = imageRatios.get(card.id)
+  if (card.imageVersion && ratio > 0) return Math.max(96, Math.round(width / ratio))
+  return card.imageVersion ? Math.round(width * 0.75) : 120
+}
+
+const buildItemsForSection = (section) => {
+  const activeDrag = drag.value
+  const target = dragTarget.value
+  const filtered = activeDrag
+    ? section.cards.filter((card) => card.id !== activeDrag.id)
+    : section.cards
+
+  const items = filtered.map((card) => {
+    const width = widthForCard(card)
+    return {
+      id: card.id,
+      width,
+      height: heightForCard(card, width),
+    }
   })
 
-  // Pass 3: write row spans and caption widths in one write batch.
-  for (const { tile, rows, imageWidth } of measurements) {
-    tile.style.setProperty('--mural-card-rows', String(Math.max(1, rows)))
-    if (imageWidth) tile.style.setProperty('--mural-image-width', `${imageWidth}px`)
-    else tile.style.removeProperty('--mural-image-width')
+  if (activeDrag && target && target.group === section.group) {
+    const insertAt = Math.max(0, Math.min(items.length, target.index))
+    items.splice(insertAt, 0, {
+      id: activeDrag.id,
+      width: activeDrag.width,
+      height: activeDrag.height,
+    })
+  }
+
+  return items
+}
+
+const sectionLayouts = computed(() => {
+  void layoutVersion.value
+  const containerW = boardWidth.value || 1024
+  const map = new Map()
+  for (const section of displaySections.value) {
+    const items = buildItemsForSection(section)
+    map.set(section.group, packSkyline(items, containerW, MURAL_GAP))
+  }
+  return map
+})
+
+const sectionLayout = (group) => sectionLayouts.value.get(group) ?? { positions: new Map(), height: 0 }
+
+const placeholderSlot = (group) => {
+  if (!drag.value || !dragTarget.value || dragTarget.value.group !== group) return null
+  return sectionLayout(group).positions.get(drag.value.id) ?? null
+}
+
+const tileStyle = (group, card) => {
+  if (drag.value?.id === card.id) {
+    return {
+      width: `${drag.value.width}px`,
+      height: `${drag.value.height}px`,
+      transform: `translate3d(${liveDragPos.x}px, ${liveDragPos.y}px, 0)`,
+    }
+  }
+  const slot = sectionLayout(group).positions.get(card.id)
+  const width = slot?.width ?? widthForCard(card)
+  const x = slot?.x ?? 0
+  const y = slot?.y ?? 0
+  const style = {
+    width: `${width}px`,
+    transform: `translate3d(${x}px, ${y}px, 0)`,
+  }
+  if (isResized(card)) {
+    style['--mural-image-target-width'] = `${width}px`
+  }
+  return style
+}
+
+const syncObservers = () => {
+  if (!boardEl.value) return
+  const measuredBoardW = Math.floor(boardEl.value.getBoundingClientRect().width)
+  if (measuredBoardW > 0 && measuredBoardW !== boardWidth.value) {
+    boardWidth.value = measuredBoardW
+  }
+
+  if (tileObserver) {
+    const visible = new Set(boardEl.value.querySelectorAll('[data-mural-tile]'))
+    for (const el of observedTiles) {
+      if (!visible.has(el)) {
+        tileObserver.unobserve(el)
+        observedTiles.delete(el)
+      }
+    }
+    for (const el of visible) {
+      if (!observedTiles.has(el)) {
+        tileObserver.observe(el)
+        observedTiles.add(el)
+      }
+      const id = el.dataset.muralTile
+      const h = Math.ceil(el.getBoundingClientRect().height)
+      if (id && h > 0 && tileHeights.get(id) !== h) {
+        tileHeights.set(id, h)
+        layoutVersion.value++
+      }
+    }
   }
 }
 
-const observeTiles = () => {
-  if (!grid.value) return
-  const visible = new Set(grid.value.querySelectorAll('[data-mural-tile]'))
-  if (observer) {
-    for (const tile of observedTiles) {
-      if (!visible.has(tile)) {
-        observer.unobserve(tile)
-        observedTiles.delete(tile)
-      }
-    }
-    for (const tile of visible) {
-      if (!observedTiles.has(tile)) {
-        observer.observe(tile)
-        observedTiles.add(tile)
-      }
-    }
-  }
-  sizeTiles(visible)
-  packed.value = true
-}
-
-const maxWidthForTile = (tile) => {
-  const gridWidth = tile?.parentElement?.getBoundingClientRect().width || MURAL_MAX_IMAGE_WIDTH
-  return Math.max(MURAL_MIN_IMAGE_WIDTH, Math.min(MURAL_MAX_IMAGE_WIDTH, Math.round(gridWidth)))
+const maxWidthForBoard = () => {
+  const w = boardEl.value?.getBoundingClientRect().width || boardWidth.value || MURAL_MAX_IMAGE_WIDTH
+  return Math.max(MURAL_MIN_IMAGE_WIDTH, Math.min(MURAL_MAX_IMAGE_WIDTH, Math.floor(w)))
 }
 
 const startResize = (event, card) => {
   if (resizeOp || drag.value || pointer || props.disabled || props.reorderDisabled || event.button !== 0 || event.isPrimary === false) return
   event.preventDefault()
-  const tile = event.currentTarget.closest('[data-mural-tile]')
+  const tile = tileEls.get(card.id) || event.currentTarget.closest('[data-mural-tile]')
   const image = tile?.querySelector('.mural-card-image')
   const imgRect = image?.getBoundingClientRect()
-  const maxWidth = maxWidthForTile(tile)
-  const rawStartWidth = card.imageWidth || imgRect?.width || tile?.getBoundingClientRect().width || 280
-  const startWidth = clampWidth(rawStartWidth, maxWidth)
-  const aspectRatio = imgRect && imgRect.height > 0 ? imgRect.width / imgRect.height : 1
+  const maxWidth = maxWidthForBoard()
+  const currentWidth = widthForCard(card)
+  const startWidth = clampWidth(currentWidth, maxWidth)
+  const aspectRatio = imgRect && imgRect.height > 0 ? imgRect.width / imgRect.height : (imageRatios.get(card.id) ?? 1)
 
   try {
     event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -272,7 +328,6 @@ const startResize = (event, card) => {
   resizeOp = {
     pointerId: event.pointerId,
     id: card.id,
-    tile,
     startX: event.clientX,
     startY: event.clientY,
     startWidth,
@@ -290,238 +345,81 @@ const resetResize = (card) => {
 
 const nudgeResize = (card, delta) => {
   if (props.disabled || props.reorderDisabled) return
-  const tile = grid.value?.querySelector(`[data-mural-tile="${card.id}"]`)
-  const image = tile?.querySelector('.mural-card-image')
-  const maxWidth = maxWidthForTile(tile)
-  const current = card.imageWidth || image?.getBoundingClientRect().width || tile?.getBoundingClientRect().width || 280
+  const maxWidth = maxWidthForBoard()
+  const current = widthForCard(card)
   const next = clampWidth(current + delta, maxWidth)
   if (next !== card.imageWidth) emit('resize', { id: card.id, imageWidth: next })
 }
 
-const buildLayoutCache = (rectMap = null) => {
-  if (!grid.value) {
-    cachedTiles = []
-    cachedSections = []
-    return
-  }
-  const dragId = drag.value?.id
-  cachedTiles = []
-  cachedSections = []
-  for (const sectionEl of grid.value.querySelectorAll('[data-mural-section]')) {
-    const group = sectionEl.dataset.muralSection
-    const secRect = sectionEl.getBoundingClientRect()
-    cachedSections.push({ group, top: secRect.top, bottom: secRect.bottom })
-    for (const tileEl of sectionEl.querySelectorAll('[data-mural-tile]')) {
-      const id = tileEl.dataset.muralTile
-      if (id === dragId) continue
-      const rect = rectMap?.get(id) ?? tileEl.getBoundingClientRect()
-      cachedTiles.push({
-        id,
-        group,
-        left: rect.left,
-        right: rect.right,
-        top: rect.top,
-        bottom: rect.bottom,
-        width: rect.width,
-        height: rect.height,
-        cx: rect.left + rect.width / 2,
-        cy: rect.top + rect.height / 2,
-      })
-    }
-  }
-}
-
-const findCardLocation = (sectionsList, cardId) => {
-  for (let s = 0; s < sectionsList.length; s++) {
-    const idx = sectionsList[s].cards.findIndex((c) => c.id === cardId)
-    if (idx !== -1) return { sectionIndex: s, group: sectionsList[s].group, cardIndex: idx }
+const findCardLocation = (cardId) => {
+  for (const section of displaySections.value) {
+    const idx = section.cards.findIndex((c) => c.id === cardId)
+    if (idx !== -1) return { group: section.group, index: idx }
   }
   return null
-}
-
-const computeTargetSlot = (x, y) => {
-  if (!cachedTiles.length || !liveSections.value) return null
-  const dragId = drag.value?.id
-  const currentLoc = findCardLocation(liveSections.value, dragId)
-  if (!currentLoc) return null
-
-  // 1. Direct hit inside a sibling tile
-  for (const tile of cachedTiles) {
-    if (x >= tile.left && x <= tile.right && y >= tile.top && y <= tile.bottom) {
-      const targetLoc = findCardLocation(liveSections.value, tile.id)
-      if (!targetLoc) return null
-      if (targetLoc.group === currentLoc.group) {
-        return {
-          targetId: tile.id,
-          placement: currentLoc.cardIndex < targetLoc.cardIndex ? 'after' : 'before',
-          group: targetLoc.group,
-        }
-      }
-      return {
-        targetId: tile.id,
-        placement: y < tile.cy ? 'before' : 'after',
-        group: targetLoc.group,
-      }
-    }
-  }
-
-  // 2. Free-space hit (gaps, trailing space, or across section boundaries)
-  let targetSection = cachedSections.find((sec) => y >= sec.top && y <= sec.bottom)
-  if (!targetSection) {
-    targetSection = cachedSections.reduce((best, sec) => {
-      const dist = y < sec.top ? sec.top - y : y - sec.bottom
-      const bestDist = y < best.top ? best.top - y : y - best.bottom
-      return dist < bestDist ? sec : best
-    }, cachedSections[0])
-  }
-
-  const sectionTiles = cachedTiles.filter((tile) => tile.group === targetSection?.group)
-  const pool = sectionTiles.length ? sectionTiles : cachedTiles
-  const firstTile = pool[0]
-  const lastTile = pool[pool.length - 1]
-
-  if (y < firstTile.top || (y <= firstTile.bottom && x < firstTile.left)) {
-    return { targetId: firstTile.id, placement: 'before', group: firstTile.group }
-  }
-  if (y > lastTile.bottom || (y >= lastTile.top && x > lastTile.right)) {
-    return { targetId: lastTile.id, placement: 'after', group: lastTile.group }
-  }
-
-  let closest = pool[0]
-  let minDist = Number.POSITIVE_INFINITY
-  for (const tile of pool) {
-    const dx = Math.max(tile.left - x, 0, x - tile.right)
-    const dy = Math.max(tile.top - y, 0, y - tile.bottom)
-    const dist = dx * dx + dy * dy
-    if (dist < minDist) {
-      minDist = dist
-      closest = tile
-    }
-  }
-  const sameRow = y >= closest.top && y <= closest.bottom
-  const placement = sameRow ? (x < closest.cx ? 'before' : 'after') : (y < closest.cy ? 'before' : 'after')
-  return { targetId: closest.id, placement, group: closest.group }
-}
-
-const applyLiveReorder = async ({ targetId, placement }) => {
-  if (!liveSections.value || !drag.value || !grid.value) return
-  const sourceId = drag.value.id
-  const current = liveSections.value
-  const srcLoc = findCardLocation(current, sourceId)
-  const dstLoc = findCardLocation(current, targetId)
-  if (!srcLoc || !dstLoc) return
-
-  const draggedCard = current[srcLoc.sectionIndex].cards[srcLoc.cardIndex]
-  const targetPinned = current[dstLoc.sectionIndex].group === 'pinned'
-
-  const nextSections = current.map((section) => ({
-    ...section,
-    cards: section.cards.filter((card) => card.id !== sourceId),
-  }))
-
-  const insertSection = nextSections[dstLoc.sectionIndex]
-  const targetIdx = insertSection.cards.findIndex((card) => card.id === targetId)
-  const insertAt = targetIdx + Number(placement === 'after')
-  insertSection.cards.splice(insertAt, 0, { ...draggedCard, pinned: targetPinned })
-
-  const unchanged = nextSections.every((sec, sIdx) =>
-    sec.cards.length === current[sIdx].cards.length &&
-    sec.cards.every((c, cIdx) => c.id === current[sIdx].cards[cIdx].id)
-  )
-  if (unchanged) return
-
-  // FLIP First: record current sibling positions before DOM reorder.
-  const tileNodes = new Map()
-  const beforeRects = new Map()
-  for (const el of grid.value.querySelectorAll('[data-mural-tile]')) {
-    const id = el.dataset.muralTile
-    if (id !== sourceId) {
-      tileNodes.set(id, el)
-      beforeRects.set(id, el.getBoundingClientRect())
-    }
-  }
-
-  lastSwapAt = performance.now()
-  liveSections.value = nextSections
-
-  await nextTick()
-  if (!drag.value || !grid.value) return
-
-  sizeTiles(grid.value.querySelectorAll('[data-mural-tile]'))
-
-  // FLIP Last + Invert: capture settled rects first so cachedTiles stay exact.
-  const settledRects = new Map()
-  const movedNodes = []
-  for (const el of grid.value.querySelectorAll('[data-mural-tile]')) {
-    const id = el.dataset.muralTile
-    if (id === sourceId) continue
-    const after = el.getBoundingClientRect()
-    settledRects.set(id, after)
-    const before = beforeRects.get(id)
-    if (!before) continue
-    const dx = before.left - after.left
-    const dy = before.top - after.top
-    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-      el.style.transition = 'none'
-      el.style.transform = `translate3d(${dx}px, ${dy}px, 0)`
-      movedNodes.push(el)
-    }
-  }
-
-  if (movedNodes.length) {
-    void grid.value.offsetHeight
-    for (const el of movedNodes) {
-      el.style.transition = 'transform 180ms cubic-bezier(0.2, 0, 0, 1)'
-      el.style.transform = ''
-    }
-    clearTimeout(flipCleanupTimer)
-    flipCleanupTimer = setTimeout(() => {
-      for (const el of movedNodes) {
-        el.style.transition = ''
-        el.style.transform = ''
-      }
-    }, 190)
-  }
-
-  buildLayoutCache(settledRects)
-}
-
-const updateGhostPosition = () => {
-  if (!ghostEl.value || !pointer) return
-  const tx = pointer.x - pointer.offsetX
-  const ty = pointer.y - pointer.offsetY
-  ghostEl.value.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(1.02)`
 }
 
 const stepDrag = () => {
   dragFrame = 0
   if (!drag.value || !pointer) return
 
-  updateGhostPosition()
+  const tx = pointer.x - pointer.offsetX
+  const ty = pointer.y - pointer.offsetY
+  liveDragPos.x = tx
+  liveDragPos.y = ty
+
+  const draggedEl = tileEls.get(drag.value.id)
+  if (draggedEl) {
+    draggedEl.style.transform = `translate3d(${tx}px, ${ty}px, 0)`
+  }
 
   const margin = 64
   const distance = pointer.y < margin ? pointer.y - margin : Math.max(0, pointer.y - (window.innerHeight - margin))
   if (distance) {
-    const step = Math.sign(distance) * Math.min(26, Math.ceil(Math.abs(distance) / 3))
-    const prevY = window.scrollY
-    window.scrollBy(0, step)
-    const scrolled = window.scrollY - prevY
-    if (scrolled) {
-      for (const tile of cachedTiles) {
-        tile.top -= scrolled
-        tile.bottom -= scrolled
-        tile.cy -= scrolled
-      }
-      for (const sec of cachedSections) {
-        sec.top -= scrolled
-        sec.bottom -= scrolled
-      }
+    window.scrollBy(0, Math.sign(distance) * Math.min(26, Math.ceil(Math.abs(distance) / 3)))
+  }
+
+  const dragCenterX = tx + drag.value.width / 2
+  const dragCenterY = ty + drag.value.height / 2
+
+  let targetSection = null
+  let bestSecDist = Number.POSITIVE_INFINITY
+  for (const section of displaySections.value) {
+    const canvas = canvasEls.get(section.group)
+    if (!canvas) continue
+    const rect = canvas.getBoundingClientRect()
+    const dist = dragCenterY < rect.top ? rect.top - dragCenterY : (dragCenterY > rect.bottom ? dragCenterY - rect.bottom : 0)
+    if (dist < bestSecDist) {
+      bestSecDist = dist
+      targetSection = { section, rect }
     }
   }
 
-  if (lastSwapAt === 0 || performance.now() - lastSwapAt >= 120) {
-    const target = computeTargetSlot(pointer.x, pointer.y)
-    if (target) void applyLiveReorder(target)
+  if (targetSection) {
+    const { section, rect } = targetSection
+    const containerW = boardWidth.value || Math.floor(rect.width) || 1024
+    const others = section.cards
+      .filter((c) => c.id !== drag.value.id)
+      .map((c) => {
+        const width = widthForCard(c)
+        return { id: c.id, width, height: heightForCard(c, width) }
+      })
+
+    const currentIndex = dragTarget.value?.group === section.group ? dragTarget.value.index : -1
+    const nextIdx = findBestDropIndex({
+      others,
+      draggedId: drag.value.id,
+      draggedSize: { width: drag.value.width, height: drag.value.height },
+      currentIndex,
+      centerX: dragCenterX - rect.left,
+      centerY: dragCenterY - rect.top,
+      containerWidth: containerW,
+      gap: MURAL_GAP,
+    })
+
+    if (!dragTarget.value || dragTarget.value.group !== section.group || dragTarget.value.index !== nextIdx) {
+      dragTarget.value = { group: section.group, index: nextIdx }
+    }
   }
 
   if (drag.value) {
@@ -533,24 +431,28 @@ const startPointer = (event) => {
   if (pointer || resizeOp || props.disabled || props.reorderDisabled || cards.value.length < 2 || event.button !== 0 || event.isPrimary === false) return
   if (event.target.closest('[data-mural-resize-handle]')) return
   if (event.pointerType === 'touch' && !event.target.closest('[data-mural-drag-handle]')) return
+
   const tileEl = event.target.closest('[data-mural-tile]')
   const id = tileEl?.dataset.muralTile
   const card = cardsById.value.get(id)
   if (!card || !tileEl) return
+
   const rect = tileEl.getBoundingClientRect()
+  const lockedWidth = widthForCard(card)
+  const lockedHeight = Math.round(rect.height || heightForCard(card, lockedWidth))
+
   pointer = {
     pointerId: event.pointerId,
     id,
     card,
-    label: cardLabel(card),
     startX: event.clientX,
     startY: event.clientY,
     x: event.clientX,
     y: event.clientY,
     offsetX: event.clientX - rect.left,
     offsetY: event.clientY - rect.top,
-    width: rect.width,
-    height: rect.height,
+    width: Math.round(rect.width || lockedWidth),
+    height: lockedHeight,
   }
 }
 
@@ -566,11 +468,6 @@ const trackPointer = (event) => {
         resizeFrame = 0
         if (!resizeOp) return
         activeResize.value = { id: resizeOp.id, width: resizeOp.latestWidth }
-        void nextTick(() => {
-          if (resizeOp?.tile?.parentElement) {
-            sizeTiles(resizeOp.tile.parentElement.querySelectorAll('[data-mural-tile]'))
-          }
-        })
       })
     }
     return
@@ -582,29 +479,22 @@ const trackPointer = (event) => {
 
   if (!drag.value) {
     if (Math.hypot(pointer.x - pointer.startX, pointer.y - pointer.startY) < 5) return
+    const loc = findCardLocation(pointer.id)
+    if (!loc) return
     try {
-      grid.value.setPointerCapture?.(event.pointerId)
+      boardEl.value?.setPointerCapture?.(event.pointerId)
     } catch {}
-    const loc = findCardLocation(props.sections, pointer.id)
-    dragSourceSection = loc?.group ?? null
-    dragSourceIndex = loc?.cardIndex ?? -1
-    lastSwapAt = 0
-    liveSections.value = props.sections.map((section) => ({ ...section, cards: [...section.cards] }))
+    liveDragPos.x = pointer.x - pointer.offsetX
+    liveDragPos.y = pointer.y - pointer.offsetY
+    dragTarget.value = { group: loc.group, index: loc.index }
     drag.value = {
       id: pointer.id,
-      card: pointer.card,
-      label: pointer.label,
+      sourceGroup: loc.group,
+      sourceIndex: loc.index,
       width: pointer.width,
       height: pointer.height,
-      x: pointer.x - pointer.offsetX,
-      y: pointer.y - pointer.offsetY,
     }
-    void nextTick(() => {
-      if (!drag.value) return
-      buildLayoutCache()
-      updateGhostPosition()
-      if (!dragFrame) dragFrame = requestAnimationFrame(stepDrag)
-    })
+    if (!dragFrame) dragFrame = requestAnimationFrame(stepDrag)
   }
   event.preventDefault()
 }
@@ -613,15 +503,9 @@ const resetDrag = () => {
   if (drag.value) blockClickUntil = performance.now() + 250
   pointer = null
   drag.value = null
-  liveSections.value = null
-  dragSourceSection = null
-  dragSourceIndex = -1
-  lastSwapAt = 0
-  cachedTiles = []
-  cachedSections = []
+  dragTarget.value = null
   cancelAnimationFrame(dragFrame)
   dragFrame = 0
-  clearTimeout(flipCleanupTimer)
 }
 
 const endPointer = (event) => {
@@ -632,7 +516,7 @@ const endPointer = (event) => {
     resizeOp = null
     activeResize.value = null
     blockClickUntil = performance.now() + 250
-    void nextTick(() => observeTiles())
+    void nextTick(() => syncObservers())
     if (event.type === 'pointerup' && latestWidth !== startWidth) {
       emit('resize', { id, imageWidth: latestWidth })
     }
@@ -642,21 +526,21 @@ const endPointer = (event) => {
   if (!pointer || event.pointerId !== pointer.pointerId) return
   let movePayload = null
 
-  if (drag.value && event.type === 'pointerup' && liveSections.value) {
-    const loc = findCardLocation(liveSections.value, pointer.id)
-    if (loc && (loc.group !== dragSourceSection || loc.cardIndex !== dragSourceIndex)) {
-      const sectionCards = liveSections.value[loc.sectionIndex].cards
-      if (loc.cardIndex > 0) {
-        movePayload = { id: pointer.id, targetId: sectionCards[loc.cardIndex - 1].id, placement: 'after' }
-      } else if (sectionCards.length > 1) {
-        movePayload = { id: pointer.id, targetId: sectionCards[1].id, placement: 'before' }
+  if (drag.value && event.type === 'pointerup' && dragTarget.value) {
+    const { group, index } = dragTarget.value
+    if (group !== drag.value.sourceGroup || index !== drag.value.sourceIndex) {
+      const targetSection = displaySections.value.find((s) => s.group === group)
+      const others = (targetSection?.cards ?? []).filter((c) => c.id !== drag.value.id)
+      const insertAt = Math.max(0, Math.min(others.length, index))
+      if (insertAt > 0) {
+        movePayload = { id: drag.value.id, targetId: others[insertAt - 1].id, placement: 'after' }
+      } else if (others.length > 0) {
+        movePayload = { id: drag.value.id, targetId: others[0].id, placement: 'before' }
       }
     }
   }
 
-  if (movePayload) {
-    emit('reorder', movePayload)
-  }
+  if (movePayload) emit('reorder', movePayload)
   resetDrag()
 }
 
@@ -680,23 +564,42 @@ const cancelWithEscape = (event) => {
     resizeFrame = 0
     resizeOp = null
     activeResize.value = null
-    void nextTick(() => observeTiles())
     return
   }
   if (pointer) resetDrag()
 }
 
-watch(() => props.sections, () => {
-  if (!drag.value) liveSections.value = null
-}, { flush: 'sync' })
-
-watch(cards, observeTiles, { flush: 'post' })
+watch(cards, () => {
+  void nextTick(() => syncObservers())
+}, { flush: 'post' })
 
 onMounted(() => {
   if (typeof ResizeObserver === 'function') {
-    observer = new ResizeObserver((entries) => sizeTiles(entries.map(({ target }) => target)))
+    boardObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = Math.floor(entry.contentRect.width)
+        if (w > 0 && w !== boardWidth.value) boardWidth.value = w
+      }
+    })
+    if (boardEl.value) boardObserver.observe(boardEl.value)
+
+    tileObserver = new ResizeObserver((entries) => {
+      let changed = false
+      for (const entry of entries) {
+        const id = entry.target.dataset.muralTile
+        if (!id || drag.value?.id === id) continue
+        const h = Math.ceil(entry.target.getBoundingClientRect().height)
+        if (h > 0 && tileHeights.get(id) !== h) {
+          tileHeights.set(id, h)
+          changed = true
+        }
+      }
+      if (changed) layoutVersion.value++
+    })
   }
-  observeTiles()
+  syncObservers()
+  requestAnimationFrame(() => { layoutReady.value = true })
+
   window.addEventListener('pointermove', trackPointer, { passive: false })
   window.addEventListener('pointerup', endPointer)
   window.addEventListener('pointercancel', endPointer)
@@ -708,7 +611,8 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(resizeFrame)
   resizeOp = null
   activeResize.value = null
-  observer?.disconnect()
+  boardObserver?.disconnect()
+  tileObserver?.disconnect()
   window.removeEventListener('pointermove', trackPointer)
   window.removeEventListener('pointerup', endPointer)
   window.removeEventListener('pointercancel', endPointer)
@@ -717,32 +621,62 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.mural-grid {
-  display: grid;
-  align-items: start;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
-  grid-auto-flow: dense;
-  gap: 0.85rem;
-}
-.mural-grid--packed { grid-auto-rows: 1px; row-gap: 0; }
-.mural-grid--packed .mural-tile { grid-row-end: span var(--mural-card-rows, 1); }
-.mural-section + .mural-section { margin-top: 0.95rem; }
+.mural-board { width: 100%; }
+.mural-section + .mural-section { margin-top: 1rem; }
 .mural-section h4 { margin: 0 0 0.55rem; font-size: 0.78rem; font-weight: 600; color: var(--ayame-text-muted); }
-.mural-more { margin-top: 0.45rem; }
+.mural-more { margin-top: 0.55rem; }
+
+.mural-canvas {
+  position: relative;
+  width: 100%;
+  transition: height 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.mural-placeholder {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 1.5px dashed color-mix(in srgb, var(--ayame-primary) 48%, var(--ayame-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ayame-surface) 40%, transparent);
+  pointer-events: none;
+  transition: transform 180ms cubic-bezier(0.2, 0, 0, 1), width 180ms ease, height 180ms ease;
+}
 
 .mural-tile {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   min-width: 0;
-  container-type: inline-size;
   will-change: transform;
 }
 
-.mural-tile--placeholder {
-  border: 1.5px dashed color-mix(in srgb, var(--ayame-primary) 45%, var(--ayame-border));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--ayame-surface) 45%, transparent);
+.mural-board--animated .mural-tile {
+  transition: transform 200ms cubic-bezier(0.2, 0, 0, 1);
 }
-.mural-tile--placeholder > * { opacity: 0; pointer-events: none; }
+
+.mural-tile--resizing {
+  transition: none !important;
+  z-index: 20;
+}
+
+.mural-tile--dragging {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  transition: none !important;
+  pointer-events: none;
+}
+
+.mural-tile--dragging .mural-card {
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45), 0 0 0 1px color-mix(in srgb, var(--ayame-primary) 55%, var(--ayame-border));
+}
+
+.mural-tile--dragging .mural-drag-handle,
+.mural-tile--dragging .mural-resize-handle {
+  opacity: 0 !important;
+}
 
 .mural-card {
   width: 100%;
@@ -764,41 +698,27 @@ onBeforeUnmount(() => {
 .mural-card:hover { --mural-card-surface: color-mix(in srgb, var(--mural-accent) 16%, var(--ayame-surface)); }
 .mural-card:disabled { cursor: progress; }
 .mural-card--with-image {
-  width: fit-content;
-  max-width: 100%;
+  width: 100%;
   background: transparent;
   border: 0;
   align-items: start;
 }
-.mural-card--image-only { width: var(--mural-image-width, fit-content); }
 .mural-card-image {
   display: block;
-  width: auto;
+  width: 100%;
   height: auto;
-  max-width: 100cqi;
-  max-height: min(26rem, 62vh);
   border-radius: var(--radius-sm);
-}
-.mural-tile--resized .mural-card-image {
-  width: min(100cqi, var(--mural-image-target-width));
-  height: auto;
-  max-height: min(46rem, 80vh);
 }
 .mural-card-content { width: 100%; display: grid; gap: 0.4rem; padding: 0.75rem; }
 .mural-card--with-image .mural-card-content {
-  width: var(--mural-image-width, 100cqi);
-  max-width: 100cqi;
+  width: 100%;
   margin-top: 2px;
   border: 1px solid color-mix(in srgb, var(--mural-accent) 26%, var(--ayame-border));
   border-radius: var(--radius-sm);
   background: var(--mural-card-surface);
 }
 .mural-tile:has(.mural-drag-handle) .mural-card-content { padding-right: 2rem; }
-.mural-card--image-only .mural-card-content {
-  width: 100%;
-  contain: inline-size;
-  padding: 0.35rem 0.45rem;
-}
+.mural-card--image-only .mural-card-content { padding: 0.35rem 0.45rem; }
 .mural-card-content strong { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; font-size: 0.86rem; }
 .mural-card-preview {
   overflow: hidden;
@@ -844,8 +764,8 @@ onBeforeUnmount(() => {
   bottom: 0.25rem;
   display: grid;
   place-items: center;
-  width: 1.4rem;
-  height: 1.4rem;
+  width: 1.6rem;
+  height: 1.6rem;
   padding: 0;
   border: 1px solid var(--ayame-border);
   border-radius: var(--radius-sm);
@@ -856,8 +776,8 @@ onBeforeUnmount(() => {
   touch-action: none;
 }
 .mural-resize-handle span {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
 }
@@ -878,23 +798,6 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.mural-drag-ghost {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 1000;
-  pointer-events: none;
-  will-change: transform;
-  transform-origin: center center;
-}
-.mural-card--ghost {
-  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.42), 0 0 0 1px color-mix(in srgb, var(--ayame-primary) 55%, var(--ayame-border));
-  opacity: 0.96;
-}
-.mural-card--ghost .mural-card-image { max-width: 100%; }
-.mural-card--ghost.mural-card--with-image .mural-card-content { width: 100%; }
-
-@media (max-width: 650px) { .mural-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.5rem), 1fr)); } }
 @media (hover: none) {
   .mural-drag-handle,
   .mural-resize-handle { opacity: 1; }

@@ -312,7 +312,7 @@ describe('MuralPanel', () => {
     await handle.trigger('keydown', { key: 'ArrowRight' })
     expect(api.resizeMuralCard).toHaveBeenNthCalledWith(1, id, 352)
     await flushPromises()
-    expect(tile.attributes('style')).toContain('--mural-image-target-width: 352px')
+    expect(tile.attributes('style')).toContain('width: 352px')
 
     await handle.trigger('dblclick')
     expect(api.resizeMuralCard).toHaveBeenNthCalledWith(2, id, null)
@@ -325,36 +325,56 @@ describe('MuralPanel', () => {
     expect(tile.classes()).not.toContain('mural-tile--resized')
   })
 
-  it('supports Keep-style pointer live reordering with floating ghost and Escape cancel', async () => {
+  it('supports Keep-style real-card dragging with locked size, placeholder slot, Escape cancel, and serialized queue', async () => {
     const secondId = 'b'.repeat(32)
+    const thirdId = 'c'.repeat(32)
     const cards = [
-      { ...initial, title: 'First', position: 2 },
-      { ...initial, id: secondId, title: 'Second', position: 1 },
+      { ...initial, title: 'First', position: 3 },
+      { ...initial, id: secondId, title: 'Second', position: 2 },
+      { ...initial, id: thirdId, title: 'Third', position: 1 },
     ]
     api.listMuralCards.mockResolvedValue(board(cards))
-    api.moveMuralNote.mockResolvedValue({
-      note: { ...cards[1], position: 2 },
-      moved: true,
-      positions: [{ id: secondId, position: 2 }, { id, position: 1 }],
-    })
+
+    let finishFirstMove
+    api.moveMuralNote
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishFirstMove = () => resolve({
+          note: { ...cards[0], position: 2 },
+          moved: true,
+          positions: [{ id, position: 2 }, { id: secondId, position: 3 }],
+        })
+      }))
+      .mockResolvedValueOnce({
+        note: { ...cards[0], position: 1 },
+        moved: true,
+        positions: [{ id, position: 1 }, { id: thirdId, position: 2 }],
+      })
 
     wrapper = mount(MuralPanel, { attachTo: document.body })
     await flushPromises()
 
     const firstTile = wrapper.get(`[data-mural-tile="${id}"]`).element
     const secondTile = wrapper.get(`[data-mural-tile="${secondId}"]`).element
+    const thirdTile = wrapper.get(`[data-mural-tile="${thirdId}"]`).element
+    const boardElem = wrapper.get('.mural-board').element
+    const canvasElem = wrapper.get('.mural-canvas').element
+
+    vi.spyOn(boardElem, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 800, top: 0, bottom: 200, width: 800, height: 200, x: 0, y: 0, toJSON() {},
+    })
+    vi.spyOn(canvasElem, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 800, top: 0, bottom: 200, width: 800, height: 200, x: 0, y: 0, toJSON() {},
+    })
     vi.spyOn(firstTile, 'getBoundingClientRect').mockReturnValue({
       left: 0, right: 200, top: 0, bottom: 120, width: 200, height: 120, x: 0, y: 0, toJSON() {},
     })
     vi.spyOn(secondTile, 'getBoundingClientRect').mockReturnValue({
-      left: 220, right: 420, top: 0, bottom: 120, width: 200, height: 120, x: 220, y: 0, toJSON() {},
+      left: 268, right: 468, top: 0, bottom: 120, width: 200, height: 120, x: 268, y: 0, toJSON() {},
     })
-    const sectionEl = wrapper.get('[data-mural-section="notes"]').element
-    vi.spyOn(sectionEl, 'getBoundingClientRect').mockReturnValue({
-      left: 0, right: 500, top: 0, bottom: 140, width: 500, height: 140, x: 0, y: 0, toJSON() {},
+    vi.spyOn(thirdTile, 'getBoundingClientRect').mockReturnValue({
+      left: 536, right: 736, top: 0, bottom: 120, width: 200, height: 120, x: 536, y: 0, toJSON() {},
     })
 
-    // Start dragging first card toward second card
     const dispatchPointer = (target, type, init) => {
       const ev = new Event(type, { bubbles: true, cancelable: true })
       Object.assign(ev, { pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse', ...init })
@@ -363,32 +383,58 @@ describe('MuralPanel', () => {
 
     const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
 
+    // Start dragging first card toward second card
     dispatchPointer(firstTile, 'pointerdown', { clientX: 50, clientY: 50 })
-    dispatchPointer(window, 'pointermove', { clientX: 300, clientY: 50 })
-    await flushPromises()
+    dispatchPointer(window, 'pointermove', { clientX: 350, clientY: 50 })
     await nextFrame()
     await flushPromises()
 
-    expect(document.body.querySelector('.mural-drag-ghost')).not.toBeNull()
-    expect(wrapper.get(`[data-mural-tile="${id}"]`).classes()).toContain('mural-tile--placeholder')
+    const draggingTile = wrapper.get(`[data-mural-tile="${id}"]`)
+    expect(draggingTile.classes()).toContain('mural-tile--dragging')
+    // Locked pixel size — never expands or shrinks when picked up
+    expect(draggingTile.attributes('style')).toContain('width: 200px')
+    expect(draggingTile.attributes('style')).toContain('height: 120px')
+    expect(wrapper.find('.mural-placeholder').exists()).toBe(true)
 
-    // Escape cancels without saving
+    // Escape cancels cleanly without saving
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await flushPromises()
-    expect(document.body.querySelector('.mural-drag-ghost')).toBeNull()
+    expect(wrapper.find('.mural-tile--dragging').exists()).toBe(false)
+    expect(wrapper.find('.mural-placeholder').exists()).toBe(false)
     expect(api.moveMuralNote).not.toHaveBeenCalled()
 
-    // Drag again and drop on second card
+    // Drag 1: move First after Second while First is slow to resolve
     dispatchPointer(firstTile, 'pointerdown', { clientX: 50, clientY: 50 })
-    dispatchPointer(window, 'pointermove', { clientX: 300, clientY: 50 })
-    await flushPromises()
+    dispatchPointer(window, 'pointermove', { clientX: 350, clientY: 50 })
     await nextFrame()
     await flushPromises()
-
-    dispatchPointer(window, 'pointerup', { clientX: 300, clientY: 50 })
+    dispatchPointer(window, 'pointerup', { clientX: 350, clientY: 50 })
     await flushPromises()
-    expect(api.moveMuralNote).toHaveBeenCalledWith(id, {
-      targetId: secondId, placement: 'after', expectedPosition: 2, expectedTargetPosition: 1,
+
+    expect(api.moveMuralNote).toHaveBeenCalledTimes(1)
+    expect(api.moveMuralNote).toHaveBeenNthCalledWith(1, id, {
+      targetId: secondId, placement: 'after', expectedPosition: 3, expectedTargetPosition: 2,
+    })
+
+    // Drag 2 immediately while Drag 1 is still in flight (non-blocking queue!)
+    vi.spyOn(firstTile, 'getBoundingClientRect').mockReturnValue({
+      left: 268, right: 468, top: 0, bottom: 120, width: 200, height: 120, x: 268, y: 0, toJSON() {},
+    })
+    dispatchPointer(firstTile, 'pointerdown', { clientX: 350, clientY: 50 })
+    dispatchPointer(window, 'pointermove', { clientX: 620, clientY: 50 })
+    await nextFrame()
+    await flushPromises()
+    dispatchPointer(window, 'pointerup', { clientX: 620, clientY: 50 })
+    await flushPromises()
+
+    // Second request waits for first to settle so expectedPosition uses updated server positions
+    expect(api.moveMuralNote).toHaveBeenCalledTimes(1)
+    finishFirstMove()
+    await flushPromises()
+
+    expect(api.moveMuralNote).toHaveBeenCalledTimes(2)
+    expect(api.moveMuralNote).toHaveBeenNthCalledWith(2, id, {
+      targetId: thirdId, placement: 'after', expectedPosition: 2, expectedTargetPosition: 1,
     })
   })
 })
