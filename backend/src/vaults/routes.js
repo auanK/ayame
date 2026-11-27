@@ -227,6 +227,34 @@ export const registerVaultRoutes = (app, db, vaultsRoot) => {
     }
   })
 
+  app.get('/vaults/:directory/search', { config: { noStore: true } }, async (req, reply) => {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+    if (!query || query.length > 256) return reply.code(400).send({ error: 'INVALID_VAULT_SEARCH_QUERY' })
+    try {
+      const results = await scanner.search(req.params.directory, query)
+      return reply.send({ results })
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  app.get('/vaults/:directory/mentions', { config: { noStore: true } }, async (req, reply) => {
+    const path = req.query.path
+    if (typeof path !== 'string' || !path.trim() || path.length > 4096) {
+      return reply.code(400).send({ error: 'INVALID_VAULT_PATH' })
+    }
+    try {
+      const mentions = await scanner.mentions(req.params.directory, path)
+      return reply.send({ mentions })
+    } catch (err) {
+      const status = OPERATION_ERROR_STATUS[err.code]
+      if (status) return reply.code(status).send({ error: err.code })
+      throw err
+    }
+  })
+
   app.post('/vaults/:directory/relocate', { config: { noStore: true } }, async (req, reply) => {
     try {
       const result = relocateVaultEntry(vaultsRoot, req.params.directory, req.body)

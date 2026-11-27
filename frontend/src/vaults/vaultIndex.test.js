@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import * as properties from '../markdown/properties.js'
+import * as properties from '../../../shared/markdown/properties.js'
 import {
   buildVaultIndex,
   updateNoteInVaultIndex,
@@ -163,7 +163,7 @@ describe('vaultIndex — Obsidian vault-wide graph, backlinks, outgoing links, t
     try {
       const index = buildVaultIndex(sampleRawIndex)
       const initialCalls = spy.mock.calls.length
-      expect(initialCalls).toBeGreaterThanOrEqual(3)
+      expect(initialCalls).toBe(3)
 
       spy.mockClear()
       const updated = updateNoteInVaultIndex(index, {
@@ -173,7 +173,7 @@ describe('vaultIndex — Obsidian vault-wide graph, backlinks, outgoing links, t
         content: '# Índice Atualizado\n\nVeja [[Cosmologia]].\n',
       })
       // Only the single modified note is re-parsed; unchanged notes hit the cache
-      expect(spy.mock.calls.length).toBe(initialCalls / 3)
+      expect(spy.mock.calls.length).toBe(1)
       expect(updated.notesByPath['Conhecimento/Filosofia/Cosmologia.md'].title).toBe('Estudo do Cosmos')
       expect(updated.notesByPath['Indice.md'].headings[0].text).toBe('Índice Atualizado')
     } finally {

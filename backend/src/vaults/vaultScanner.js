@@ -37,25 +37,31 @@ export function createVaultScanner(vaultsRoot) {
     return thread
   }
 
-  function scan(directory = null) {
-    const existing = inFlight.get(directory)
+  function request(directory, type, value) {
+    const key = JSON.stringify([directory, type, value])
+    const existing = inFlight.get(key)
     if (existing) return existing
 
     const id = ++lastId
     const request = new Promise((resolve, reject) => {
       worker ??= startWorker()
-      worker.postMessage({ id, directory })
+      worker.postMessage({ id, directory, type, value })
       pending.set(id, { resolve, reject })
     }).finally(() => {
-      if (inFlight.get(directory) === request) inFlight.delete(directory)
+      if (inFlight.get(key) === request) inFlight.delete(key)
     })
-    inFlight.set(directory, request)
+    inFlight.set(key, request)
     return request
   }
 
   return {
-    scan,
-    invalidate: () => inFlight.clear(),
+    scan: (directory = null) => request(directory, 'scan'),
+    search: (directory, query) => request(directory, 'search', query),
+    mentions: (directory, path) => request(directory, 'mentions', path),
+    invalidate() {
+      inFlight.clear()
+      worker?.postMessage({ type: 'invalidate' })
+    },
     async close() {
       const thread = worker
       worker = null

@@ -503,6 +503,7 @@ const trashRestoreConflict = ref(null)
 
 // Search, Tag Filter, Command Palette & Quick Switcher
 const searchQuery = ref('')
+const panelLookupState = shallowRef({ items: null, pending: false, error: false })
 const activeTagFilter = ref('')
 const showCommandPalette = ref(false)
 const commandPaletteQuery = ref('')
@@ -632,7 +633,9 @@ const knownMarkdownFiles = computed(() => {
 const linkedBacklinks = computed(() => vaultIndexData.value.backlinksByFile[selectedFile.value] ?? [])
 const activeBacklinks = computed(() =>
   selectedFile.value && layout.value.contextOpen && rightPanelTab.value === 'backlinks'
-    ? getBacklinksForNote(vaultIndexData.value, selectedFile.value)
+    ? vaultIndexData.value.metadataOnly
+      ? { linked: linkedBacklinks.value, unlinkedMentions: panelLookupState.value.items ?? [] }
+      : getBacklinksForNote(vaultIndexData.value, selectedFile.value)
     : { linked: linkedBacklinks.value, unlinkedMentions: [] }
 )
 
@@ -668,9 +671,49 @@ const filteredTagNotes = computed(() =>
   activeTagFilter.value ? getNotesByTag(vaultIndexData.value, activeTagFilter.value) : []
 )
 
-const searchResults = computed(() =>
-  searchVaultNotes(vaultIndexData.value, searchQuery.value)
+const searchResults = computed(() => panelLookupState.value.items && rightPanelTab.value === 'search'
+  ? panelLookupState.value.items
+  : searchVaultNotes(vaultIndexData.value, searchQuery.value, {
+      limit: vaultIndexData.value.metadataOnly ? 100 : Infinity,
+    })
 )
+
+const activePanelLookup = computed(() => {
+  if (!vaultIndexData.value.metadataOnly || !layout.value.contextOpen) return null
+  if (rightPanelTab.value === 'backlinks' && selectedFile.value) {
+    return { kind: 'mentions', value: selectedFile.value }
+  }
+  const query = searchQuery.value.trim()
+  if (rightPanelTab.value === 'search' && query && !/^(#|tag:)/i.test(query)) {
+    return { kind: 'search', value: query }
+  }
+  return null
+})
+
+watch([activePanelLookup, vaultIndexData, () => props.vault.directory], ([lookup, index, directory], _, onCleanup) => {
+  panelLookupState.value = { items: null, pending: false, error: false }
+  if (!lookup || index.directory !== directory) return
+  panelLookupState.value = { items: null, pending: true, error: false }
+  const controller = new AbortController()
+  const load = async () => {
+    try {
+      const items = lookup.kind === 'search'
+        ? await vaultApi.searchVaultIndex(directory, lookup.value, controller.signal)
+        : await vaultApi.getVaultMentions(directory, lookup.value, controller.signal)
+      if (!controller.signal.aborted) panelLookupState.value = { items, pending: false, error: false }
+    } catch (err) {
+      if (controller.signal.aborted) return
+      if (err?.code === 'UNAUTHORIZED') emit('unauthorized')
+      panelLookupState.value = { items: null, pending: false, error: true }
+    }
+  }
+  const timer = lookup.kind === 'search' ? setTimeout(load, 180) : null
+  onCleanup(() => {
+    clearTimeout(timer)
+    controller.abort()
+  })
+  if (timer === null) void load()
+})
 
 const availableCommands = computed(() => {
   const cmds = [
@@ -1504,8 +1547,8 @@ const applySavedNotesToIndex = async () => {
       const cacheGeneration = workspaceCacheGeneration
       const base = vaultIndexData.value
       const changes = new Map(queuedIndexSaves)
-      const { directory, complete, failures, folders, files, rawNotes: notes } = base
-      const raw = reconcileIndexWithPendingSaves({ directory, complete, failures, folders, files, notes }, changes)
+      const { directory, complete, failures, folders, files, metadataOnly, rawNotes: notes } = base
+      const raw = reconcileIndexWithPendingSaves({ directory, complete, failures, folders, files, metadataOnly, notes }, changes)
       const index = await indexBuilder.build(raw)
       if (!isMounted || generation !== indexRequestGeneration || base !== vaultIndexData.value) continue
       vaultIndexData.value = index
@@ -3298,6 +3341,8 @@ defineExpose({
         :filtered-tag-notes="filteredTagNotes"
         :search-query="searchQuery"
         :search-results="searchResults"
+        :lookup-pending="panelLookupState.pending"
+        :lookup-error="panelLookupState.error"
         @update:active-tab="rightPanelTab = $event"
         @update:active-tag-filter="activeTagFilter = $event"
         @update:search-query="searchQuery = $event"

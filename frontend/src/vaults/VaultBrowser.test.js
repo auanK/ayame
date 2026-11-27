@@ -5,6 +5,7 @@ import MarkdownViewer from '../markdown/MarkdownViewer.vue'
 import MarkdownEditor from '../markdown/MarkdownEditor.vue'
 import * as api from './api.js'
 import { createNoteCache, noteCacheKey } from './noteCache.js'
+import { describeVaultNote } from './vaultIndex.js'
 
 vi.mock('./api.js', () => ({
   getVaultEntries: vi.fn(),
@@ -13,6 +14,8 @@ vi.mock('./api.js', () => ({
   createVaultFolder: vi.fn(),
   createVaultNote: vi.fn(),
   getVaultIndex: vi.fn(),
+  searchVaultIndex: vi.fn(),
+  getVaultMentions: vi.fn(),
   relocateVaultEntry: vi.fn(),
   trashVaultEntry: vi.fn(),
   getVaultTrash: vi.fn(),
@@ -409,6 +412,54 @@ describe('VaultBrowser (Obsidian-style Workspace)', () => {
     remote.resolve({ directory: 'personal', ...indexed, content: 'Updated body', revision: 'b'.repeat(64) })
     await flushPromises()
     expect(wrapper.findComponent(MarkdownViewer).vm.getText()).toBe('Updated body')
+  })
+
+  it('requests text only for the opened note and uses the server for body search and unlinked mentions', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const directory = 'personal'
+    const selected = { path: 'README.md', revision: 'a'.repeat(64), content: '# Document' }
+    const linked = { path: 'Linked.md', revision: 'b'.repeat(64), content: 'Veja [[README]].' }
+    const files = [selected.path, linked.path, 'Other.md']
+    api.getVaultIndex.mockResolvedValueOnce({
+      directory, metadataOnly: true, complete: true, folders: [], files,
+      notes: [selected, linked].map((note) => describeVaultNote(note).note),
+    })
+    api.getVaultMarkdown.mockResolvedValueOnce({ directory, ...selected })
+    api.getVaultMentions.mockResolvedValueOnce([
+      { sourcePath: 'Other.md', sourceName: 'Other.md', snippet: 'A mention of README' },
+    ])
+    const cache = createNoteCache(api.getVaultMarkdown)
+    const wrapper = await mountBrowser({ vault }, rootEntries, { provide: { [noteCacheKey]: cache } })
+    expect(api.getVaultMarkdown).not.toHaveBeenCalled()
+
+    await wrapper.vm.selectNote(selected.path)
+    await flushPromises()
+    expect(api.getVaultMarkdown).toHaveBeenCalledExactlyOnceWith(directory, selected.path)
+    expect(wrapper.getComponent(MarkdownViewer).vm.getText()).toBe(selected.content)
+    expect(api.getVaultMentions).not.toHaveBeenCalled()
+
+    wrapper.vm.layout.contextOpen = true
+    await flushPromises()
+    expect(api.getVaultMentions).toHaveBeenCalledExactlyOnceWith(directory, selected.path, expect.any(AbortSignal))
+    expect(wrapper.get('[data-testid="backlink-item"]').attributes('data-source-path')).toBe(linked.path)
+    expect(wrapper.get('[data-testid="unlinked-mention-item"]').attributes('data-source-path')).toBe('Other.md')
+
+    const pending = deferred()
+    api.searchVaultIndex.mockReturnValueOnce(pending.promise).mockResolvedValueOnce([
+      { path: 'Other.md', name: 'Other.md', snippet: 'Found in the body' },
+    ])
+    await wrapper.get('[data-testid="panel-tab-search"]').trigger('click')
+    const input = wrapper.get('[data-testid="vault-search-input"]')
+    await input.setValue('first query')
+    await vi.advanceTimersByTimeAsync(180)
+    const signal = api.searchVaultIndex.mock.calls[0][2]
+    await input.setValue('new query')
+    expect(signal.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(180)
+    pending.resolve([{ path: 'Wrong.md', name: 'Wrong.md' }])
+    await flushPromises()
+    expect(wrapper.get('[data-testid="search-result-item"]').attributes('data-note-path')).toBe('Other.md')
+    expect(api.getVaultMarkdown).toHaveBeenCalledTimes(1)
   })
 
   it('6. navigates internal links (wikilinks and relative markdown links), resolves unexpanded folders, expands tree ancestors, and highlights the target note', async () => {

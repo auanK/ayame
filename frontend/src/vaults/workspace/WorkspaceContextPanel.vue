@@ -47,7 +47,9 @@
         </button>
 
         <h4 class="panel-section-title">Unlinked mentions ({{ backlinks.unlinkedMentions.length }})</h4>
-        <p v-if="backlinks.unlinkedMentions.length === 0" class="panel-empty">No unlinked mentions.</p>
+        <p v-if="lookupPending" class="panel-empty" role="status">Looking for mentions…</p>
+        <p v-else-if="lookupError" class="panel-empty" role="status">Could not load mentions.</p>
+        <p v-else-if="backlinks.unlinkedMentions.length === 0" class="panel-empty">No unlinked mentions.</p>
         <button
           v-for="(item, idx) in backlinks.unlinkedMentions"
           :key="`ul-${idx}-${item.sourcePath}`"
@@ -156,11 +158,14 @@
         <input
           :value="searchQuery"
           type="search"
+          maxlength="256"
           class="explorer-create-input"
           data-testid="vault-search-input"
           placeholder="Search notes, #tags, aliases…"
           @input="emit('update:searchQuery', $event.target.value)"
         />
+        <p v-if="lookupPending" class="panel-empty" role="status">Searching notes…</p>
+        <p v-else-if="lookupError" class="panel-empty" role="status">Could not search note text.</p>
         <div class="vault-search-results" data-testid="vault-search-results">
           <button
             v-for="res in searchResults"
@@ -196,6 +201,8 @@ const props = defineProps({
   filteredTagNotes: { type: Array, default: () => [] },
   searchQuery: { type: String, default: '' },
   searchResults: { type: Array, default: () => [] },
+  lookupPending: { type: Boolean, default: false },
+  lookupError: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([

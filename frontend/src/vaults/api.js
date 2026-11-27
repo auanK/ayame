@@ -611,6 +611,20 @@ export const getVaultIndex = async (directory) => {
   return data
 }
 
+const getVaultIndexMatches = async (directory, endpoint, query, field, signal) => {
+  const url = `/vaults/${encodeURIComponent(directory ?? '')}/${endpoint}?${new URLSearchParams(query)}`
+  const response = await request(url, { method: 'GET', credentials: 'same-origin', signal }, 'FAILED_TO_FETCH_INDEX')
+  const data = await handleOperationResponse(response, 'FAILED_TO_FETCH_INDEX')
+  if (!Array.isArray(data?.[field])) throw apiError('INVALID_VAULT_RESPONSE')
+  return data[field]
+}
+
+export const searchVaultIndex = (directory, query, signal) =>
+  getVaultIndexMatches(directory, 'search', { q: query }, 'results', signal)
+
+export const getVaultMentions = (directory, path, signal) =>
+  getVaultIndexMatches(directory, 'mentions', { path }, 'mentions', signal)
+
 export const relocateVaultEntry = async (
   directory,
   { sourcePath, targetPath, updateLinks = true, expectedRevision }

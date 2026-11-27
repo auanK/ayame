@@ -43,10 +43,14 @@ export function createVaultWorkspaceCache() {
 
   function putIndex(directory, index, checkedAt) {
     const vault = ensureVault(directory)
-    const bytes = index.rawNotes.reduce((total, note) => total + note.content.length * 2, 0)
-    vault.index = bytes <= MAX_INDEX_TEXT_BYTES && index.files.length + index.folders.length <= MAX_INDEX_PATHS
-      ? { data: index, checkedAt }
-      : null
+    vault.index = null
+    if (index.files.length + index.folders.length > MAX_INDEX_PATHS) return
+    let bytes = 0
+    for (const note of index.rawNotes) {
+      bytes += (note.content?.length ?? JSON.stringify(note.metadata).length) * 2
+      if (bytes > MAX_INDEX_TEXT_BYTES) return
+    }
+    vault.index = { data: index, checkedAt }
   }
 
   return {

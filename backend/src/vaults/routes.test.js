@@ -1099,8 +1099,11 @@ test('GET /index, POST /relocate, and /trash endpoints enforce authentication, u
     assert.equal(indexRes.headers['cache-control'], 'no-store')
     const indexBody = indexRes.json()
     assert.equal(indexBody.complete, true)
+    assert.equal(indexBody.metadataOnly, true)
     assert.deepEqual(indexBody.folders, ['Knowledge'])
     assert.deepEqual(indexBody.files, ['Cosmologia.md', 'Indice.md'])
+    assert.equal(indexBody.notes.every((note) => !Object.hasOwn(note, 'content')), true)
+    assert.equal(indexBody.notes[1].metadata.refs[0].target, 'Cosmologia')
 
     // POST /vaults/personal/relocate
     const relocateRes = await app.inject({
@@ -1177,6 +1180,56 @@ test('GET /index, POST /relocate, and /trash endpoints enforce authentication, u
     await app.close()
     fs.rmSync(vaultsRoot, { recursive: true, force: true })
   }
+})
+
+test('vault search and unlinked mentions return bounded snippets from the server index', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ayame-lookup-routes-'))
+  const folder = path.join(root, 'personal')
+  fs.mkdirSync(folder)
+  const target = path.join(folder, 'Destino.md')
+  const linked = path.join(folder, 'Vínculo.md')
+  const mention = path.join(folder, 'Menção.md')
+  const original = 'Uma referência a Destino com "Ωrio".\n' + 'Descrição longa. '.repeat(2_000)
+  fs.writeFileSync(target, '# Destino')
+  fs.writeFileSync(linked, 'Veja [[Destino]].')
+  fs.writeFileSync(mention, original)
+  const { app, cookie } = await setupAuthApp(root)
+  t.after(async () => {
+    await app.close()
+    for (const file of [target, linked, mention]) fs.unlinkSync(file)
+    fs.rmdirSync(folder)
+    fs.rmdirSync(root)
+  })
+
+  const searchUrl = `/vaults/personal/search?q=${encodeURIComponent('"Ωrio"')}`
+  const mentionsUrl = '/vaults/personal/mentions?path=Destino.md'
+  const headers = { cookie }
+  assert.equal((await app.inject({ url: searchUrl })).statusCode, 401)
+  assert.equal((await app.inject({ url: mentionsUrl })).statusCode, 401)
+
+  const index = await app.inject({ url: '/vaults/personal/index', headers })
+  assert.equal(index.statusCode, 200)
+  assert.ok(index.rawPayload.length < Buffer.byteLength(original) / 10)
+  assert.equal(index.body.includes('Ωrio'), false)
+
+  const found = await app.inject({ url: searchUrl, headers })
+  assert.equal(found.statusCode, 200)
+  assert.equal(found.headers['cache-control'], 'no-store')
+  assert.deepEqual(found.json().results.map(({ path }) => path), ['Menção.md'])
+  assert.match(found.json().results[0].snippet, /Ωrio/)
+  assert.equal((await app.inject({ url: '/vaults/personal/search?q=%CE%A9r', headers })).json().results[0].path, 'Menção.md')
+
+  const mentions = await app.inject({ url: mentionsUrl, headers })
+  assert.equal(mentions.statusCode, 200)
+  assert.deepEqual(mentions.json().mentions.map(({ sourcePath }) => sourcePath), ['Menção.md'])
+
+  const updated = await app.inject({
+    method: 'PUT', url: `/vaults/personal/content?path=${encodeURIComponent('Menção.md')}`, headers,
+    payload: { content: 'Texto alterado.', expectedRevision: revisionOf(original) },
+  })
+  assert.equal(updated.statusCode, 200)
+  assert.deepEqual((await app.inject({ url: searchUrl, headers })).json(), { results: [] })
+  assert.deepEqual((await app.inject({ url: mentionsUrl, headers })).json(), { mentions: [] })
 })
 
 test('vault organization endpoints support create, patch metadata, reorder, and cover photo lifecycle', async () => {

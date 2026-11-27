@@ -152,7 +152,12 @@ const ensureDirectoryChain = (vaultRoot, relativeParentPath) => {
   return current
 }
 
-export const scanVaultIndex = (vaultsRoot, directory) => {
+export const scanVaultIndex = (vaultsRoot, directory, {
+  indexNote = (relativePath, name) => {
+    const { content, revision } = readVaultMarkdown(vaultsRoot, directory, relativePath)
+    return { path: relativePath, name, content, revision }
+  },
+} = {}) => {
   const vaultRoot = resolveVaultRoot(vaultsRoot, directory)
   const folders = []
   const files = []
@@ -195,14 +200,10 @@ export const scanVaultIndex = (vaultsRoot, directory) => {
         const ext = path.posix.extname(dirent.name).toLowerCase()
         if (SUPPORTED_NOTE_EXTENSIONS.has(ext)) {
           try {
-            const read = readVaultMarkdown(vaultsRoot, directory, relPath)
-            notes.push({
-              path: relPath,
-              name: dirent.name,
-              content: read.content,
-              revision: read.revision,
-            })
+            const note = indexNote(relPath, dirent.name, absPath)
+            notes.push(note)
           } catch (err) {
+            if (err.code?.startsWith('SQLITE_')) throw err
             failures.push({
               path: relPath,
               reason: err.code || 'VAULT_READ_FAILED',
