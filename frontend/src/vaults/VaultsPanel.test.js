@@ -565,4 +565,97 @@ describe('VaultsPanel', () => {
 
     expect(api.updateVault).toHaveBeenCalledWith('alpha', { category: 'Archives' })
   })
+
+  it('supports smooth Keep-style pointer drag-and-drop on Vault cards and across category zones', async () => {
+    const v1 = { ...customized, id: '1', name: 'Alpha', directory: 'alpha', category: 'Work', position: 0 }
+    const v2 = { ...customized, id: '2', name: 'Beta', directory: 'beta', category: 'Personal', position: 1 }
+    api.getVaults.mockResolvedValue({ vaults: [v1, v2] })
+    const wrapper = mount(VaultsPanel, { attachTo: document.body })
+    await flushPromises()
+
+    const alphaCard = wrapper.get('[data-vault-directory="alpha"]').element
+    const betaCard = wrapper.get('[data-vault-directory="beta"]').element
+    const mockRect = (left, top, width = 280, height = 160) => ({
+      left, right: left + width, top, bottom: top + height, width, height, x: left, y: top, toJSON() {},
+    })
+    vi.spyOn(alphaCard, 'getBoundingClientRect').mockReturnValue(mockRect(0, 0))
+    vi.spyOn(betaCard, 'getBoundingClientRect').mockReturnValue(mockRect(300, 0))
+
+    const dispatchPointer = (target, type, init) => {
+      const ev = new Event(type, { bubbles: true, cancelable: true })
+      Object.assign(ev, { pointerId: 1, button: 0, isPrimary: true, pointerType: 'mouse', ...init })
+      target.dispatchEvent(ev)
+    }
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+
+    // Interactive buttons inside a card must never initiate pointer drag
+    const openBtn = alphaCard.querySelector('[data-testid="open-vault-button"]')
+    dispatchPointer(openBtn, 'pointerdown', { clientX: 20, clientY: 140 })
+    dispatchPointer(window, 'pointermove', { clientX: 350, clientY: 140 })
+    await nextFrame()
+    expect(wrapper.find('.vault-card--pointer-dragging').exists()).toBe(false)
+    dispatchPointer(window, 'pointerup', { clientX: 350, clientY: 140 })
+
+    // Drag Alpha card by its body -> lifts real card with locked size & renders placeholder
+    dispatchPointer(alphaCard, 'pointerdown', { clientX: 100, clientY: 80 })
+    dispatchPointer(window, 'pointermove', { clientX: 440, clientY: 80 })
+    await nextFrame()
+    await flushPromises()
+
+    const lifted = wrapper.get('[data-vault-directory="alpha"]')
+    expect(lifted.classes()).toContain('vault-card--pointer-dragging')
+    expect(lifted.attributes('style')).toContain('width: 280px')
+    expect(lifted.attributes('style')).toContain('height: 160px')
+    expect(wrapper.find('[data-testid="vault-placeholder"]').exists()).toBe(true)
+
+    // Escape cancels cleanly without saving
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('.vault-card--pointer-dragging').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="vault-placeholder"]').exists()).toBe(false)
+    expect(api.reorderVaults).not.toHaveBeenCalled()
+
+    // Drag Alpha past Beta and drop -> optimistically reorders and calls reorderVaults
+    api.reorderVaults.mockResolvedValueOnce({ vaults: [v2, v1] })
+    dispatchPointer(alphaCard, 'pointerdown', { clientX: 100, clientY: 80 })
+    dispatchPointer(window, 'pointermove', { clientX: 440, clientY: 80 })
+    await nextFrame()
+    await flushPromises()
+    dispatchPointer(window, 'pointerup', { clientX: 440, clientY: 80 })
+    // Synthesized click right after drop must not open the card
+    const clickEv = new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 })
+    alphaCard.dispatchEvent(clickEv)
+    await flushPromises()
+
+    expect(api.reorderVaults).toHaveBeenCalledWith(['beta', 'alpha'])
+    expect(wrapper.emitted('open')).toBeUndefined()
+    expect(wrapper.findAll('[data-testid="vault-row"] h3').map((el) => el.text())).toEqual(['Beta', 'Alpha'])
+
+    // Pointer drag in Categories view reassigns vault category smoothly
+    await wrapper.find('[data-testid="view-mode-categories"]').trigger('click')
+    await flushPromises()
+
+    const workZone = wrapper.get('[data-category-key="Work"]').element
+    const personalZone = wrapper.get('[data-category-key="Personal"]').element
+    const alphaCatCard = wrapper.get('[data-vault-directory="alpha"]').element
+    const betaCatCard = wrapper.get('[data-vault-directory="beta"]').element
+
+    vi.spyOn(personalZone, 'getBoundingClientRect').mockReturnValue(mockRect(0, 0, 800, 220))
+    vi.spyOn(workZone, 'getBoundingClientRect').mockReturnValue(mockRect(0, 250, 800, 220))
+    vi.spyOn(betaCatCard, 'getBoundingClientRect').mockReturnValue(mockRect(20, 40, 280, 160))
+    vi.spyOn(alphaCatCard, 'getBoundingClientRect').mockReturnValue(mockRect(20, 290, 280, 160))
+
+    api.reorderVaults.mockResolvedValueOnce({ vaults: [v2, { ...v1, category: 'Personal' }] })
+    dispatchPointer(alphaCatCard, 'pointerdown', { clientX: 100, clientY: 360 })
+    dispatchPointer(window, 'pointermove', { clientX: 350, clientY: 110 })
+    await nextFrame()
+    await flushPromises()
+    expect(wrapper.get('[data-category-key="Personal"]').classes()).toContain('vault-category-section--drop')
+
+    dispatchPointer(window, 'pointerup', { clientX: 350, clientY: 110 })
+    await flushPromises()
+    expect(api.updateVault).toHaveBeenCalledWith('alpha', { category: 'Personal' })
+
+    wrapper.unmount()
+  })
 })

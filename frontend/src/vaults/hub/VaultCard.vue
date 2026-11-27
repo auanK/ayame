@@ -5,14 +5,16 @@
       compact ? 'vault-card-compact' : 'vault-card',
       {
         'vault-card--dragging': dragging,
+        'vault-card--pointer-dragging': pointerDragging,
         'vault-card--drop-target': dropTarget,
         'vault-card--pinned': Boolean(vault.pinned),
       },
     ]"
+    :style="pointerDragStyle"
     data-testid="vault-row"
     :data-vault-directory="vault.directory"
     :tabindex="needsRefresh ? undefined : 0"
-    :draggable="!needsRefresh && !operation"
+    :draggable="false"
     @click="emit('open-card', vault)"
     @keydown.enter.self="emit('open-card', vault)"
     @dragstart="emit('drag-start', vault, $event)"
@@ -28,6 +30,7 @@
         data-testid="vault-cover-image"
         loading="lazy"
         decoding="async"
+        draggable="false"
         :src="coverUrl"
         :alt="`Cover for ${vault.name}`"
       />
@@ -168,6 +171,8 @@ defineProps({
   vault: { type: Object, required: true },
   compact: { type: Boolean, default: false },
   dragging: { type: Boolean, default: false },
+  pointerDragging: { type: Boolean, default: false },
+  pointerDragStyle: { type: Object, default: undefined },
   dropTarget: { type: Boolean, default: false },
   needsRefresh: { type: Boolean, default: false },
   operation: { type: String, default: '' },

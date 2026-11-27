@@ -1,6 +1,7 @@
 <template>
   <section
     class="vaults-panel"
+    :class="{ 'vaults-panel--dragging': isPointerDragging }"
     data-testid="vaults-panel"
     aria-labelledby="vaults-heading"
     :aria-busy="Boolean(operation)"
@@ -98,100 +99,121 @@
           <p>Try clearing your search or category filter.</p>
         </div>
 
-        <!-- Category Grouped View -->
-        <div v-else-if="viewMode === 'categories'" class="vault-category-groups">
-          <form
-            v-if="!needsRefresh && hasApi('updateVault')"
-            class="vault-category-creator"
-            data-testid="add-category-bucket-form"
-            @submit.prevent="addCustomCategoryBucket"
-          >
-            <input
-              v-model="newCategoryName"
-              type="text"
-              maxlength="60"
-              class="form-input vaults-category-creator-input"
-              data-testid="add-category-bucket-input"
-              placeholder="New category drop zone…"
-              aria-label="New category name"
-              :disabled="Boolean(operation)"
-            />
-            <button
-              type="submit"
-              class="btn btn-secondary btn-compact"
-              data-testid="add-category-bucket-submit"
-              :disabled="Boolean(operation) || !newCategoryName.trim()"
-            >
-              + Add category
-            </button>
-          </form>
-
-          <VaultCategoryGroup
-            v-for="group in categorizedGroups"
-            :key="group.key"
-            :group="group"
-            :is-drop-target="dragOverCategory === group.key"
-            :dragging-directory="draggingDirectory"
-            :drag-over-directory="dragOverDirectory"
-            :needs-refresh="needsRefresh"
-            :operation="operation"
-            :selected-tag="selectedTag"
-            :cover-url-for="coverThumbnailUrlFor"
-            :banner-style-for="bannerStyleFor"
-            :format-relative-time="formatRelativeTime"
-            @drag-over="handleCategoryDragOver"
-            @drag-leave="handleCategoryDragLeave"
-            @drop-category="handleCategoryDrop"
-            @open="emit('open', $event)"
-            @open-card="openVaultFromCard"
-            @edit="startEdit"
-            @reset="resetVault"
-            @trash="vaultToTrash = $event"
-            @toggle-pin="togglePin"
-            @upload-cover="triggerCoverInput"
-            @toggle-tag="toggleTagFilter"
-            @card-drag-start="handleCardDragStart"
-            @card-drag-over="handleCardDragOver"
-            @card-drag-leave="handleCardDragLeave"
-            @card-drop="handleCardDrop"
-            @card-drag-end="clearCardDrag"
-          />
-        </div>
-
-        <!-- Cards Grid or Compact List View -->
-        <ul
+        <div
           v-else
-          :class="viewMode === 'compact' ? 'vault-list' : 'vault-grid'"
-          aria-label="Vaults"
+          ref="vaultsDragContainerRef"
+          class="vaults-drag-region"
+          @pointerdown="startPointerDrag"
+          @click.capture="suppressDragClick"
         >
-          <VaultCard
-            v-for="vault in filteredVaults"
-            :key="vault.id || vault.directory"
-            :vault="vault"
-            :compact="viewMode === 'compact'"
-            :dragging="draggingDirectory === vault.directory"
-            :drop-target="dragOverDirectory === vault.directory && draggingDirectory !== vault.directory"
-            :needs-refresh="needsRefresh"
-            :operation="operation"
-            :selected-tag="selectedTag"
-            :cover-url="coverThumbnailUrlFor(vault)"
-            :banner-style="bannerStyleFor(vault)"
-            :formatted-time="formatRelativeTime(vault.lastModifiedAt)"
-            @open="emit('open', $event)"
-            @open-card="openVaultFromCard"
-            @edit="startEdit"
-            @reset="resetVault"
-            @trash="vaultToTrash = $event"
-            @toggle-pin="togglePin"
-            @upload-cover="triggerCoverInput"
-            @toggle-tag="toggleTagFilter"
-            @drag-start="handleCardDragStart"
-            @drag-over="handleCardDragOver"
-            @drag-leave="handleCardDragLeave"
-            @drop-card="handleCardDrop"
-            @drag-end="clearCardDrag"
-          />
-        </ul>
+          <!-- Category Grouped View -->
+          <div v-if="viewMode === 'categories'" class="vault-category-groups">
+            <form
+              v-if="!needsRefresh && hasApi('updateVault')"
+              class="vault-category-creator"
+              data-testid="add-category-bucket-form"
+              @submit.prevent="addCustomCategoryBucket"
+            >
+              <input
+                v-model="newCategoryName"
+                type="text"
+                maxlength="60"
+                class="form-input vaults-category-creator-input"
+                data-testid="add-category-bucket-input"
+                placeholder="New category drop zone…"
+                aria-label="New category name"
+                :disabled="Boolean(operation)"
+              />
+              <button
+                type="submit"
+                class="btn btn-secondary btn-compact"
+                data-testid="add-category-bucket-submit"
+                :disabled="Boolean(operation) || !newCategoryName.trim()"
+              >
+                + Add category
+              </button>
+            </form>
+
+            <VaultCategoryGroup
+              v-for="group in categorizedGroups"
+              :key="group.key"
+              :group="group"
+              :is-drop-target="dragOverCategory === group.key || pointerDragTarget?.category === group.key"
+              :dragging-directory="draggingDirectory"
+              :drag-over-directory="dragOverDirectory"
+              :pointer-drag="pointerDrag"
+              :pointer-drag-target="pointerDragTarget"
+              :dragged-card-style="draggedCardStyle"
+              :needs-refresh="needsRefresh"
+              :operation="operation"
+              :selected-tag="selectedTag"
+              :cover-url-for="coverThumbnailUrlFor"
+              :banner-style-for="bannerStyleFor"
+              :format-relative-time="formatRelativeTime"
+              @drag-over="handleCategoryDragOver"
+              @drag-leave="handleCategoryDragLeave"
+              @drop-category="handleCategoryDrop"
+              @open="emit('open', $event)"
+              @open-card="openVaultFromCard"
+              @edit="startEdit"
+              @reset="resetVault"
+              @trash="vaultToTrash = $event"
+              @toggle-pin="togglePin"
+              @upload-cover="triggerCoverInput"
+              @toggle-tag="toggleTagFilter"
+              @card-drag-start="handleCardDragStart"
+              @card-drag-over="handleCardDragOver"
+              @card-drag-leave="handleCardDragLeave"
+              @card-drop="handleCardDrop"
+              @card-drag-end="clearCardDrag"
+            />
+          </div>
+
+          <!-- Cards Grid or Compact List View -->
+          <ul
+            v-else
+            :class="viewMode === 'compact' ? 'vault-list' : 'vault-grid'"
+            aria-label="Vaults"
+          >
+            <template v-for="entry in displayFlatItems" :key="entry.key">
+              <li
+                v-if="entry.type === 'placeholder'"
+                class="vault-placeholder"
+                data-testid="vault-placeholder"
+                :style="{ height: `${pointerDrag.height}px` }"
+                aria-hidden="true"
+              />
+              <VaultCard
+                v-else
+                :vault="entry.vault"
+                :compact="viewMode === 'compact'"
+                :dragging="draggingDirectory === entry.vault.directory"
+                :pointer-dragging="pointerDrag?.directory === entry.vault.directory"
+                :pointer-drag-style="draggedCardStyle(entry.vault.directory)"
+                :drop-target="dragOverDirectory === entry.vault.directory && draggingDirectory !== entry.vault.directory"
+                :needs-refresh="needsRefresh"
+                :operation="operation"
+                :selected-tag="selectedTag"
+                :cover-url="coverThumbnailUrlFor(entry.vault)"
+                :banner-style="bannerStyleFor(entry.vault)"
+                :formatted-time="formatRelativeTime(entry.vault.lastModifiedAt)"
+                @open="emit('open', $event)"
+                @open-card="openVaultFromCard"
+                @edit="startEdit"
+                @reset="resetVault"
+                @trash="vaultToTrash = $event"
+                @toggle-pin="togglePin"
+                @upload-cover="triggerCoverInput"
+                @toggle-tag="toggleTagFilter"
+                @drag-start="handleCardDragStart"
+                @drag-over="handleCardDragOver"
+                @drag-leave="handleCardDragLeave"
+                @drop-card="handleCardDrop"
+                @drag-end="clearCardDrag"
+              />
+            </template>
+          </ul>
+        </div>
       </template>
 
       <slot name="mural" />
@@ -262,6 +284,7 @@ import VaultsToolbar from './hub/VaultsToolbar.vue'
 import VaultCard from './hub/VaultCard.vue'
 import VaultCategoryGroup from './hub/VaultCategoryGroup.vue'
 import VaultFormModal from './hub/VaultFormModal.vue'
+import { useVaultPointerDrag } from './hub/useVaultPointerDrag.js'
 
 const props = defineProps({
   initialVaults: {
@@ -319,6 +342,7 @@ const newCategoryName = ref('')
 const draggingDirectory = ref(null)
 const dragOverDirectory = ref(null)
 const dragOverCategory = ref(null)
+const vaultsDragContainerRef = ref(null)
 
 const coverFileInputRef = ref(null)
 const coverTargetVault = ref(null)
@@ -884,24 +908,161 @@ const togglePin = async (vault) => {
   }
 }
 
-const persistOrderDirectories = async (nextDirectories) => {
+const persistOrderDirectories = async (nextDirectories, previousVaults = null, previousSortMode = null) => {
   if (operation.value || needsRefresh.value || !hasApi('reorderVaults')) return
   operation.value = 'reordering'
   errorMessage.value = ''
   try {
     const result = await api.reorderVaults(nextDirectories)
     if (!mounted) return
-    vaults.value = result.vaults
+    if (Array.isArray(result?.vaults)) {
+      vaults.value = result.vaults
+    }
     sortMode.value = 'manual'
-    emit('loaded', result.vaults)
+    emit('loaded', vaults.value)
   } catch (error) {
     if (!mounted) return
+    if (previousVaults) vaults.value = previousVaults
+    if (previousSortMode) sortMode.value = previousSortMode
     if (error.code === 'UNAUTHORIZED') showUnauthorized()
     else errorMessage.value = 'Could not save vault order. Try again.'
   } finally {
     if (mounted) operation.value = ''
   }
 }
+
+const handlePointerDragCommit = async ({ directory, targetCategory, targetIndex }) => {
+  if (viewMode.value !== 'categories') {
+    const visibleDirs = filteredVaults.value.map((v) => v.directory)
+    if (!visibleDirs.includes(directory)) return
+    const nextVisible = visibleDirs.filter((d) => d !== directory)
+    const clampedIdx = Math.max(0, Math.min(nextVisible.length, targetIndex))
+    nextVisible.splice(clampedIdx, 0, directory)
+    if (nextVisible.every((d, idx) => d === visibleDirs[idx])) return
+
+    let nextDirs
+    if (nextVisible.length === vaults.value.length) {
+      nextDirs = nextVisible
+    } else {
+      const visibleSet = new Set(visibleDirs)
+      let cursor = 0
+      nextDirs = vaults.value.map((v) => (visibleSet.has(v.directory) ? nextVisible[cursor++] : v.directory))
+    }
+
+    const previousVaults = vaults.value
+    const previousSortMode = sortMode.value
+    const byDir = new Map(vaults.value.map((v) => [v.directory, v]))
+    vaults.value = nextDirs.map((dir) => byDir.get(dir)).filter(Boolean)
+    sortMode.value = 'manual'
+    await persistOrderDirectories(nextDirs, previousVaults, previousSortMode)
+    return
+  }
+
+  const nextCategory = targetCategory === '__uncategorized__' ? '' : targetCategory
+  const sourceVault = vaults.value.find((v) => v.directory === directory)
+  if (!sourceVault) return
+  const categoryChanged = (sourceVault.category || '') !== nextCategory
+
+  const group = categorizedGroups.value.find((g) => g.key === targetCategory)
+  const otherDirs = (group?.items ?? []).filter((v) => v.directory !== directory).map((v) => v.directory)
+  let nextFullDirs
+  if (otherDirs.length === 0) {
+    nextFullDirs = vaults.value.map((v) => v.directory)
+  } else {
+    nextFullDirs = vaults.value.filter((v) => v.directory !== directory).map((v) => v.directory)
+    if (targetIndex < otherDirs.length) {
+      const anchorIdx = nextFullDirs.indexOf(otherDirs[targetIndex])
+      if (anchorIdx >= 0) nextFullDirs.splice(anchorIdx, 0, directory)
+      else nextFullDirs.push(directory)
+    } else {
+      const anchorIdx = nextFullDirs.indexOf(otherDirs[otherDirs.length - 1])
+      if (anchorIdx >= 0) nextFullDirs.splice(anchorIdx + 1, 0, directory)
+      else nextFullDirs.push(directory)
+    }
+  }
+
+  const orderChanged = nextFullDirs.some((d, i) => d !== vaults.value[i]?.directory)
+  if (!categoryChanged && !orderChanged) return
+  if (operation.value || needsRefresh.value) return
+
+  const previousVaults = vaults.value
+  const previousSortMode = sortMode.value
+  const byDir = new Map(vaults.value.map((v) => [v.directory, { ...v }]))
+  if (categoryChanged) {
+    const moved = byDir.get(directory)
+    if (moved) moved.category = nextCategory
+  }
+  vaults.value = nextFullDirs.map((dir) => byDir.get(dir)).filter(Boolean)
+  if (orderChanged) sortMode.value = 'manual'
+
+  operation.value = 'reordering'
+  errorMessage.value = ''
+  try {
+    if (categoryChanged && hasApi('updateVault')) {
+      await api.updateVault(directory, { category: nextCategory })
+    }
+    if (orderChanged && hasApi('reorderVaults')) {
+      const result = await api.reorderVaults(nextFullDirs)
+      if (!mounted) return
+      if (Array.isArray(result?.vaults)) {
+        vaults.value = result.vaults
+      }
+      emit('loaded', vaults.value)
+    } else if (categoryChanged) {
+      if (!mounted) return
+      await refreshAfterMutation('Category updated, but vaults could not be refreshed.')
+    }
+  } catch (error) {
+    if (!mounted) return
+    vaults.value = previousVaults
+    sortMode.value = previousSortMode
+    if (error.code === 'UNAUTHORIZED') showUnauthorized()
+    else errorMessage.value = categoryChanged ? 'Could not move vault to category.' : 'Could not save vault order. Try again.'
+  } finally {
+    if (mounted) operation.value = ''
+  }
+}
+
+const {
+  pointerDrag,
+  pointerDragTarget,
+  isPointerDragging,
+  draggedCardStyle,
+  startPointer: startPointerDrag,
+  suppressDragClick,
+} = useVaultPointerDrag({
+  containerRef: vaultsDragContainerRef,
+  viewMode,
+  filteredVaults,
+  categorizedGroups,
+  disabled: computed(() => Boolean(operation.value || needsRefresh.value || editingDirectory.value)),
+  onCommit: handlePointerDragCommit,
+})
+
+const displayFlatItems = computed(() => {
+  const drag = pointerDrag.value
+  if (!drag || viewMode.value === 'categories') {
+    return filteredVaults.value.map((vault) => ({
+      type: 'vault',
+      key: vault.id || vault.directory,
+      vault,
+    }))
+  }
+  let draggedVault = null
+  const list = []
+  for (const vault of filteredVaults.value) {
+    if (vault.directory === drag.directory) draggedVault = vault
+    else list.push({ type: 'vault', key: vault.id || vault.directory, vault })
+  }
+  if (pointerDragTarget.value && pointerDragTarget.value.category == null) {
+    const insertAt = Math.max(0, Math.min(list.length, pointerDragTarget.value.index))
+    list.splice(insertAt, 0, { type: 'placeholder', key: '__vault_placeholder__' })
+  }
+  if (draggedVault) {
+    list.push({ type: 'vault', key: draggedVault.id || draggedVault.directory, vault: draggedVault })
+  }
+  return list
+})
 
 const clearCardDrag = () => {
   draggingDirectory.value = null
