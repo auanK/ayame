@@ -41,6 +41,7 @@
             'mural-tile--dragging': drag?.id === card.id,
             'mural-tile--resized': isResized(card),
             'mural-tile--resizing': activeResize?.id === card.id,
+            'mural-tile--resize-mode': resizingCardId === card.id && card.imageVersion,
           }"
           :style="tileStyle(section.group, card)"
         >
@@ -56,6 +57,10 @@
             :data-card-id="card.id"
             :aria-label="card.kind === 'image' && !card.title ? 'Open image card' : undefined"
             @click="emit('open', card.id, $event.currentTarget)"
+            @keydown.alt.up.prevent="moveWithKeyboard(card.id, -1)"
+            @keydown.alt.left.prevent="moveWithKeyboard(card.id, -1)"
+            @keydown.alt.down.prevent="moveWithKeyboard(card.id, 1)"
+            @keydown.alt.right.prevent="moveWithKeyboard(card.id, 1)"
           >
             <img
               v-if="card.imageVersion"
@@ -72,42 +77,45 @@
               <span v-if="card.preview" class="mural-card-preview">{{ card.preview }}</span>
             </span>
           </button>
-          <button
-            v-if="cards.length > 1"
-            type="button"
-            class="mural-drag-handle"
-            data-mural-drag-handle
-            :aria-label="`Reorder ${cardLabel(card)}`"
-            title="Drag to reorder · Arrow keys to move"
-            :aria-disabled="reorderDisabled || disabled"
-            @keydown.up.prevent="moveWithKeyboard(card.id, -1)"
-            @keydown.left.prevent="moveWithKeyboard(card.id, -1)"
-            @keydown.down.prevent="moveWithKeyboard(card.id, 1)"
-            @keydown.right.prevent="moveWithKeyboard(card.id, 1)"
-          ><span aria-hidden="true" /></button>
-          <button
-            v-if="card.imageVersion"
-            type="button"
-            class="mural-resize-handle"
-            data-mural-resize-handle
-            :aria-label="`Resize ${cardLabel(card)}`"
-            title="Drag to resize · Double-click to reset"
-            :disabled="disabled || reorderDisabled"
-            @pointerdown.stop="startResize($event, card)"
-            @dblclick.stop="resetResize(card)"
-            @click.stop
-            @keydown.left.prevent="nudgeResize(card, -32)"
-            @keydown.up.prevent="nudgeResize(card, -32)"
-            @keydown.right.prevent="nudgeResize(card, 32)"
-            @keydown.down.prevent="nudgeResize(card, 32)"
-            @keydown.0.prevent="resetResize(card)"
-            @keydown.backspace.prevent="resetResize(card)"
-          ><span aria-hidden="true" /></button>
-          <span v-if="activeResize?.id === card.id" class="mural-resize-badge" aria-hidden="true">{{ activeResize.width }}px</span>
+
+          <template v-if="resizingCardId === card.id && card.imageVersion">
+            <div class="mural-resize-bar" data-testid="mural-resize-bar">
+              <span class="mural-resize-badge">{{ activeResize?.id === card.id ? activeResize.width : widthForCard(card) }}px</span>
+              <button
+                v-if="card.imageWidth != null"
+                type="button"
+                class="mural-resize-bar-btn"
+                @click.stop="resetResize(card)"
+              >Reset</button>
+              <button
+                type="button"
+                class="mural-resize-bar-btn mural-resize-bar-btn--done"
+                data-testid="mural-resize-done"
+                @click.stop="emit('stop-resize')"
+              >Done</button>
+            </div>
+            <button
+              type="button"
+              class="mural-resize-handle"
+              data-mural-resize-handle
+              :aria-label="`Resize ${cardLabel(card)}`"
+              title="Drag to resize · Double-click to reset"
+              :disabled="disabled"
+              @pointerdown.stop="startResize($event, card)"
+              @dblclick.stop="resetResize(card)"
+              @click.stop
+              @keydown.left.prevent="nudgeResize(card, -32)"
+              @keydown.up.prevent="nudgeResize(card, -32)"
+              @keydown.right.prevent="nudgeResize(card, 32)"
+              @keydown.down.prevent="nudgeResize(card, 32)"
+              @keydown.0.prevent="resetResize(card)"
+              @keydown.backspace.prevent="resetResize(card)"
+            ><span aria-hidden="true" /></button>
+          </template>
         </div>
       </div>
       <button v-if="section.hasMore" type="button" class="btn btn-secondary btn-compact mural-more" :disabled="loading || moving" @click="emit('more', section.group)">
-        {{ loading ? 'Loading…' : section.group === 'pinned' ? 'Load more pinned notes' : 'Load more notes' }}
+        {{ loading ? 'Loading…' : section.group === 'pinned' ? 'Load more pinned notes' : section.group === 'trashed' ? 'Load more trashed notes' : 'Load more notes' }}
       </button>
     </section>
   </div>
@@ -132,9 +140,10 @@ const props = defineProps({
   moving: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
   reorderDisabled: { type: Boolean, default: false },
+  resizingCardId: { type: String, default: null },
 })
 
-const emit = defineEmits(['open', 'reorder', 'resize', 'more'])
+const emit = defineEmits(['open', 'reorder', 'resize', 'stop-resize', 'more'])
 
 const boardEl = ref(null)
 const boardWidth = ref(1024)
@@ -311,7 +320,7 @@ const maxWidthForBoard = () => {
 }
 
 const startResize = (event, card) => {
-  if (resizeOp || drag.value || pointer || props.disabled || props.reorderDisabled || event.button !== 0 || event.isPrimary === false) return
+  if (resizeOp || drag.value || pointer || props.disabled || event.button !== 0 || event.isPrimary === false) return
   event.preventDefault()
   const tile = tileEls.get(card.id) || event.currentTarget.closest('[data-mural-tile]')
   const image = tile?.querySelector('.mural-card-image')
@@ -339,12 +348,12 @@ const startResize = (event, card) => {
 }
 
 const resetResize = (card) => {
-  if (props.disabled || props.reorderDisabled || card.imageWidth == null) return
+  if (props.disabled || card.imageWidth == null) return
   emit('resize', { id: card.id, imageWidth: null })
 }
 
 const nudgeResize = (card, delta) => {
-  if (props.disabled || props.reorderDisabled) return
+  if (props.disabled) return
   const maxWidth = maxWidthForBoard()
   const current = widthForCard(card)
   const next = clampWidth(current + delta, maxWidth)
@@ -357,6 +366,26 @@ const findCardLocation = (cardId) => {
     if (idx !== -1) return { group: section.group, index: idx }
   }
   return null
+}
+
+const beginActiveDrag = () => {
+  if (!pointer || drag.value) return
+  const loc = findCardLocation(pointer.id)
+  if (!loc) return
+  try {
+    boardEl.value?.setPointerCapture?.(pointer.pointerId)
+  } catch {}
+  liveDragPos.x = pointer.x - pointer.offsetX
+  liveDragPos.y = pointer.y - pointer.offsetY
+  dragTarget.value = { group: loc.group, index: loc.index }
+  drag.value = {
+    id: pointer.id,
+    sourceGroup: loc.group,
+    sourceIndex: loc.index,
+    width: pointer.width,
+    height: pointer.height,
+  }
+  if (!dragFrame) dragFrame = requestAnimationFrame(stepDrag)
 }
 
 const stepDrag = () => {
@@ -429,22 +458,26 @@ const stepDrag = () => {
 
 const startPointer = (event) => {
   if (pointer || resizeOp || props.disabled || props.reorderDisabled || cards.value.length < 2 || event.button !== 0 || event.isPrimary === false) return
-  if (event.target.closest('[data-mural-resize-handle]')) return
-  if (event.pointerType === 'touch' && !event.target.closest('[data-mural-drag-handle]')) return
+  if (event.target.closest('[data-mural-resize-handle], [data-testid="mural-resize-bar"]')) return
 
   const tileEl = event.target.closest('[data-mural-tile]')
   const id = tileEl?.dataset.muralTile
+  if (!id || props.resizingCardId === id) return
   const card = cardsById.value.get(id)
-  if (!card || !tileEl) return
+  if (!card) return
 
   const rect = tileEl.getBoundingClientRect()
   const lockedWidth = widthForCard(card)
   const lockedHeight = Math.round(rect.height || heightForCard(card, lockedWidth))
+  const isTouch = event.pointerType === 'touch'
 
   pointer = {
     pointerId: event.pointerId,
     id,
     card,
+    isTouch,
+    touchReady: !isTouch,
+    holdTimer: null,
     startX: event.clientX,
     startY: event.clientY,
     x: event.clientX,
@@ -453,6 +486,15 @@ const startPointer = (event) => {
     offsetY: event.clientY - rect.top,
     width: Math.round(rect.width || lockedWidth),
     height: lockedHeight,
+  }
+
+  if (isTouch) {
+    pointer.holdTimer = setTimeout(() => {
+      if (pointer) {
+        pointer.touchReady = true
+        beginActiveDrag()
+      }
+    }, 220)
   }
 }
 
@@ -478,28 +520,22 @@ const trackPointer = (event) => {
   pointer.y = event.clientY
 
   if (!drag.value) {
-    if (Math.hypot(pointer.x - pointer.startX, pointer.y - pointer.startY) < 5) return
-    const loc = findCardLocation(pointer.id)
-    if (!loc) return
-    try {
-      boardEl.value?.setPointerCapture?.(event.pointerId)
-    } catch {}
-    liveDragPos.x = pointer.x - pointer.offsetX
-    liveDragPos.y = pointer.y - pointer.offsetY
-    dragTarget.value = { group: loc.group, index: loc.index }
-    drag.value = {
-      id: pointer.id,
-      sourceGroup: loc.group,
-      sourceIndex: loc.index,
-      width: pointer.width,
-      height: pointer.height,
+    const moved = Math.hypot(pointer.x - pointer.startX, pointer.y - pointer.startY)
+    if (pointer.isTouch && !pointer.touchReady) {
+      if (moved > 8) {
+        clearTimeout(pointer.holdTimer)
+        pointer = null
+      }
+      return
     }
-    if (!dragFrame) dragFrame = requestAnimationFrame(stepDrag)
+    if (moved < 5) return
+    beginActiveDrag()
   }
   event.preventDefault()
 }
 
 const resetDrag = () => {
+  if (pointer?.holdTimer) clearTimeout(pointer.holdTimer)
   if (drag.value) blockClickUntil = performance.now() + 250
   pointer = null
   drag.value = null
@@ -544,6 +580,13 @@ const endPointer = (event) => {
   resetDrag()
 }
 
+const handleOutsidePointerDown = (event) => {
+  if (!props.resizingCardId) return
+  if (!event.target?.closest?.(`[data-mural-tile="${props.resizingCardId}"]`)) {
+    emit('stop-resize')
+  }
+}
+
 const suppressDragClick = (event) => {
   if (event.detail === 0 || performance.now() >= blockClickUntil) return
   event.stopPropagation()
@@ -564,6 +607,10 @@ const cancelWithEscape = (event) => {
     resizeFrame = 0
     resizeOp = null
     activeResize.value = null
+    return
+  }
+  if (props.resizingCardId) {
+    emit('stop-resize')
     return
   }
   if (pointer) resetDrag()
@@ -600,6 +647,7 @@ onMounted(() => {
   syncObservers()
   requestAnimationFrame(() => { layoutReady.value = true })
 
+  window.addEventListener('pointerdown', handleOutsidePointerDown, true)
   window.addEventListener('pointermove', trackPointer, { passive: false })
   window.addEventListener('pointerup', endPointer)
   window.addEventListener('pointercancel', endPointer)
@@ -613,6 +661,7 @@ onBeforeUnmount(() => {
   activeResize.value = null
   boardObserver?.disconnect()
   tileObserver?.disconnect()
+  window.removeEventListener('pointerdown', handleOutsidePointerDown, true)
   window.removeEventListener('pointermove', trackPointer)
   window.removeEventListener('pointerup', endPointer)
   window.removeEventListener('pointercancel', endPointer)
@@ -660,6 +709,13 @@ onBeforeUnmount(() => {
   z-index: 20;
 }
 
+.mural-tile--resize-mode {
+  z-index: 15;
+  outline: 2px solid var(--ayame-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
 .mural-tile--dragging {
   position: fixed;
   top: 0;
@@ -670,12 +726,8 @@ onBeforeUnmount(() => {
 }
 
 .mural-tile--dragging .mural-card {
+  cursor: grabbing;
   box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45), 0 0 0 1px color-mix(in srgb, var(--ayame-primary) 55%, var(--ayame-border));
-}
-
-.mural-tile--dragging .mural-drag-handle,
-.mural-tile--dragging .mural-resize-handle {
-  opacity: 0 !important;
 }
 
 .mural-card {
@@ -717,7 +769,6 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   background: var(--mural-card-surface);
 }
-.mural-tile:has(.mural-drag-handle) .mural-card-content { padding-right: 2rem; }
 .mural-card--image-only .mural-card-content { padding: 0.35rem 0.45rem; }
 .mural-card-content strong { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; font-size: 0.86rem; }
 .mural-card-preview {
@@ -732,31 +783,43 @@ onBeforeUnmount(() => {
   line-height: 1.4;
 }
 
-.mural-drag-handle {
+.mural-resize-bar {
   position: absolute;
-  top: 0.3rem;
-  left: 0.3rem;
-  display: grid;
-  place-items: center;
-  width: 1.65rem;
-  height: 1.65rem;
-  padding: 0;
-  border: 1px solid var(--ayame-border);
+  left: 0.35rem;
+  bottom: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.16rem 0.3rem;
   border-radius: var(--radius-sm);
-  background: var(--ayame-surface);
+  background: color-mix(in srgb, var(--ayame-surface-elevated) 94%, transparent);
+  border: 1px solid var(--ayame-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.mural-resize-badge {
   color: var(--ayame-text-muted);
-  opacity: 0;
-  cursor: grab;
-  touch-action: none;
+  font-size: 0.72rem;
+  padding-inline: 0.16rem;
 }
-.mural-tile:not(:has(.mural-card--with-image)) .mural-drag-handle { left: auto; right: 0.3rem; }
-.mural-drag-handle span {
-  width: 10px;
-  height: 15px;
-  background: radial-gradient(circle, currentColor 1px, transparent 1.5px) 0 0 / 5px 5px;
+
+.mural-resize-bar-btn {
+  padding: 0.14rem 0.4rem;
+  border: 1px solid var(--ayame-border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ayame-text);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
 }
-.mural-tile:hover .mural-drag-handle, .mural-tile:focus-within .mural-drag-handle { opacity: 1; }
-.mural-drag-handle:active { cursor: grabbing; }
+
+.mural-resize-bar-btn--done {
+  background: var(--ayame-primary);
+  border-color: var(--ayame-primary);
+  color: var(--ayame-surface);
+  font-weight: 600;
+}
 
 .mural-resize-handle {
   position: absolute;
@@ -764,14 +827,13 @@ onBeforeUnmount(() => {
   bottom: 0.25rem;
   display: grid;
   place-items: center;
-  width: 1.6rem;
-  height: 1.6rem;
+  width: 1.7rem;
+  height: 1.7rem;
   padding: 0;
-  border: 1px solid var(--ayame-border);
+  border: 1px solid var(--ayame-primary);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--ayame-surface) 92%, transparent);
-  color: var(--ayame-text-muted);
-  opacity: 0;
+  background: color-mix(in srgb, var(--ayame-surface) 94%, transparent);
+  color: var(--ayame-primary);
   cursor: nwse-resize;
   touch-action: none;
 }
@@ -780,26 +842,5 @@ onBeforeUnmount(() => {
   height: 9px;
   border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
-}
-.mural-tile:hover .mural-resize-handle,
-.mural-tile:focus-within .mural-resize-handle,
-.mural-tile--resizing .mural-resize-handle { opacity: 1; }
-
-.mural-resize-badge {
-  position: absolute;
-  left: 0.35rem;
-  bottom: 0.35rem;
-  padding: 0.12rem 0.38rem;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--ayame-surface-elevated) 92%, transparent);
-  border: 1px solid var(--ayame-border);
-  color: var(--ayame-text);
-  font-size: 0.72rem;
-  pointer-events: none;
-}
-
-@media (hover: none) {
-  .mural-drag-handle,
-  .mural-resize-handle { opacity: 1; }
 }
 </style>

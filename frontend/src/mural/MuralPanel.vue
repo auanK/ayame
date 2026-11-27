@@ -3,21 +3,37 @@
     <header class="mural-header">
       <h3 id="mural-heading">Mural</h3>
       <div class="mural-actions">
-        <button type="button" class="btn btn-secondary btn-compact" :aria-pressed="archived" :disabled="moving" @click="switchArchive">
+        <button type="button" class="btn btn-secondary btn-compact" :aria-pressed="archived" :disabled="moving" @click="switchView('archived')">
           {{ archived ? 'Active notes' : 'Archive' }}
         </button>
+        <button type="button" class="btn btn-secondary btn-compact" data-testid="mural-trash-toggle" :aria-pressed="trashed" :disabled="moving" @click="switchView('trashed')">
+          {{ trashed ? 'Active notes' : 'Trash' }}
+        </button>
+        <button
+          v-if="trashed && cards.length"
+          type="button"
+          class="btn btn-secondary btn-compact"
+          :disabled="moving || closing || confirmEmptyTrash"
+          @click="confirmEmptyTrash = true"
+        >Empty trash</button>
         <input ref="createImageInput" type="file" :accept="MURAL_IMAGE_TYPES.join(',')" class="sr-only-input" tabindex="-1" @change="selectNewImage" />
         <button ref="createImageButton" type="button" class="btn btn-secondary btn-compact" :disabled="opening || imageBusy || moving" @click="createImageInput?.click()">New image</button>
         <button ref="createButton" type="button" class="btn btn-primary btn-compact" :disabled="opening || imageBusy || moving" @click="createNote">New note</button>
       </div>
     </header>
 
+    <div v-if="trashed && confirmEmptyTrash" class="mural-trash-confirm" role="alert">
+      <span>Permanently delete all trashed notes?</span>
+      <button type="button" class="btn btn-secondary btn-compact" :disabled="closing" @click="confirmEmptyTrash = false">Cancel</button>
+      <button type="button" class="btn btn-danger btn-compact" :disabled="closing" @click="emptyTrash">Confirm empty trash</button>
+    </div>
+
     <p v-if="listError" class="error-message" role="alert">
       {{ listError }}
       <button type="button" class="btn btn-secondary btn-compact" :disabled="moving" @click="loadCards()">Refresh</button>
     </p>
     <p v-else-if="loading && !cards.length" class="mural-empty" role="status">Loading notes…</p>
-    <p v-else-if="!sections.length" class="mural-empty">{{ archived ? 'No archived notes.' : 'No quick notes yet.' }}</p>
+    <p v-else-if="!sections.length" class="mural-empty">{{ trashed ? 'Trash is empty.' : archived ? 'No archived notes.' : 'No quick notes yet.' }}</p>
     <p v-if="imageBusy && !draft" class="mural-empty" role="status">Uploading image…</p>
     <p v-if="creationError" class="error-message" role="alert">
       {{ creationError }}
@@ -28,12 +44,14 @@
       v-if="sections.length"
       :sections="sections"
       :disabled="opening || imageBusy"
-      :reorder-disabled="loading || Boolean(draft)"
+      :reorder-disabled="loading || Boolean(draft) || trashed || Boolean(resizingCardId)"
+      :resizing-card-id="resizingCardId"
       :loading="loading"
       :moving="moving"
       @open="openNote"
       @reorder="reorderCards"
       @resize="resizeCard"
+      @stop-resize="resizingCardId = null"
       @more="loadCards"
     />
     <span class="sr-only" role="status">{{ reorderStatus }}</span>
@@ -45,6 +63,8 @@
       :dirty="dirty"
       :saving="saving"
       :locked="closing || moving || imageBusy"
+      :trashed="Boolean(savedNote?.trashedAt)"
+      :can-resize="Boolean(savedNote?.imageVersion) && !savedNote?.trashedAt"
       :image-only="savedNote?.kind === 'image'"
       :image-url="savedNote?.imageVersion ? getMuralImageUrl(savedNote.id, savedNote.imageVersion, true) : ''"
       :image-busy="imageBusy"
@@ -56,7 +76,10 @@
       @close="closeEditor"
       @move="moveNote"
       @archive="toggleNoteArchive"
+      @trash="trashNote"
+      @restore="restoreNote"
       @delete="deleteNote"
+      @start-resize="enterResizeMode"
       @use-server="acceptServerVersion"
       @keep-mine="retryMyVersion"
       @retry="save"
@@ -70,7 +93,7 @@
 <script setup>
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { MURAL_IMAGE_TYPES, MURAL_MAX_IMAGE_BYTES, MURAL_PREVIEW_LENGTH } from '../../../shared/mural.js'
-import { deleteMuralNote, getMuralImageUrl, listMuralCards, moveMuralNote, readMuralNote, removeMuralImage, resizeMuralCard, uploadMuralImage, writeMuralNote } from './api.js'
+import { deleteMuralNote, emptyMuralTrash, getMuralImageUrl, listMuralCards, moveMuralNote, readMuralNote, removeMuralImage, resizeMuralCard, restoreMuralNote, trashMuralNote, uploadMuralImage, writeMuralNote } from './api.js'
 import { createMuralNoteCache, muralNoteCacheKey } from './noteCache.js'
 import MuralCardGrid from './MuralCardGrid.vue'
 import MuralNoteEditor from './MuralNoteEditor.vue'
@@ -84,7 +107,11 @@ const noteCache = inject(muralNoteCacheKey, null)?.value ?? createMuralNoteCache
 
 const cards = shallowRef([])
 const nextPages = ref({})
-const archived = ref(false)
+const viewMode = ref('active')
+const archived = computed(() => viewMode.value === 'archived')
+const trashed = computed(() => viewMode.value === 'trashed')
+const resizingCardId = ref(null)
+const confirmEmptyTrash = ref(false)
 const loading = ref(false)
 const opening = ref(false)
 const listError = ref('')
@@ -123,12 +150,19 @@ const syncServerPositions = (list) => {
   }
 }
 
-const sections = computed(() => GROUPS.map((group) => ({
-  group,
-  label: group === 'pinned' ? 'Pinned' : archived.value ? 'Archived' : 'Notes',
-  cards: cards.value.filter((card) => groupOf(card) === group),
-  hasMore: Boolean(nextPages.value[group]),
-})).filter((section) => section.cards.length || section.hasMore))
+const sections = computed(() => {
+  if (trashed.value) {
+    return cards.value.length || nextPages.value.trashed
+      ? [{ group: 'trashed', label: 'Trash', cards: cards.value, hasMore: Boolean(nextPages.value.trashed) }]
+      : []
+  }
+  return GROUPS.map((group) => ({
+    group,
+    label: group === 'pinned' ? 'Pinned' : archived.value ? 'Archived' : 'Notes',
+    cards: cards.value.filter((card) => groupOf(card) === group),
+    hasMore: Boolean(nextPages.value[group]),
+  })).filter((section) => section.cards.length || section.hasMore)
+})
 const noteFields = ({ title, body, color, pinned, archived }) => ({ title: title.trim(), body, color, pinned, archived })
 const notePreview = (note) => ({
   id: note.id,
@@ -137,6 +171,7 @@ const notePreview = (note) => ({
   kind: note.kind,
   imageVersion: note.imageVersion,
   imageWidth: note.imageWidth ?? null,
+  trashedAt: note.trashedAt ?? null,
   pinned: note.pinned,
   archived: note.archived,
   position: note.position,
@@ -170,17 +205,26 @@ const loadCards = async (group = null) => {
   loading.value = true
   listError.value = ''
   try {
-    const page = await listMuralCards({ archived: archived.value, after: nextPages.value[group], group, signal: request.signal })
-    if (request.signal.aborted) return
-    if (group) {
-      cards.value = [...new Map([...cards.value, ...page.cards].map((card) => [card.id, card])).values()].sort(sortCards)
-      nextPages.value[group] = page.next
+    if (trashed.value) {
+      const page = await listMuralCards({ trashed: true, after: group ? nextPages.value.trashed : undefined, signal: request.signal })
+      if (request.signal.aborted) return
+      cards.value = group
+        ? [...new Map([...cards.value, ...page.cards].map((card) => [card.id, card])).values()]
+        : page.cards
+      nextPages.value = { trashed: page.next }
     } else {
-      cards.value = [...page.pinned.cards, ...page.notes.cards]
-      nextPages.value = { pinned: page.pinned.next, notes: page.notes.next }
+      const page = await listMuralCards({ archived: archived.value, after: nextPages.value[group], group, signal: request.signal })
+      if (request.signal.aborted) return
+      if (group) {
+        cards.value = [...new Map([...cards.value, ...page.cards].map((card) => [card.id, card])).values()].sort(sortCards)
+        nextPages.value[group] = page.next
+      } else {
+        cards.value = [...page.pinned.cards, ...page.notes.cards]
+        nextPages.value = { pinned: page.pinned.next, notes: page.notes.next }
+      }
+      syncServerPositions(cards.value)
+      lastConfirmedCards = cards.value
     }
-    syncServerPositions(cards.value)
-    lastConfirmedCards = cards.value
   } catch (error) {
     if (!request.signal.aborted && !useSessionError(error)) listError.value = 'Could not load the mural.'
   } finally {
@@ -191,8 +235,10 @@ const loadCards = async (group = null) => {
   }
 }
 
-const switchArchive = () => {
-  archived.value = !archived.value
+const switchView = (mode) => {
+  resizingCardId.value = null
+  confirmEmptyTrash.value = false
+  viewMode.value = viewMode.value === mode ? 'active' : mode
   cards.value = []
   nextPages.value = {}
   void loadCards()
@@ -208,12 +254,14 @@ const showEditor = (id, note = null) => {
 const newCardId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')
 
 const createNote = () => {
+  resizingCardId.value = null
   returnFocus = createButton.value
   showEditor(newCardId())
 }
 
 const openNote = async (id, trigger) => {
   if (opening.value || imageBusy.value || moving.value) return
+  resizingCardId.value = null
   noteRequest?.abort()
   listError.value = ''
   returnFocus = trigger
@@ -253,9 +301,9 @@ const openNote = async (id, trigger) => {
 }
 
 const updateBoard = (note, previous) => {
-  if (!previous && archived.value && !note.archived) switchArchive()
+  if (!previous && (archived.value || trashed.value) && !note.archived && !note.trashedAt) switchView('active')
   const updated = cards.value.filter((card) => card.id !== note.id)
-  if (note.archived === archived.value) updated.push(notePreview(note))
+  if (!note.trashedAt && !trashed.value && note.archived === archived.value) updated.push(notePreview(note))
   cards.value = updated.sort(sortCards)
   syncServerPositions(cards.value)
   if (!drainingReorder) lastConfirmedCards = cards.value
@@ -295,6 +343,7 @@ const selectNewImage = (event) => {
   const file = event.target.files?.[0]
   event.target.value = ''
   if (!file || imageBusy.value) return
+  resizingCardId.value = null
   if (file.size > MURAL_MAX_IMAGE_BYTES) {
     pendingImage.value = null
     creationError.value = imageTooLarge
@@ -416,6 +465,69 @@ const toggleNoteArchive = () => {
   void closeEditor()
 }
 
+const enterResizeMode = async () => {
+  const targetId = draft.value?.id
+  if (!targetId) return
+  await closeEditor()
+  if (!draft.value && mounted) {
+    resizingCardId.value = targetId
+  }
+}
+
+const trashNote = async () => {
+  if (!savedNote.value || closing.value || moving.value || imageBusy.value || conflict.value) return
+  closing.value = true
+  clearTimeout(saveTimer)
+  noteRequest?.abort()
+  saveError.value = ''
+  try {
+    if (saveTask && !await saveTask) return
+    if (dirty.value && !await save()) return
+    if (!mounted || conflict.value || !savedNote.value) return
+    const { id, revision } = savedNote.value
+    await trashMuralNote(id, revision)
+    if (!mounted) return
+    noteCache.invalidate(id)
+    cards.value = cards.value.filter((card) => card.id !== id)
+    if (!drainingReorder) lastConfirmedCards = cards.value
+    if (listRequest) void loadCards()
+    await discardEditor()
+  } catch (error) {
+    if (!mounted || useSessionError(error)) return
+    if (error.code === 'MURAL_NOTE_CONFLICT' && error.note) {
+      noteCache.put(error.note)
+      conflict.value = error.note
+    } else saveError.value = 'Could not move this note to trash. Try again.'
+  } finally {
+    closing.value = false
+  }
+}
+
+const restoreNote = async () => {
+  if (!savedNote.value || closing.value || moving.value || imageBusy.value || conflict.value) return
+  closing.value = true
+  clearTimeout(saveTimer)
+  noteRequest?.abort()
+  saveError.value = ''
+  try {
+    const { id, revision } = savedNote.value
+    const { note } = await restoreMuralNote(id, revision)
+    if (!mounted) return
+    noteCache.put(note)
+    cards.value = cards.value.filter((card) => card.id !== id)
+    if (listRequest) void loadCards()
+    await discardEditor()
+  } catch (error) {
+    if (!mounted || useSessionError(error)) return
+    if (error.code === 'MURAL_NOTE_CONFLICT' && error.note) {
+      noteCache.put(error.note)
+      conflict.value = error.note
+    } else saveError.value = 'Could not restore this note. Try again.'
+  } finally {
+    closing.value = false
+  }
+}
+
 const deleteNote = async () => {
   if (!savedNote.value || closing.value || moving.value || imageBusy.value || conflict.value) return
   closing.value = true
@@ -430,6 +542,7 @@ const deleteNote = async () => {
     if (!mounted) return
     noteCache.invalidate(id)
     cards.value = cards.value.filter((card) => card.id !== id)
+    if (!drainingReorder) lastConfirmedCards = cards.value
     if (listRequest) void loadCards()
     await discardEditor()
   } catch (error) {
@@ -438,6 +551,25 @@ const deleteNote = async () => {
       noteCache.put(error.note)
       conflict.value = error.note
     } else saveError.value = 'Could not delete this note. Try again.'
+  } finally {
+    closing.value = false
+  }
+}
+
+const emptyTrash = async () => {
+  if (!trashed.value || closing.value || moving.value || imageBusy.value) return
+  closing.value = true
+  listError.value = ''
+  try {
+    await emptyMuralTrash()
+    if (!mounted) return
+    for (const card of cards.value) noteCache.invalidate(card.id)
+    cards.value = []
+    nextPages.value = {}
+    confirmEmptyTrash.value = false
+  } catch (error) {
+    if (!mounted || useSessionError(error)) return
+    listError.value = 'Could not empty trash. Try again.'
   } finally {
     closing.value = false
   }
@@ -628,5 +760,13 @@ onUnmounted(() => {
 .mural-header { justify-content: space-between; flex-wrap: wrap; margin-bottom: 0.75rem; }
 .mural-header h3 { margin: 0; font-size: 0.98rem; font-weight: 600; }
 .mural-actions { flex-wrap: wrap; }
+.mural-trash-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.84rem;
+}
 .mural-empty { margin: 0; color: var(--ayame-text-muted); font-size: 0.82rem; }
 </style>

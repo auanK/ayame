@@ -17,7 +17,12 @@ const put = (path, payload) => request(path, {
   body: JSON.stringify(payload),
 })
 
-export const listMuralCards = ({ archived, after, group, signal }) => {
+export const listMuralCards = ({ archived = false, trashed = false, after, group, signal }) => {
+  if (trashed) {
+    const query = new URLSearchParams({ trashed: 'true' })
+    if (after) query.set('after', after)
+    return request(`?${query}`, { signal })
+  }
   const query = new URLSearchParams({ archived: String(archived) })
   if (group) query.set('pinned', String(group === 'pinned'))
   else query.set('groups', 'true')
@@ -29,7 +34,13 @@ export const readMuralNote = (id, signal) => request(`/${encodeURIComponent(id)}
 
 export const writeMuralNote = (id, payload) => put(`/${encodeURIComponent(id)}`, payload)
 
+export const trashMuralNote = (id, revision) => request(`/${encodeURIComponent(id)}/trash?revision=${revision}`, { method: 'POST' })
+
+export const restoreMuralNote = (id, revision) => request(`/${encodeURIComponent(id)}/restore?revision=${revision}`, { method: 'POST' })
+
 export const deleteMuralNote = (id, revision) => request(`/${encodeURIComponent(id)}?revision=${revision}`, { method: 'DELETE' })
+
+export const emptyMuralTrash = () => request('/trash', { method: 'DELETE' })
 
 export const moveMuralNote = (id, payload) => put(`/${encodeURIComponent(id)}/position`, payload)
 

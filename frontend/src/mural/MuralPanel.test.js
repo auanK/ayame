@@ -8,7 +8,10 @@ vi.mock('./api.js', async (importOriginal) => ({
   listMuralCards: vi.fn(),
   readMuralNote: vi.fn(),
   writeMuralNote: vi.fn(),
+  trashMuralNote: vi.fn(),
+  restoreMuralNote: vi.fn(),
   deleteMuralNote: vi.fn(),
+  emptyMuralTrash: vi.fn(),
   moveMuralNote: vi.fn(),
   resizeMuralCard: vi.fn(),
   uploadMuralImage: vi.fn(),
@@ -63,22 +66,56 @@ describe('MuralPanel', () => {
     expect(api.listMuralCards).toHaveBeenCalledTimes(1)
   })
 
-  it('deletes a saved note after confirmation and removes it from the board', async () => {
-    api.listMuralCards.mockResolvedValue(board([initial]))
+  it('moves deleted notes to trash, supports restoring or permanently deleting from trash, and empties trash', async () => {
+    const trashedNote = { ...initial, trashedAt: 1000, revision: 2 }
+    api.listMuralCards
+      .mockResolvedValueOnce(board([initial]))
+      .mockResolvedValueOnce({ cards: [{ ...trashedNote, preview: initial.body }], next: null })
+      .mockResolvedValueOnce(board([initial]))
     api.readMuralNote.mockResolvedValue({ note: initial })
+    api.trashMuralNote.mockResolvedValue({ note: trashedNote })
+    api.restoreMuralNote.mockResolvedValue({ note: { ...initial, trashedAt: null, revision: 3 } })
     api.deleteMuralNote.mockResolvedValue({ deleted: true })
+    api.emptyMuralTrash.mockResolvedValue({ deleted: 1 })
+
     wrapper = mount(MuralPanel)
     await flushPromises()
     await wrapper.get(`[data-card-id="${id}"]`).trigger('click')
     await flushPromises()
-    await click(wrapper, 'Delete note')
+    await click(wrapper, 'Move to trash')
+    await flushPromises()
+    expect(api.trashMuralNote).toHaveBeenCalledWith(id, initial.revision)
+    expect(api.deleteMuralNote).not.toHaveBeenCalled()
+    expect(wrapper.find(`[data-card-id="${id}"]`).exists()).toBe(false)
+
+    // Open Trash view and restore the note
+    await wrapper.get('[data-testid="mural-trash-toggle"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find(`[data-card-id="${id}"]`).exists()).toBe(true)
+
+    api.readMuralNote.mockResolvedValueOnce({ note: trashedNote })
+    await wrapper.get(`[data-card-id="${id}"]`).trigger('click')
+    await flushPromises()
+    await click(wrapper, 'Delete permanently')
     expect(api.deleteMuralNote).not.toHaveBeenCalled()
     await click(wrapper, 'Cancel')
-    expect(wrapper.find(`[data-card-id="${id}"]`).exists()).toBe(true)
-    await click(wrapper, 'Delete note')
-    await click(wrapper, 'Confirm deletion')
+    await click(wrapper, 'Restore')
     await flushPromises()
-    expect(api.deleteMuralNote).toHaveBeenCalledWith(id, initial.revision)
+    expect(api.restoreMuralNote).toHaveBeenCalledWith(id, trashedNote.revision)
+    expect(wrapper.find(`[data-card-id="${id}"]`).exists()).toBe(false)
+
+    // Return to active view, verify note is back, then check permanent delete + empty trash
+    await wrapper.get('[data-testid="mural-trash-toggle"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find(`[data-card-id="${id}"]`).exists()).toBe(true)
+
+    api.listMuralCards.mockResolvedValueOnce({ cards: [{ ...trashedNote, preview: initial.body }], next: null })
+    await wrapper.get('[data-testid="mural-trash-toggle"]').trigger('click')
+    await flushPromises()
+    await click(wrapper, 'Empty trash')
+    await click(wrapper, 'Confirm empty trash')
+    await flushPromises()
+    expect(api.emptyMuralTrash).toHaveBeenCalledTimes(1)
     expect(wrapper.find(`[data-card-id="${id}"]`).exists()).toBe(false)
   })
 
@@ -266,7 +303,7 @@ describe('MuralPanel', () => {
     expect(api.readMuralNote).toHaveBeenCalledTimes(2)
   })
 
-  it('reorders from the keyboard handle and rolls back the display if the save fails', async () => {
+  it('reorders via Alt+Arrow keys on cards without an accessibility drag handle and rolls back on failure', async () => {
     const secondId = 'b'.repeat(32)
     const thirdId = 'c'.repeat(32)
     const third = { ...initial, id: thirdId, title: 'Third', position: 1 }
@@ -277,8 +314,9 @@ describe('MuralPanel', () => {
     api.moveMuralNote.mockRejectedValueOnce(new Error('Offline'))
     wrapper = mount(MuralPanel)
     await flushPromises()
+    expect(wrapper.find('.mural-drag-handle').exists()).toBe(false)
     const order = () => wrapper.findAll('[data-card-id]').map((card) => card.attributes('data-card-id'))
-    await wrapper.get(`[data-mural-tile="${thirdId}"] [data-mural-drag-handle]`).trigger('keydown', { key: 'ArrowUp' })
+    await wrapper.get(`[data-card-id="${thirdId}"]`).trigger('keydown', { key: 'ArrowUp', altKey: true })
     expect(order()).toEqual([id, thirdId, secondId])
     expect(api.moveMuralNote).toHaveBeenCalledWith(thirdId, {
       targetId: secondId, placement: 'before', expectedPosition: 1, expectedTargetPosition: 2,
@@ -288,15 +326,16 @@ describe('MuralPanel', () => {
     expect(order()).toEqual([id, thirdId, secondId])
     expect(api.listMuralCards).toHaveBeenCalledTimes(1)
 
-    await wrapper.get(`[data-mural-tile="${thirdId}"] [data-mural-drag-handle]`).trigger('keydown', { key: 'ArrowDown' })
+    await wrapper.get(`[data-card-id="${thirdId}"]`).trigger('keydown', { key: 'ArrowDown', altKey: true })
     await flushPromises()
     expect(order()).toEqual([id, thirdId, secondId])
     expect(wrapper.get('[role="alert"]').text()).toContain('Could not reorder the card')
   })
 
-  it('resizes image cards optimistically via handle, resets on double-click, and rolls back on failure', async () => {
+  it('hides image resize controls until clicked in the opened note corner, then resizes and resets cleanly', async () => {
     const imgCard = { ...initial, title: 'Photo', body: '', kind: 'image', imageVersion: 'v1', imageWidth: 320 }
     api.listMuralCards.mockResolvedValue(board([imgCard]))
+    api.readMuralNote.mockResolvedValue({ note: imgCard })
     api.resizeMuralCard
       .mockResolvedValueOnce({ note: { ...imgCard, imageWidth: 352 } })
       .mockResolvedValueOnce({ note: { ...imgCard, imageWidth: null } })
@@ -306,8 +345,17 @@ describe('MuralPanel', () => {
     await flushPromises()
 
     const tile = wrapper.get(`[data-mural-tile="${id}"]`)
-    const handle = tile.get('[data-mural-resize-handle]')
     expect(tile.classes()).toContain('mural-tile--resized')
+    // Resize handle is hidden by default until opened -> Resize clicked
+    expect(tile.find('[data-mural-resize-handle]').exists()).toBe(false)
+
+    await wrapper.get(`[data-card-id="${id}"]`).trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="mural-note-resize"]').trigger('click')
+    await flushPromises()
+
+    expect(tile.classes()).toContain('mural-tile--resize-mode')
+    const handle = tile.get('[data-mural-resize-handle]')
 
     await handle.trigger('keydown', { key: 'ArrowRight' })
     expect(api.resizeMuralCard).toHaveBeenNthCalledWith(1, id, 352)
@@ -323,6 +371,10 @@ describe('MuralPanel', () => {
     await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toContain('Could not resize the image')
     expect(tile.classes()).not.toContain('mural-tile--resized')
+
+    // Done exits resize mode and hides the resize handle again
+    await wrapper.get('[data-testid="mural-resize-done"]').trigger('click')
+    expect(tile.find('[data-mural-resize-handle]').exists()).toBe(false)
   })
 
   it('supports Keep-style real-card dragging with locked size, placeholder slot, Escape cancel, and serialized queue', async () => {

@@ -16,6 +16,19 @@
     >
       <div v-if="imageUrl" class="mural-sheet-hero">
         <img :src="imageUrl" :alt="imageOnly ? draft.title || 'Mural image' : ''" decoding="async" />
+        <button
+          v-if="imageOnly && canResize && !trashed"
+          type="button"
+          class="mural-hero-resize-btn"
+          data-testid="mural-note-resize"
+          :disabled="locked || conflict"
+          @click="emit('start-resize')"
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10 2.5h3.5V6M6 13.5H2.5V10M13.5 2.5 9.2 6.8M2.5 13.5l4.3-4.3" />
+          </svg>
+          <span>Resize</span>
+        </button>
       </div>
 
       <div class="mural-sheet-body">
@@ -26,14 +39,28 @@
             data-testid="mural-note-title"
             :value="draft.title"
             :maxlength="MURAL_MAX_TITLE_LENGTH"
-            :disabled="locked"
+            :disabled="locked || trashed"
             :placeholder="imageOnly ? 'Add a caption…' : 'Title'"
             :aria-label="imageOnly ? 'Caption' : 'Title'"
             @input="emit('change', { title: $event.target.value })"
-            @keydown.enter.prevent="!imageOnly && bodyInput?.focus()"
+            @keydown.enter.prevent="!imageOnly && !trashed && bodyInput?.focus()"
           />
           <button
-            v-if="!draft.archived"
+            v-if="!imageOnly && canResize && !trashed"
+            type="button"
+            class="mural-ghost-btn"
+            data-testid="mural-note-resize"
+            :disabled="locked || conflict"
+            title="Resize image on board"
+            @click="emit('start-resize')"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M10 2.5h3.5V6M6 13.5H2.5V10M13.5 2.5 9.2 6.8M2.5 13.5l4.3-4.3" />
+            </svg>
+            <span>Resize</span>
+          </button>
+          <button
+            v-if="!draft.archived && !trashed"
             type="button"
             class="mural-ghost-btn mural-pin-btn"
             :aria-pressed="draft.pinned"
@@ -55,7 +82,7 @@
           data-testid="mural-note-body"
           :value="draft.body"
           :maxlength="MURAL_MAX_BODY_LENGTH"
-          :disabled="locked"
+          :disabled="locked || trashed"
           placeholder="Take a note…"
           aria-label="Note"
           rows="4"
@@ -63,6 +90,8 @@
           @keydown.ctrl.enter.prevent="!locked && !conflict && emit('close')"
           @keydown.meta.enter.prevent="!locked && !conflict && emit('close')"
         />
+
+        <p v-if="trashed" class="mural-trashed-notice">This {{ imageOnly ? 'image' : 'note' }} is in the trash.</p>
 
         <div v-if="conflict || error || confirmDelete" class="mural-sheet-alerts">
           <p v-if="conflict" class="error-message" role="alert">This note changed in another session. Choose which version to keep.</p>
@@ -87,66 +116,83 @@
 
       <footer class="mural-sheet-toolbar">
         <div class="mural-toolbar-left">
-          <div class="mural-colors" role="group" aria-label="Card color">
+          <template v-if="!trashed">
+            <div class="mural-colors" role="group" aria-label="Card color">
+              <button
+                v-for="color in muralColors"
+                :key="color.id"
+                type="button"
+                class="mural-swatch"
+                :style="{ '--swatch': color.accent }"
+                :aria-pressed="draft.color === color.id"
+                :aria-label="color.label"
+                :title="color.label"
+                :data-color="color.id"
+                :disabled="locked"
+                @click="emit('change', { color: color.id })"
+              />
+            </div>
+
+            <span class="mural-toolbar-divider" aria-hidden="true" />
+
+            <input ref="imageInput" type="file" :accept="MURAL_IMAGE_TYPES.join(',')" class="sr-only-input" tabindex="-1" @change="selectImage" />
             <button
-              v-for="color in muralColors"
-              :key="color.id"
               type="button"
-              class="mural-swatch"
-              :style="{ '--swatch': color.accent }"
-              :aria-pressed="draft.color === color.id"
-              :aria-label="color.label"
-              :title="color.label"
-              :data-color="color.id"
-              :disabled="locked"
-              @click="emit('change', { color: color.id })"
-            />
-          </div>
+              class="mural-ghost-btn"
+              :disabled="locked || conflict || (!existing && !dirty)"
+              @click="imageInput?.click()"
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                <circle cx="5.5" cy="6.2" r="1" />
+                <path d="M2.5 11.5 6 8.3l2.6 2.3 2.1-1.9 2.8 2.8" />
+              </svg>
+              <span>{{ imageOnly ? 'Replace image' : imageUrl ? 'Replace background' : 'Add background' }}</span>
+            </button>
 
-          <span class="mural-toolbar-divider" aria-hidden="true" />
+            <button
+              v-if="imageUrl && !imageOnly"
+              type="button"
+              class="mural-ghost-btn"
+              :disabled="locked || conflict"
+              @click="emit('remove-image')"
+            >Remove background</button>
 
-          <input ref="imageInput" type="file" :accept="MURAL_IMAGE_TYPES.join(',')" class="sr-only-input" tabindex="-1" @change="selectImage" />
-          <button
-            type="button"
-            class="mural-ghost-btn"
-            :disabled="locked || conflict || (!existing && !dirty)"
-            @click="imageInput?.click()"
-          >
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="2" y="3" width="12" height="10" rx="1.5" />
-              <circle cx="5.5" cy="6.2" r="1" />
-              <path d="M2.5 11.5 6 8.3l2.6 2.3 2.1-1.9 2.8 2.8" />
-            </svg>
-            <span>{{ imageOnly ? 'Replace image' : imageUrl ? 'Replace background' : 'Add background' }}</span>
-          </button>
+            <button
+              v-if="existing"
+              type="button"
+              class="mural-ghost-btn"
+              :disabled="locked || conflict"
+              @click="emit('archive')"
+            >{{ draft.archived ? 'Restore' : 'Archive' }}</button>
 
-          <button
-            v-if="imageUrl && !imageOnly"
-            type="button"
-            class="mural-ghost-btn"
-            :disabled="locked || conflict"
-            @click="emit('remove-image')"
-          >Remove background</button>
+            <button
+              v-if="existing"
+              type="button"
+              class="mural-ghost-btn mural-ghost-btn--danger"
+              :disabled="locked || conflict"
+              @click="emit('trash')"
+            >Move to trash</button>
+          </template>
 
-          <button
-            v-if="existing"
-            type="button"
-            class="mural-ghost-btn"
-            :disabled="locked || conflict"
-            @click="emit('archive')"
-          >{{ draft.archived ? 'Restore' : 'Archive' }}</button>
-
-          <button
-            v-if="existing"
-            type="button"
-            class="mural-ghost-btn mural-ghost-btn--danger"
-            :disabled="locked || conflict || confirmDelete"
-            @click="confirmDelete = true"
-          >Delete {{ imageOnly ? 'image' : 'note' }}</button>
+          <template v-else>
+            <button
+              type="button"
+              class="mural-ghost-btn"
+              :disabled="locked || conflict"
+              @click="emit('restore')"
+            >Restore</button>
+            <button
+              type="button"
+              class="mural-ghost-btn mural-ghost-btn--danger"
+              :disabled="locked || conflict || confirmDelete"
+              @click="confirmDelete = true"
+            >Delete permanently</button>
+          </template>
         </div>
 
         <div class="mural-toolbar-right">
-          <span class="mural-save-status" role="status">{{ imageBusy ? 'Updating image…' : saving ? 'Saving…' : dirty ? 'Unsaved' : existing ? 'Saved' : '' }}</span>
+          <span class="mural-save-status" role="status">{{ trashed ? '' : imageBusy ? 'Updating image…' : saving ? 'Saving…' : dirty ? 'Unsaved' : existing ? 'Saved' : '' }}</span>
           <button
             type="button"
             class="mural-done-btn"
@@ -171,6 +217,8 @@ const props = defineProps({
   dirty: { type: Boolean, required: true },
   saving: { type: Boolean, required: true },
   locked: { type: Boolean, required: true },
+  trashed: { type: Boolean, default: false },
+  canResize: { type: Boolean, default: false },
   canMoveUp: { type: Boolean, default: false },
   canMoveDown: { type: Boolean, default: false },
   conflict: { type: Boolean, required: true },
@@ -180,7 +228,7 @@ const props = defineProps({
   imageBusy: { type: Boolean, required: true },
 })
 
-const emit = defineEmits(['change', 'close', 'move', 'archive', 'delete', 'use-server', 'keep-mine', 'retry', 'discard', 'upload-image', 'remove-image'])
+const emit = defineEmits(['change', 'close', 'move', 'archive', 'trash', 'restore', 'delete', 'start-resize', 'use-server', 'keep-mine', 'retry', 'discard', 'upload-image', 'remove-image'])
 
 const confirmDelete = ref(false)
 const titleInput = ref(null)
@@ -228,6 +276,7 @@ watch(() => props.draft.body, () => { void nextTick(resizeTextarea) })
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
+  if (props.trashed) return
   if (props.imageOnly) titleInput.value?.focus()
   else {
     bodyInput.value?.focus()
@@ -283,6 +332,7 @@ onUnmounted(() => {
 }
 
 .mural-sheet-hero {
+  position: relative;
   width: 100%;
   background: color-mix(in srgb, var(--mural-accent) 6%, var(--ayame-background));
   display: flex;
@@ -304,6 +354,28 @@ onUnmounted(() => {
   object-fit: contain;
 }
 
+.mural-hero-resize-btn {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.32rem 0.6rem;
+  border: 1px solid color-mix(in srgb, var(--mural-accent) 35%, var(--ayame-border));
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--ayame-surface) 84%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--ayame-text);
+  font: inherit;
+  font-size: 0.79rem;
+  cursor: pointer;
+}
+
+.mural-hero-resize-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ayame-surface) 96%, transparent);
+}
+
 .mural-sheet-body {
   flex: 1;
   min-height: 0;
@@ -317,7 +389,7 @@ onUnmounted(() => {
 .mural-sheet-title-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .mural-sheet-title {
@@ -359,6 +431,12 @@ onUnmounted(() => {
   font: inherit;
   font-size: 0.94rem;
   line-height: 1.58;
+}
+
+.mural-trashed-notice {
+  margin: 0.15rem 0 0;
+  color: var(--ayame-text-muted);
+  font-size: 0.79rem;
 }
 
 .mural-sheet-alerts {

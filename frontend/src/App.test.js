@@ -13,6 +13,9 @@ vi.mock('./mural/api.js', () => ({
   writeMuralNote: vi.fn(),
   moveMuralNote: vi.fn(),
   resizeMuralCard: vi.fn(),
+  trashMuralNote: vi.fn(),
+  restoreMuralNote: vi.fn(),
+  emptyMuralTrash: vi.fn(),
 }))
 
 vi.mock('./auth/api.js', () => ({
