@@ -437,4 +437,49 @@ describe('MuralPanel', () => {
       targetId: thirdId, placement: 'after', expectedPosition: 2, expectedTargetPosition: 1,
     })
   })
+
+  it('opens notes and image cards as color-matched Keep sheets without settings chrome', async () => {
+    const coloredNote = { ...initial, color: 'ochre', title: 'Idea', body: 'Keep note' }
+    const imageCardId = 'd'.repeat(32)
+    const imageCard = { ...initial, id: imageCardId, kind: 'image', title: '', body: '', color: 'lavender', imageVersion: 'imgv1', position: 2 }
+
+    api.listMuralCards.mockResolvedValue(board([
+      { ...coloredNote, preview: coloredNote.body },
+      imageCard,
+    ]))
+    api.readMuralNote
+      .mockResolvedValueOnce({ note: coloredNote })
+      .mockResolvedValueOnce({ note: imageCard })
+    api.writeMuralNote.mockResolvedValueOnce({ note: { ...coloredNote, color: 'fern', revision: 2 } })
+
+    wrapper = mount(MuralPanel)
+    await flushPromises()
+
+    await wrapper.get(`[data-card-id="${id}"]`).trigger('click')
+    await flushPromises()
+
+    const sheet = wrapper.get('[data-testid="mural-note-editor"]')
+    expect(sheet.attributes('data-mural-color')).toBe('ochre')
+    expect(sheet.attributes('style')).toContain('--mural-accent: var(--ayame-warning)')
+    expect(sheet.find('fieldset').exists()).toBe(false)
+    expect(sheet.find('legend').exists()).toBe(false)
+    expect(sheet.text()).not.toContain('Move up')
+
+    // Picking a new swatch updates the opened sheet color immediately
+    await sheet.get('button[data-color="fern"]').trigger('click')
+    expect(sheet.attributes('data-mural-color')).toBe('fern')
+    expect(sheet.attributes('style')).toContain('--mural-accent: var(--ayame-success-accent)')
+
+    await click(wrapper, 'Done')
+    await flushPromises()
+
+    // Standalone image card opens as a clean image viewer with caption input and matching color
+    await wrapper.get(`[data-card-id="${imageCardId}"]`).trigger('click')
+    await flushPromises()
+    const imgSheet = wrapper.get('[data-testid="mural-note-editor"]')
+    expect(imgSheet.classes()).toContain('mural-sheet--image-only')
+    expect(imgSheet.attributes('data-mural-color')).toBe('lavender')
+    expect(imgSheet.get('[data-testid="mural-note-title"]').attributes('placeholder')).toBe('Add a caption…')
+    expect(imgSheet.find('[data-testid="mural-note-body"]').exists()).toBe(false)
+  })
 })
